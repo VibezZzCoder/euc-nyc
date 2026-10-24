@@ -19,6 +19,8 @@ import { SIMULATION, INPUT } from './euc/data/tuning.js';
 import { createRidingRig } from './euc/render/ridingRig.js';
 import { riderLook } from './euc/render/riderLook.js';
 import { machineLook } from './euc/render/machineLook.js';
+import { cityUniforms } from './tsl-materials.js';
+import { EUC_HEADLIGHT, headlightBeamScale, createEucHeadlight, placeEucHeadlight } from './vehicle-lights.js';
 
 const STEP = 1 / SIMULATION.hz;
 // The fork's roster: original fictional characters only (js/euc/render/riderLook.js is sliced to these three).
@@ -40,6 +42,67 @@ export const NYC_TUNING = Object.freeze({});
 
 export function isPlayableRider(id) {
   return PLAYABLE_RIDERS.includes(id);
+}
+
+/** The rig's headlamp lens: its mesh, its material's own emissive level, and its front centre in the body frame. */
+function findLens(rig) {
+  let mesh = null;
+  rig.group.traverse((o) => {
+    if (o.name === 'euc-headlight') mesh = o;
+  });
+  if (!mesh) return null;
+  mesh.geometry.computeBoundingBox();
+  const box = mesh.geometry.boundingBox;
+  const lamp = new THREE.Vector3((box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2, box.max.z)
+    .applyMatrix4(mesh.matrix);
+  return { mesh, lamp, baseEmissive: mesh.material.emissiveIntensity };
+}
+
+/**
+ * The wheel's headlight, on when the cars' are (vehicle-lights.js headlightBeamScale). One spot light made once and
+ * kept in the scene for good, so the city's shaders never see the light count change (a rider swap only re-finds the
+ * lens). By day it is parked out of sight at zero, as traffic's pooled lights are.
+ */
+function createHeadlight(scene) {
+  const spot = createEucHeadlight();
+  spot.name = 'euc-headlight-beam';
+  spot.position.set(0, -1000, 0);
+  spot.target.position.set(0, -1001, 0);
+  scene.add(spot, spot.target);
+  let lens = null;
+  let lit = -1;
+  return {
+    spot,
+    attach(rig) {
+      lens = findLens(rig);
+      lit = -1;
+    },
+    update() {
+      const glow = cityUniforms.uInteriorGlow.value;
+      const beam = headlightBeamScale(glow);
+      // The lens follows the cars' lamp glass (actor-models.js nightHeadlamp: smoothstep(0.60, 1.15, glow))
+      const t = Math.max(0, Math.min(1, (glow - 0.60) / 0.55));
+      const lensOn = t * t * (3 - 2 * t);
+      if (lens && lensOn !== lit) {
+        lens.mesh.material.emissiveIntensity = lens.baseEmissive * (1 + (EUC_HEADLIGHT.lensNight - 1) * lensOn);
+        lit = lensOn;
+      }
+      if (beam <= 0.001 || !lens) {
+        if (spot.intensity !== 0) {
+          spot.intensity = 0;
+          spot.position.set(0, -1000, 0);
+          spot.target.position.set(0, -1001, 0);
+        }
+        return;
+      }
+      lens.mesh.updateWorldMatrix(true, false); // the rig was just posed; the scene's own pass comes later
+      placeEucHeadlight(spot, lens.lamp, lens.mesh.parent.matrixWorld);
+      spot.intensity = EUC_HEADLIGHT.intensity * beam;
+    },
+    dispose() {
+      scene.remove(spot, spot.target);
+    },
+  };
 }
 
 function buildRig(scene, riderId) {
@@ -68,6 +131,8 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
 
   let rig = buildRig(scene, riderId);
   rig.apply(render);
+  const headlight = createHeadlight(scene);
+  headlight.attach(rig);
 
   let accumulator = 0;
   let simSeconds = 0;
@@ -97,6 +162,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     chaseDistance: 4.8,
     chaseHeight: 1.9,
     pose: render,
+    headlight: headlight.spot,
 
     /** One rendered frame: run the fixed steps this frame owes, then interpolate and pose the rig. */
     update(dt, keys) {
@@ -109,8 +175,9 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
 
       const resetHeld = !!keys.reset;
       if (resetHeld && !resetWasHeld && controller.crashed) {
-        // Get up where you fell, unless that is in a pond: then at the last safe spot, as the auto-recovery does
-        if (sampler.isWater?.(current.x, current.z)) this.placeAt(controller.safeX, controller.safeZ, controller.safeHeading);
+        // Get up where you fell, unless that is in a pond or past the shore wall: then at the last safe spot, as the
+        // auto-recovery does
+        if (sampler.isOffLimits?.(current.x, current.z)) this.placeAt(controller.safeX, controller.safeZ, controller.safeHeading);
         else this.placeAt(current.x, current.z, current.headingY);
       }
       resetWasHeld = resetHeld;
@@ -142,6 +209,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       rig.setTrickPose(0, 0);
       rig.apply(render);
       rig.applyStatus(render.alert ?? 0, simSeconds, 1 - (render.recoverBlend ?? 0));
+      headlight.update();
 
       this.position.set(render.x, render.y, render.z);
       this.heading = render.headingY;
@@ -174,6 +242,8 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       riderId = id;
       rig = buildRig(scene, riderId);
       rig.apply(render);
+      headlight.attach(rig);
+      headlight.update();
       this.rig = rig;
       this.mesh = rig.group;
       this.riderId = riderId;
@@ -194,6 +264,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       wasCrashed = controller.crashed;
       if (wasDown && !wasCrashed) pushEvent({ type: 'recover' });
       rig.apply(render);
+      headlight.update();
       this.position.set(render.x, render.y, render.z);
       this.heading = render.headingY;
       this.speed = 0;
@@ -209,6 +280,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     dispose() {
       scene.remove(rig.group);
       rig.dispose();
+      headlight.dispose();
     },
   };
   return entity;

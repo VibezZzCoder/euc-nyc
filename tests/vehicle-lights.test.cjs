@@ -24,7 +24,9 @@ class SpotLight {
     this.castShadow = false;
   }
 }
-const { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } = loadModule(
+const {
+  HEADLIGHTS, EUC_HEADLIGHT, headlightBeamScale, createVehicleHeadlight, placeVehicleHeadlight, createEucHeadlight, placeEucHeadlight
+} = loadModule(
   readFileSync(join(__dirname, '../js/vehicle-lights.js'), 'utf8'),
   { imports: { 'three/webgpu': { SpotLight } } }
 );
@@ -89,4 +91,39 @@ test('lamp and target follow both yaw and slope at elevated road height', () => 
   placeVehicleHeadlight(world, specs.suv, -1);
   assert.deepEqual(world.position, local.position);
   assert.deepEqual(world.target.position, local.target.position);
+});
+
+test('front lights are off at Midday and Golden Hour and on at Blue Hour and Night, for cars and the wheel alike', () => {
+  assert.equal(headlightBeamScale(0.24), 0);
+  assert.equal(headlightBeamScale(0.48), 0);
+  assert.ok(headlightBeamScale(1.25) > 0.9);
+  assert.equal(headlightBeamScale(1.55), 1.28);
+  const traffic = readFileSync(join(__dirname, '../js/traffic.js'), 'utf8');
+  assert.equal((traffic.match(/headlightBeamScale\(glow\)/g) || []).length, 2, 'street and highway traffic share the curve');
+  const rider = readFileSync(join(__dirname, '../js/euc-rider.js'), 'utf8');
+  assert.match(rider, /headlightBeamScale\(glow\)/, 'the wheel uses the same curve');
+});
+
+test('the wheel lamp is one unshadowed spot from the lens, aimed ahead and down along the wheel', () => {
+  const spot = createEucHeadlight();
+  assert.equal(spot.intensity, 0, 'off until night');
+  for (const key of ['color', 'distance', 'angle', 'penumbra', 'decay']) assert.equal(spot[key], EUC_HEADLIGHT[key]);
+  assert.equal(spot.castShadow, false);
+  assert.equal(spot.map, null);
+  const lamp = { x: 0, y: 0.515, z: 0.252 };
+  placeEucHeadlight(spot, lamp);
+  close(spot.position.y, lamp.y);
+  close(spot.position.z, lamp.z + EUC_HEADLIGHT.noseOffset);
+  const dy = spot.target.position.y - spot.position.y;
+  const dz = spot.target.position.z - spot.position.z;
+  assert.ok(dz > 0 && dy < 0, 'forward (+Z in the body frame) and down');
+  close(-dy / dz, Math.tan(EUC_HEADLIGHT.pitch));
+  const coreTop = EUC_HEADLIGHT.pitch - EUC_HEADLIGHT.angle * (1 - EUC_HEADLIGHT.penumbra);
+  assert.ok(coreTop > 0, 'the full-strength core stays below the lamp horizon');
+  // Heading pi (riding north, -Z) carries the beam with the wheel
+  const m = { elements: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 5, 0, -20, 1] };
+  placeEucHeadlight(spot, lamp, m);
+  assert.ok(spot.target.position.z < spot.position.z && spot.position.z < -20);
+  const rider = readFileSync(join(__dirname, '../js/euc-rider.js'), 'utf8');
+  assert.equal((rider.match(/createEucHeadlight\(\)/g) || []).length, 1, 'one lamp, made once (a rider swap keeps it)');
 });

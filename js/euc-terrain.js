@@ -15,7 +15,11 @@
 //               (lamp and signal posts, steam stacks, subway stairs) and city-grid.js's solids (park fences, Central
 //               Park's gate piers and monuments), as upright yawed boxes in an EUC
 //               PlanTerrainSampler, which supplies the swept obstacle casts, wall normals and ragdoll records.
-//   the shore   beyond the bulkhead (less a margin, as controllers.js does) the ground is a wall too high to climb.
+//   the shore   SHORE_MARGIN inside the bulkhead (as controllers.js keeps teleports) a band SHORE_BAND wide is a wall
+//               too high to climb or hop, so the wheel stops where it always did. Past it is what is drawn: the ground
+//               out to the seawall's edge (SEAWALL_OUT past the bulkhead, city-grid.js), then the river, floored just
+//               under its surface, so a rider thrown over the band lands on the esplanade or in the water, not on air.
+//               The island's north and south ends stay plain walls.
 //
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
@@ -25,6 +29,8 @@ import {
 
 const SHORE_MARGIN = 8.0; // controllers.js keeps every ground mode this far inside the bulkhead
 const SHORE_WALL = 3.0; // m: well above any step the wheel can climb or hop
+const SHORE_BAND = 1.0; // m: how deep the shore wall is (a thrown rider can fly over it)
+const SEAWALL_OUT = 6.0; // m: the seawall coping past the bulkhead line (city-grid.js seawallPolygon)
 const STREET_FURNITURE_HEIGHT = 2.5; // m: footprints carry no height; posts and stacks read as solid to here
 const TOP_CELL = 64; // m: grid cell of the raised-tops index
 
@@ -160,14 +166,38 @@ export class NycTerrainSampler {
     return !!this.topAt(x, z)?.water;
   }
 
+  /**
+   * True where the rider may not be put back on the wheel: a pond, or past the shore wall (the strip beyond it, the
+   * river) and the island's ends. Getting up there goes to the last safe spot instead.
+   */
+  isOffLimits(x, z) {
+    if (z < ISLAND_BOUNDS.minZ + 30 || z > ISLAND_BOUNDS.maxZ) return true;
+    const shore = getIslandBoundsAtZ(z);
+    if (Math.min(x - shore.westX, shore.eastX - x) < SHORE_MARGIN) return true;
+    return this.isWater(x, z);
+  }
+
   /** The city's own ground at (x, z): height and surface, before solids. */
   cityGround(x, z, out) {
-    const shore = getIslandBoundsAtZ(z);
-    if (x < shore.westX + SHORE_MARGIN || x > shore.eastX - SHORE_MARGIN
-      || z < ISLAND_BOUNDS.minZ + 30 || z > ISLAND_BOUNDS.maxZ) {
+    if (z < ISLAND_BOUNDS.minZ + 30 || z > ISLAND_BOUNDS.maxZ) {
       out.height = SHORE_WALL;
       out.surface = 'pavement';
       return out;
+    }
+    const shore = getIslandBoundsAtZ(z);
+    const inland = Math.min(x - shore.westX, shore.eastX - x); // m inside the bulkhead line (< 0: over the water)
+    if (inland < SHORE_MARGIN) {
+      if (inland >= SHORE_MARGIN - SHORE_BAND) {
+        out.height = SHORE_WALL;
+        out.surface = 'pavement';
+        return out;
+      }
+      if (inland <= -SEAWALL_OUT) {
+        out.height = ISLAND_BOUNDS.waterLevel - WATER_RIDE.floorDepth;
+        out.surface = 'pavement';
+        return out;
+      }
+      // the strip between the band and the seawall's edge: the island's own ground, as drawn (below)
     }
     const lawn = this.lawn;
     if (inCentralPark(x, z)) {
@@ -219,8 +249,10 @@ export class NycTerrainSampler {
   sampleGround(x, z, out) {
     this.boxes.sampleGround(x, z, out);
     const city = this.cityGround(x, z, this._city ??= { height: 0, surface: 'pavement' });
-    // A solid whose top is higher wins (buildings, posts); otherwise the city's ground.
-    if (city.height >= out.height) {
+    // A solid whose top is higher wins (buildings, posts); otherwise the city's ground. Every solid's top is above 0,
+    // so 0 here is the plan's flat field with no solid over it, and the city's ground wins even where it is lower
+    // (the river).
+    if (city.height >= out.height || out.height <= 0) {
       out.height = city.height;
       out.surface = city.surface;
       out.traction = undefined;

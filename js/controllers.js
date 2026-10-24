@@ -185,7 +185,7 @@ class ThirdPersonControllerManager {
     };
     const clear = (p) => {
       if (!p) return false;
-      if (this.eucSampler?.isWater?.(p.x, p.z)) return false; // a click on a pond lands on its shore
+      if (this.eucSampler?.isWater?.(p.x, p.z)) return false; // a click on a pond lands on its shore (clampPoint keeps off the river)
       const y = this.getGroundHeight(p.x, p.z) + 1;
       for (const c of this.nearColliders(p.x, p.z, ext)) {
         if (y > c.maxY + 1.5 || y + RIDER_HEIGHT < (c.minY ?? -Infinity)) continue;

@@ -114,13 +114,14 @@
   <link rel="modulepreload" href="./js/audio-sources.js" />
   <link rel="modulepreload" href="./js/audio-acoustics.js" />
   <link rel="modulepreload" href="./js/audio-system.js" />
+  <link rel="modulepreload" href="./js/title-screen.js" />
   <link rel="modulepreload" href="./js/main.js" />
   <script type="module" src="./js/main.js"></script>
   <!-- Inter (UI) & Overpass (street-name signs: modelled on Highway Gothic, the US road sign typeface), from fonts/ -->
   <link rel="preload" href="./fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="./fonts/overpass-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="./css/fonts.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261023-touch-hud" />
+  <link rel="stylesheet" href="./css/style.css?v=20261024-title" />
 </head>
 <body>
   <!-- Icon sprite (24 × 24 stroke icons, drawn in currentColor) -->
@@ -160,6 +161,27 @@
     </div>
   </div>
 
+  <!-- Title screen (js/title-screen.js): shown once the city is ready, over the live city; the ride starts from here -->
+  <section id="title-overlay" class="title-overlay" aria-labelledby="title-heading" hidden>
+    <div class="title-head">
+      <span class="brand-badge title-badge" aria-hidden="true"><svg class="icon"><use href="#i-euc"/></svg></span>
+      <p class="title-kicker">NYC Spin-off</p>
+      <h1 id="title-heading" class="title-name">EUC Thrills</h1>
+      <p class="title-tagline">Ride an electric unicycle through Manhattan.</p>
+    </div>
+    <div class="title-foot">
+      <div class="title-riders" role="group" aria-label="Choose your rider">
+        <button class="title-rider" data-title-rider="cool-rider" type="button" aria-pressed="true">Cool Rider<kbd>1</kbd></button>
+        <button class="title-rider" data-title-rider="trollina" type="button" aria-pressed="false">Trollina<kbd>2</kbd></button>
+      </div>
+      <button id="title-ride" class="title-ride" type="button">Ride</button>
+      <p class="title-hint title-hint--keyboard"><kbd>Enter</kbd> to ride</p>
+      <p class="title-hint title-hint--gamepad"><kbd>A</kbd> to ride · <kbd>LB</kbd> <kbd>RB</kbd> rider</p>
+      <p class="title-credits">Riding and riders from <em>EUC Thrills</em> by VibezZzCoder · The city by Mr.doob · Map data
+        © OpenStreetMap contributors</p>
+    </div>
+  </section>
+
   <!-- 3D WebGPU Viewport Container -->
   <main id="canvas-container" aria-label="3D Manhattan viewport"></main>
 
@@ -170,7 +192,7 @@
       <div class="brand-titles">
         <div class="brand-heading">
           <h1>NYC Spin-off: EUC Thrills</h1>
-          <a class="repo-link" href="https://github.com/VibezZzCoder/EUC-thrills" target="_blank" rel="noopener noreferrer" aria-label="EUC Thrills, the main game, on GitHub (opens in a new tab)">EUC Thrills <span aria-hidden="true">↗</span></a>
+          <a class="repo-link" href="https://github.com/VibezZzCoder/euc-nyc" target="_blank" rel="noopener noreferrer" aria-label="NYC Spin-off: EUC Thrills on GitHub (opens in a new tab)">GitHub <span aria-hidden="true">↗</span></a>
         </div>
         <div class="brand-subtitle">three.js · WebGPU · TSL · <span id="hud-fps" class="fps-ok">60</span> fps</div>
       </div>

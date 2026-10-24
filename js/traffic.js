@@ -3,7 +3,7 @@ import { buildRoadNetwork } from './road-network.js';
 import { createPedestrianRoutes } from './pedestrian-routes.js';
 import { signalPhase, walkSignal, blockAt } from './city-config.js';
 import { cityUniforms, createContactShadowMaterial, createCarFlareMaterial } from './tsl-materials.js';
-import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
+import { HEADLIGHTS, headlightBeamScale, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
 import {
   BODY_SPECS,
   BUS_SPEC,
@@ -1973,7 +1973,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
 
     const glow = cityUniforms && cityUniforms.uInteriorGlow ? cityUniforms.uInteriorGlow.value : 0.48;
     // Front headlights are off during Midday (0.24) & Golden Hour (0.48); fade in smoothly for Dusk (1.25) & Night (1.55)
-    const beamScale = clamp((glow - 0.60) * 1.45, 0.0, 1.28);
+    const beamScale = headlightBeamScale(glow);
     const tailScale = clamp(0.18 + glow * 0.66, 0.24, 1.22);
 
     const maxDualVehicles = HEADLIGHT_POOL_SIZE >> 1;
@@ -2650,7 +2650,7 @@ function createHighwayTraffic(scene, lanes) {
       hwyLitCars.sort((a, b) => a._effDist - b._effDist);
     }
     const glow = cityUniforms && cityUniforms.uInteriorGlow ? cityUniforms.uInteriorGlow.value : 0.48;
-    const beamScale = clamp((glow - 0.60) * 1.45, 0.0, 1.28);
+    const beamScale = headlightBeamScale(glow);
     const maxHwyVeh = HWY_SPOT_POOL >> 1;
     const hwyCutoff = hwyLitCount > maxHwyVeh
       ? Math.min(HWY_LIGHT_DIST, hwyLitCars[maxHwyVeh]._effDist)

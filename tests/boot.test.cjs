@@ -32,11 +32,11 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   const all = preloads.map((match) => match[1]);
   assert.deepEqual(all.slice(0, three.length).sort(), [...three].sort(), 'every vendored three.js module is preloaded first');
   const links = all.slice(three.length);
-  // 31 city modules (29 upstream + pedestrian-routes.js, which upstream missed, + solid-rects.js), the 5 EUC modules (terrain, rider,
-  // dynamic world, audio, HUD) and every module
-  // tools/vendor-euc.mjs copied into js/euc/ (listed in its MANIFEST.json)
+  // 31 city modules (29 upstream + pedestrian-routes.js, which upstream missed, + solid-rects.js), the 6 fork modules
+  // (EUC terrain, rider, dynamic world, audio, HUD; the title screen) and every module tools/vendor-euc.mjs copied into
+  // js/euc/ (listed in its MANIFEST.json)
   const vendored = Object.keys(JSON.parse(readFileSync(join(__dirname, '../js/euc/MANIFEST.json'), 'utf8')).files);
-  assert.equal(links.length, 31 + 5 + vendored.length);
+  assert.equal(links.length, 31 + 6 + vendored.length);
   for (const file of vendored) assert.ok(links.includes(`./js/euc/${file}`), `vendored module preloaded: ${file}`);
   assert.equal(new Set(links).size, links.length, 'each module is preloaded once');
   assert.equal(entries.length, 1);
@@ -66,4 +66,22 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
       assert.ok(url && urls.has(url), `${src} imports an unpreloaded or mismatched URL: ${specifier}`);
     }
   }
+});
+
+test('the title screen is in the page from the start, hidden, with a Ride button and a button per playable rider', () => {
+  const overlay = html.match(/<section id="title-overlay"[^>]*>([\s\S]*?)<\/section>/);
+  assert.ok(overlay, 'title overlay present');
+  assert.match(overlay[0], /<section id="title-overlay"[^>]*\bhidden\b/, 'hidden until the city is ready');
+  assert.match(overlay[1], /id="title-ride"/);
+  const riders = [...overlay[1].matchAll(/data-title-rider="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(riders, ['cool-rider', 'trollina']);
+  assert.match(overlay[1], /OpenStreetMap contributors/, 'map credit on the title too');
+});
+
+test('the corner link points to this game\'s own repo; EUC Thrills keeps its credit links', () => {
+  const link = html.match(/<a class="repo-link" href="([^"]+)"/);
+  assert.ok(link, 'the corner repo link exists');
+  assert.equal(link[1], 'https://github.com/VibezZzCoder/euc-nyc');
+  assert.match(html, /href="https:\/\/github\.com\/VibezZzCoder\/EUC-thrills"[^>]*><i>EUC Thrills<\/i><\/a> by VibezZzCoder/, 'map credits link EUC Thrills');
+  assert.match(html, /class="title-credits">Riding and riders from <em>EUC Thrills<\/em> by VibezZzCoder/);
 });

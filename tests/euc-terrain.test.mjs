@@ -7,7 +7,7 @@ import { EucController, createPose } from '../js/euc/simulation/EucController.js
 import { NEUTRAL_ACTIONS } from '../js/euc/input/actions.js';
 import { SIMULATION } from '../js/euc/data/tuning.js';
 import { NycTerrainSampler, boxesFromCityColliders, boxesFromFootprints } from '../js/euc-terrain.js';
-import { blockAt, streetZ, ISLAND_BOUNDS, WATER_RIDE } from '../js/city-config.js';
+import { blockAt, streetZ, ISLAND_BOUNDS, WATER_RIDE, getIslandBoundsAtZ } from '../js/city-config.js';
 
 const DT = 1 / SIMULATION.hz;
 const SPAWN_Z = streetZ(37); // controllers.js: 5th Ave at 37th St
@@ -118,9 +118,12 @@ test('a lamp post footprint is solid to the wheel and does not occlude the camer
 });
 
 test('the shore is a wall: riding at the Hudson stops short of the water', () => {
-  const sampler = new NycTerrainSampler();
-  const g = { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false };
-  assert.ok(sampler.sampleGround(ISLAND_BOUNDS.minX - 50, ROAD.z, g).height > 1);
+  const west = getIslandBoundsAtZ(ROAD.z).westX;
+  // heading -pi/2 rides toward -x (x += sin(heading)), at the Hudson, on the road west of the last kerb
+  const euc = new EucController(new NycTerrainSampler(), { spawn: { position: { x: west + 18, y: 0, z: ROAD.z }, headingY: -Math.PI / 2 } });
+  ride(euc, 6, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
+  assert.ok(euc.x < west + 12, `reached the shore, x ${(euc.x - west).toFixed(2)} m inside`);
+  assert.ok(euc.x > west + 7, `stopped at the wall, x ${(euc.x - west).toFixed(2)} m inside`);
 });
 
 // ---- Central Park: raised behind its real wall, ridden in by the gates (city-config.js CENTRAL_PARK_GATES) ----------
@@ -234,4 +237,17 @@ test('Bryant Park: the terrace is ridden at its drawn top, a ramp climbs to it f
   assert.equal(s.sampleGround(0.5, z0 + 3, probe()).height, s.sidewalkHeight, 'ramp foot: the sidewalk slab');
   assert.ok(Math.abs(s.sampleGround(6, z0 + 3, probe()).height - 1.06 * 0.75) < 1e-9, 'ramp: three quarters up');
   assert.equal(s.sampleGround(0.5, z0 + 10, probe()).height, 1.06, 'beside the ramp: the terrace face');
+});
+
+test('the shore is a wall only along a band: past it the esplanade as drawn, then the river under its surface', () => {
+  const s = new NycTerrainSampler();
+  const z = ROAD.z;
+  const west = getIslandBoundsAtZ(z).westX;
+  const at = (inland) => s.sampleGround(west + inland, z, probe()).height;
+  assert.equal(at(7.5), 3.0, 'the band (7 to 8 m inside the bulkhead) is the wall the wheel stops at');
+  assert.ok(at(4) <= ISLAND_BOUNDS.sidewalkHeight, `inside it, the drawn ground (${at(4)})`);
+  assert.ok(at(-3) <= ISLAND_BOUNDS.sidewalkHeight, 'the seawall coping');
+  assert.ok(at(-10) < ISLAND_BOUNDS.waterLevel, 'the river: just under its surface');
+  for (const inland of [7.5, 4, -10]) assert.equal(s.isOffLimits(west + inland, z), true, `${inland}: no getting up here`);
+  assert.equal(s.isOffLimits(west + 20, z), false);
 });

@@ -255,6 +255,154 @@ body::after {
 }
 
 /* ------------------------------------------------------------------------------------------------------------------
+   Title screen (js/title-screen.js): over the live city, which circles the rider. Name at the top, rider and Ride at
+   the bottom, the rider in the clear middle. Scrims top and bottom keep the text readable over any view.
+   ------------------------------------------------------------------------------------------------------------------ */
+.title-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95; /* under the loading screen (100), which fades off it */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  text-align: center;
+  padding: max(28px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background:
+    linear-gradient(to bottom, rgba(6, 6, 7, 0.72) 0%, rgba(6, 6, 7, 0.18) 32%, rgba(6, 6, 7, 0) 48%),
+    linear-gradient(to top, rgba(6, 6, 7, 0.86) 0%, rgba(6, 6, 7, 0.3) 34%, rgba(6, 6, 7, 0) 52%);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.title-overlay[hidden] { display: none; }
+.title-overlay.is-shown { opacity: 1; }
+
+.title-head,
+.title-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateY(6px);
+  transition: transform 0.7s var(--ease-out);
+}
+.title-overlay.is-shown .title-head,
+.title-overlay.is-shown .title-foot { transform: none; }
+
+.brand-badge.title-badge { width: 46px; height: 46px; border-radius: 13px; margin-bottom: 14px; }
+.brand-badge.title-badge .icon { width: 30px; height: 30px; }
+
+.title-kicker {
+  font-family: var(--font-sign);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--taxi);
+}
+
+.title-name {
+  margin-top: 2px;
+  font-size: clamp(40px, 9vw, 76px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.45);
+}
+
+.title-tagline {
+  margin-top: 10px;
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.title-riders {
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 14px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--glass-border);
+}
+
+.title-rider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px; /* a comfortable thumb target */
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  font: 600 15px var(--font-sans);
+  color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.title-rider:hover { background: var(--hover); color: var(--text); }
+.title-rider.active { background: rgba(255, 255, 255, 0.14); color: var(--text); box-shadow: inset 0 0 0 1px rgba(255, 194, 26, 0.55); }
+
+.title-ride {
+  margin-top: 14px;
+  min-width: 220px;
+  min-height: 54px;
+  padding: 0 34px;
+  border: 0;
+  border-radius: 16px;
+  font: 800 20px var(--font-sans);
+  letter-spacing: 0.02em;
+  color: var(--taxi-ink);
+  background: var(--taxi);
+  box-shadow: 0 10px 30px -10px rgba(255, 194, 26, 0.6), inset 0 -2px 0 rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.title-ride:hover { filter: brightness(1.06); }
+.title-ride:active { transform: scale(0.97); }
+.title-ride:focus-visible,
+.title-rider:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+
+.title-hint {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.title-hint kbd { vertical-align: 1px; }
+/* The hint names the device in use (main.js sets body[data-input]); touch has the button and nothing else */
+.title-hint--gamepad,
+body[data-input='gamepad'] .title-hint--keyboard,
+body.touch-enabled .title-hint { display: none; }
+body[data-input='gamepad'] .title-hint--gamepad { display: block; }
+
+.title-credits {
+  max-width: 560px;
+  margin-top: 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* While the title is up, the game's HUD and touch controls are out of the way */
+body.title-open .hud,
+body.title-open #touch-controls,
+body.title-open .getup-prompt { visibility: hidden; }
+
+/* Short screens (a phone in landscape): tighter, with the rider and Ride side by side so the rider stays in view */
+@media (max-height: 500px) {
+  .title-overlay { padding-top: max(14px, env(safe-area-inset-top)); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .brand-badge.title-badge { display: none; }
+  .title-kicker { font-size: 11px; }
+  .title-name { font-size: 36px; }
+  .title-tagline { margin-top: 4px; font-size: 13px; }
+  .title-foot { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px 12px; }
+  .title-ride { margin-top: 0; min-width: 170px; min-height: 48px; }
+  .title-hint { display: none; }
+  .title-credits { flex-basis: 100%; margin-top: 0; font-size: 10.5px; }
+}
+
+/* ------------------------------------------------------------------------------------------------------------------
    HUD layout: four corners plus the bottom centre, the middle of the screen stays clear
    ------------------------------------------------------------------------------------------------------------------ */
 .hud {

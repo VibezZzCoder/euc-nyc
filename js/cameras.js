@@ -50,6 +50,8 @@ class CameraSystem {
     this.smoothedSpeed = 0;
     this._desiredPos = new THREE.Vector3();
     this._desiredLook = new THREE.Vector3();
+    // Title screen (title-screen.js): the camera circles the rider instead of following (see setTitleOrbit)
+    this.titleOrbit = false;
     // Follow-camera occlusion (see occlude()): how far along the rider-to-camera arm the camera may sit, 0..1
     this.armFraction = 1;
     this._rayOrigin = { x: 0, y: 0, z: 0 };
@@ -164,6 +166,16 @@ class CameraSystem {
     this.setCameraPreset('chase', true);
   }
 
+  /**
+   * The title screen's camera: a slow circle round the rider, on the chase preset's smoothing and wall occlusion. Off,
+   * it glides back behind the rider into the chase view.
+   */
+  setTitleOrbit(on) {
+    this.titleOrbit = Boolean(on);
+    this.resetOrbit();
+    this.setCameraPreset('chase', false);
+  }
+
   getActivePreset() {
     return CAMERA_PRESETS.find((p) => p.id === this.activePresetId) || CAMERA_PRESETS[0];
   }
@@ -194,7 +206,18 @@ class CameraSystem {
 
     const totalYaw = entity.heading + this.orbitYawOffset;
 
-    switch (this.activePresetId) {
+    switch (this.titleOrbit ? 'title' : this.activePresetId) {
+      case 'title': {
+        const angle = entity.heading + Math.PI * 0.82 + elapsed * TITLE_ORBIT.turnRate;
+        desiredPos.set(
+          entity.position.x - Math.sin(angle) * TITLE_ORBIT.radius,
+          entity.position.y + TITLE_ORBIT.height,
+          entity.position.z - Math.cos(angle) * TITLE_ORBIT.radius
+        );
+        desiredLook.set(entity.position.x, entity.position.y + TITLE_ORBIT.lookHeight, entity.position.z);
+        break;
+      }
+
       case 'chase': {
         const dist = entity.chaseDistance * this.zoomMultiplier * (1 + Math.min(0.25, this.smoothedSpeed * 0.01));
         const height = entity.chaseHeight * this.zoomMultiplier + Math.sin(this.orbitPitchOffset) * dist * 0.85;
@@ -393,6 +416,9 @@ class CameraSystem {
     look.lerp(this._riderPoint.set(o.x, entity.position.y + CAMERA_ARM.lookHeight, o.z), Math.min(1, pull * CAMERA_ARM.lookPull));
   }
 }
+
+// The title screen's circle round the rider: low and close enough to see the rider and the wheel, slow
+const TITLE_ORBIT = Object.freeze({ radius: 5.2, height: 1.7, lookHeight: 1.05, turnRate: 0.09 });
 
 // The follow cameras' arm against walls (CameraSystem.occlude)
 const CAMERA_ARM = Object.freeze({

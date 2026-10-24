@@ -9,6 +9,11 @@ of Mr.doob's three.js New York.
 A browser with WebGPU: current Chrome or Edge on a desktop or laptop, or a recent Chrome on Android. A gamepad and a touch
 screen both work. Sound starts after your first click, key or tap.
 
+## Starting
+
+After loading, the title screen shows the city with your rider in it. Pick **Cool Rider** or **Trollina**, then
+press **Ride** (or Enter, or A on a gamepad). You can still change rider at any time while riding.
+
 ## Riding
 
 You ride an electric unicycle through Manhattan, from the Battery to Harlem. A few things are specific to a real
@@ -28,8 +33,8 @@ wheel and worth knowing before they surprise you:
 
 ### Crashes
 
-Riding into a building, a post, a car, a bus or a person fast enough is a crash, and so are a cut-out and a landing
-that is too hard. After a moment a prompt shows how to get up: **R** on a keyboard, **B** on a gamepad, **GET UP** on
+Riding into a building, a post, a car, a bus, a person or the edge of the waterfront fast enough is a crash, and so are a
+cut-out and a landing that is too hard. After a moment a prompt shows how to get up: **R** on a keyboard, **B** on a gamepad, **GET UP** on
 a touch screen. You get up where you fell (at the last safe spot if you fell into water). If you just wait, or start leaning again, the wheel puts you back on at
 the last safe spot you rode through.
 
@@ -98,7 +103,8 @@ East River, and an aerial auto-director. Pick one from the camera menu (bottom r
   **Click or tap any spot on the map and you are there,** exactly where you pointed: a street corner, a lawn, a
   plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
 - **Teleport** menu (top right): eight landmarks, from Times Square to One World Trade Center.
-- **Time of day** (top right): golden hour, midday, blue hour and night.
+- **Time of day** (top right): golden hour, midday, blue hour and night. At blue hour and night the wheel's headlight
+  comes on with the cars' and lights the road ahead.
 
 ## What the game saves
 

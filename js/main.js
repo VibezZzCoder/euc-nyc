@@ -22,6 +22,7 @@ import { CityAudioSystem } from './audio-system.js';
 import { createEucDynamicWorld, combineBodySources } from './euc-dynamic.js';
 import { PLAYABLE_RIDERS, RIDERS, isPlayableRider } from './euc-rider.js';
 import { EucHud, formatSpeed } from './euc-hud.js';
+import { TitleScreen } from './title-screen.js';
 
 // js/main.js
 // Main entry point for New York City (Midtown Manhattan) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
@@ -220,6 +221,7 @@ async function initApp() {
 
   // 6. Wire UI Controls (Strictly using safe DOM APIs: textContent, classList, addEventListener)
   const riderButtons = document.querySelectorAll('[data-rider]');
+  let titleScreen = null; // TitleScreen, created with the rest of the UI below
   const cameraButtons = document.querySelectorAll('[data-camera]');
   const timeButtons = document.querySelectorAll('[data-time]');
   const teleportButtons = document.querySelectorAll('[data-teleport]');
@@ -310,6 +312,7 @@ async function initApp() {
       btn.setAttribute('aria-pressed', String(on));
     });
     placeRiderIndicator();
+    titleScreen?.setRider(ent.riderId);
     if (elMode) elMode.textContent = RIDERS[ent.riderId].name;
     savePlayerState();
 
@@ -558,6 +561,23 @@ async function initApp() {
     }
   });
 
+  // The title screen, shown once the city is on screen (see the loop). Until Ride, the camera circles the rider and no
+  // input reaches the ride: the overlay covers the canvas and touch layer, it takes the keys first, and the gamepad is
+  // polled by the title instead of gamepadControls.
+  titleScreen = new TitleScreen({
+    root: document.getElementById('title-overlay'),
+    riders: PLAYABLE_RIDERS,
+    onRider: selectRider,
+    getRider: () => controllerManager.getActiveEntity().riderId,
+    onStart: () => {
+      controllerManager.resetInput();
+      gamepadControls.reset();
+      touchControls.setEnabled(true);
+      cameraSystem.setTitleOrbit(false);
+      if (audioSystem.enabled) audioSystem.unlock(); // inside the Ride gesture: iOS starts sound only from one
+    },
+  });
+
   // Initialize the UI and chase camera around the restored (or first-visit) rider.
   document.body.dataset.mode = 'euc';
   document.body.dataset.input = promptDevice;
@@ -565,6 +585,10 @@ async function initApp() {
   renderControlHints();
   selectRider(controllerManager.getActiveEntity().riderId);
   selectCamera('chase', true);
+  if (titleScreen.root) {
+    cameraSystem.setTitleOrbit(true);
+    touchControls.setEnabled(false);
+  }
   selectTime('golden');
   // the web fonts change the buttons' widths once they arrive
   if (document.fonts) document.fonts.ready.then(placeRiderIndicator);
@@ -670,7 +694,8 @@ async function initApp() {
     elapsed += dt;
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
-    gamepadControls.update(dt);
+    if (titleScreen.isOpen) titleScreen.update();
+    else if (titleScreen.started || !titleScreen.root) gamepadControls.update(dt);
     controllerManager.update(dt, elapsed);
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
@@ -720,6 +745,7 @@ async function initApp() {
         markInit('gpu');
         console.log(`[init] ${initTimings.join(', ')}`);
         initTimings = null;
+        titleScreen.show(); // under the loading screen, which fades off it
         if (loadingOverlay) loadingOverlay.classList.add('hidden');
         audioSystem.ready = true;
         setLoadingProgress(1);
