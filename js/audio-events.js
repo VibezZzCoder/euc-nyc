@@ -406,12 +406,14 @@ function smoothParameter(parameter, timeConstant, epsilon = 0.0001) {
   };
 }
 
+const HOWL_TRIM = 2.0; // about the old noise bed's loudness (scripts/audio_levels.py: -59 LUFS on a street)
+
 export function createWindVoice(ctx, resources, output) {
   const master = ctx.createGain();
   master.gain.setValueAtTime(0, ctx.currentTime);
   master.gain.setTargetAtTime(1, ctx.currentTime, 0.8);
   master.connect(output);
-  const nodes = [master], sources = [], channels = [];
+  const nodes = [master], sources = [], channels = [], inputs = [];
   let disposed = false, remaining = 4;
   const disconnect = () => {
     for (const node of nodes) node.disconnect();
@@ -455,13 +457,37 @@ export function createWindVoice(ctx, resources, output) {
       rumble: smoothParameter(rumble.gain, 1),
       cutoff: smoothParameter(lowpass.frequency, 0.8, 1)
     });
+    inputs.push({ noise, highpass });
     sources.push(noise, gust);
     nodes.push(noise, highpass, lowpass, air, rumbleFilter, rumble, pan, gust, modulation);
     for (const source of [noise, gust]) source.onended = () => { if (--remaining === 0) disconnect(); };
     noise.start(ctx.currentTime, i * resources.noise.duration * 0.43);
     gust.start(ctx.currentTime, i * resources.gusts.duration * 0.37);
   }
+  let howling = false;
   return {
+    /**
+     * Swap the synthesized noise for the rider's wind recording (euc-audio.js, wind_howl_loop.wav from EUC Thrills),
+     * so the city's wind and the rider's are the same sound. Same filters, gusts and levels; the recording is about a
+     * third as loud (RMS) as the noise, hence the trim.
+     */
+    useHowl(buffer) {
+      if (disposed || howling || !buffer) return;
+      howling = true;
+      const now = ctx.currentTime;
+      inputs.forEach(({ noise, highpass }, i) => {
+        const howl = ctx.createBufferSource();
+        howl.buffer = buffer;
+        howl.loop = true;
+        const trim = ctx.createGain();
+        trim.gain.value = HOWL_TRIM;
+        howl.connect(trim).connect(highpass);
+        howl.start(now, (i * 0.43 * buffer.duration) % buffer.duration);
+        noise.stop(now + 0.05);
+        sources.push(howl);
+        nodes.push(howl, trim);
+      });
+    },
     update({ altitude = 0, night = 0, traffic = 0, enclosure = 0 } = {}, now = ctx.currentTime) {
       if (disposed) return;
       now = Math.max(ctx.currentTime, finite(now, ctx.currentTime));

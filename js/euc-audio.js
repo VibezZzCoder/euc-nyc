@@ -35,7 +35,8 @@ export const WHEEL_RADIUS = WHEEL.tyreDiameter / 2; // 0.25 m
 // Balance (2026-10-23, after the owner's playtest: "way too loud"). The rider's sound plays all the time and is not
 // spatialised, so it sits well under a passing car (about -30 LUFS on the mix bus at 8 m) instead of level with it.
 // Measured with scripts/audio_levels.py in the workspace:
-//   bed (motor + wind + tyre): about -48 LUFS at 5 m/s and -40 at 14 m/s;
+//   bed (motor + wind + tyre): about -49 LUFS at 5 m/s and -41 at 14 m/s (2026-10-24: motor -6 dB, rolling hiss
+//   -16 dB, wind -2.6 dB and played as EUC Thrills plays it);
 //   one-shots: momentary peaks of about -33 (land) to -27 (crash) LUFS;
 //   over-speed beeps: about 6 dB above the bed, so they still cut through.
 export const MOTOR = Object.freeze({
@@ -48,9 +49,9 @@ export const MOTOR = Object.freeze({
   partials: Object.freeze([[1, 0.34], [2, 0.24], [3, 0.24], [3, 0.24]]), // [harmonic, gain]; the 3rd is a detuned pair
   detuneCents: 7, // the second 3rd harmonic: a slow beat that keeps the tone from sounding like a test oscillator
   commutationHarmonic: 6, // six-step commutation: the tone that means "fast"
-  idleLevel: 0.0045, // all three -12 dB from the first version
-  speedLevel: 0.011,
-  loadLevel: 0.019,
+  idleLevel: 0.00225, // all three -18 dB from the first version (2026-10-24 playtest: "wheel too loud", a further -6 dB)
+  speedLevel: 0.0055,
+  loadLevel: 0.0095,
   cutoffAtRest: 240,
   cutoffPerSpeed: 1500,
   cutoffPerLoad: 1700,
@@ -58,7 +59,7 @@ export const MOTOR = Object.freeze({
   gritQ: 6, // narrow noise band on the commutation tone: magnetic grain under load
   gritPerLoad: 1.1,
   coilHz: 4100, // PWM/coil whine: fixed carrier, amplitude-modulated by the commutation tone
-  coilLevel: 0.0008,
+  coilLevel: 0.0004, // -6 dB with the rest of the motor
   coilDepth: 0.55,
   response: 0.06, // seconds, setTargetAtTime time constant
   spinUpResponse: 0.22,
@@ -68,20 +69,23 @@ export const MOTOR = Object.freeze({
 export const WIND = Object.freeze({
   onsetSpeed: 3, // silent below
   fullSpeed: 16, // strong from here
-  level: 0.19, // -7 dB: the sense of speed, not a gale
+  level: 0.14, // -9.5 dB: the sense of speed, not a gale (-2.6 dB on 2026-10-24, to sit with the quieter motor)
   exponent: 1.5,
   beyond: 0.15, // a little more past fullSpeed, reaching it 12 m/s later
   airBoost: 1.25,
-  lowHz: 320,
-  highHz: 1450,
-  q: 0.7,
+  // The howl recording played as EUC Thrills plays it (src/audio/sink.ts, AUDIO.wind*): at its own pitch, through a
+  // wide band that opens with speed. The first version also bent its pitch with speed and used a narrower band, which
+  // made it whine (2026-10-24 playtest).
+  lowHz: AUDIO.windCutoffAtRest, // 240
+  highHz: AUDIO.windCutoffAtSpeed, // 1200
+  q: AUDIO.windQ, // 0.4
   noiseTrim: 0.32, // the fallback noise is about 3x as loud (RMS) as the howl loop
   response: 0.2,
 });
 
 export const TYRE = Object.freeze({
   referenceSpeed: AUDIO.tyreReferenceSpeed, // 9 m/s: the toko loop holds one tick per revolution at this speed
-  level: 0.2, // -8 dB
+  level: 0.03, // -25 dB: barely there (2026-10-24 playtest: the rolling hiss was too present); the toko tick carries it
   maxRamp: 1.4,
   centreRise: AUDIO.tyreCutoffRise, // 1.25
   tokoLevel: 0.05,
@@ -189,8 +193,7 @@ export function windTargets(speed, grounded = true) {
   const beyond = clamp((v - WIND.fullSpeed) / 12) * WIND.beyond;
   return {
     gain: WIND.level * (ramp ** WIND.exponent + beyond) * (grounded ? 1 : WIND.airBoost),
-    hz: WIND.lowHz + (WIND.highHz - WIND.lowHz) * ramp + 600 * beyond,
-    rate: 0.92 + 0.16 * ramp,
+    hz: WIND.lowHz + (WIND.highHz - WIND.lowHz) * ramp + 400 * beyond,
   };
 }
 
@@ -255,10 +258,12 @@ export class EucAudio {
   /**
    * @param {AudioContext} context  the city's context (already created by a user gesture)
    * @param {AudioNode} output      the city mix
-   * @param {{ noise?: AudioBuffer, reflections?: AudioNode }} options  shared noise loop and the street reflection bus
+   * @param {{ noise?: AudioBuffer, reflections?: AudioNode, onWindHowl?: (buffer: AudioBuffer) => void }} options
+   *   shared noise loop, the street reflection bus, and who else wants the wind recording once it is decoded
    */
-  constructor(context, output, { noise = null, reflections = null } = {}) {
+  constructor(context, output, { noise = null, reflections = null, onWindHowl = null } = {}) {
     this.context = context;
+    this.onWindHowl = onWindHowl;
     this.disposed = false;
     this.noise = noise || this.makeNoise();
     this.buffers = {};
@@ -348,7 +353,6 @@ export class EucAudio {
       tyreQ: new Glide(this.tyreBand.Q, 0.01),
       toko: new Glide(this.tokoLevel.gain),
     };
-    this.windRate = null;
     this.tokoRate = null;
 
     this.motorHz.start(now);
@@ -450,7 +454,7 @@ export class EucAudio {
         source.connect(this.windTrim);
         source.start(now, 0);
         this.windSource = source;
-        this.windRate = new Glide(source.playbackRate, 0.002);
+        if (buffer) this.onWindHowl?.(buffer);
       } else if (key === 'tyreSolid' && buffer && !this.tokoSource) {
         const source = this.context.createBufferSource();
         source.buffer = buffer;
@@ -510,7 +514,6 @@ export class EucAudio {
     const wind = windTargets(euc ? speed : 0, grounded);
     g.wind.to(wind.gain, now, WIND.response);
     g.windHz.to(wind.hz, now, WIND.response);
-    this.windRate?.to(wind.rate, now, 0.3);
 
     const tyre = tyreTargets(euc ? speed : 0, controller?.currentSurface, grounded, crashed);
     const lift = grounded && !crashed ? TYRE.response : TYRE.liftResponse;

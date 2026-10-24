@@ -185,7 +185,11 @@ class CityAudioSystem {
     this.wind = createWindVoice(context, this.resources, this.mix);
     // The rider's own wheel: non-spatial, through the mix (so mute, master and suspend apply), with a reflection send.
     // It fetches its samples now, i.e. only after a user gesture has created the context.
-    this.euc = new EucAudio(context, this.mix, { noise: this.resources.noise, reflections: this.reflections });
+    this.euc = new EucAudio(context, this.mix, {
+      noise: this.resources.noise,
+      reflections: this.reflections,
+      onWindHowl: (buffer) => this.wind?.useHowl(buffer), // one wind sound for the whole game: the EUC Thrills howl
+    });
     context.onstatechange = () => this.onStateChange();
   }
 

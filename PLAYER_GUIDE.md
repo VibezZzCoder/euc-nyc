@@ -30,7 +30,7 @@ wheel and worth knowing before they surprise you:
 
 Riding into a building, a post, a car, a bus or a person fast enough is a crash, and so are a cut-out and a landing
 that is too hard. After a moment a prompt shows how to get up: **R** on a keyboard, **B** on a gamepad, **GET UP** on
-a touch screen. You get up where you fell. If you just wait, or start leaning again, the wheel puts you back on at
+a touch screen. You get up where you fell (at the last safe spot if you fell into water). If you just wait, or start leaning again, the wheel puts you back on at
 the last safe spot you rode through.
 
 Slower knocks only stop you or scrub your speed.
@@ -44,7 +44,10 @@ Slower knocks only stop you or scrub your speed.
 - **Central Park** sits behind its low stone wall, a metre above the street. Ride in by its gates, which are the real
   entrances: on Central Park South at 6th Ave, 7th Ave, 8th Ave and near 5th Ave; on 5th Ave at 72nd, 90th and 102nd
   St; on Central Park West at 72nd, 85th and 100th St; and on 110th St. Inside, the ponds and the Reservoir are water,
-  not ground. The Reservoir's running track is a raised loop you can hop onto.
+  not ground: the wheel stops at the shore, and hit it fast and you go in. The Reservoir's running track is a raised
+  loop you can hop onto.
+- **Bryant Park** stands on a raised terrace. Ride up by the two ramps on its 6th Ave side, either side of the
+  fountain; the lawn is a kerb higher again.
 - **The squares** (Madison, Union, Washington and Tompkins Square Parks) have iron fences: ride in by their gates.
   Park walks, lawn beds and the Times Square and Herald Square plazas are a little above the road, like kerbs.
 - **Buildings are solid exactly where they stand.** Plazas, the lawns round housing towers, gaps between buildings and
@@ -84,14 +87,16 @@ carries on, only the rider changes. Each has their own crash voice.
 
 ## Cameras
 
-Three follow cameras (*3rd-Person Chase*, *Low-Angle Action*, *First-Person*) and scenic views around the city: Central
+Three follow cameras (*3rd-Person Chase*, *Low-Angle Action*, *First-Person*); the first two move in front of a
+wall rather than into it. And scenic views around the city: Central
 Park, 5th Ave and the Empire State Building, Times Square, 42nd St, the Empire State observatory deck, Bryant Park, the
 East River, and an aerial auto-director. Pick one from the camera menu (bottom right; top right on touch screens).
 
 ## Getting around
 
 - **Map** (`M`, Start, the map button, or tap the minimap): the whole of Manhattan with street and landmark search.
-  Click or tap anywhere to go there. The map also carries the credits.
+  **Click or tap any spot on the map and you are there,** exactly where you pointed: a street corner, a lawn, a
+  plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
 - **Teleport** menu (top right): eight landmarks, from Times Square to One World Trade Center.
 - **Time of day** (top right): golden hour, midday, blue hour and night.
 

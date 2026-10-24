@@ -761,6 +761,10 @@ function walkSignal(time, isAvenue) {
 const CENTRAL_PARK_OUTLINE = toPts(GEO.centralPark.outline);
 const CENTRAL_PARK_TOP = 1.24;
 const CENTRAL_PARK_GATE_SIZE = Object.freeze({ width: 7, length: 12 });
+// Ponds and the Reservoir as the wheel sees them (city-grid.js addRideWater, euc-terrain.js): a band `band` m wide
+// along the shore stands `wall` m above the water (more than a charged hop), and inside it the floor is `floorDepth` m
+// under the surface.
+const WATER_RIDE = Object.freeze({ band: 1.0, wall: 1.0, floorDepth: 0.12 });
 
 function inCentralPark(x, z) {
   const b = CENTRAL_PARK_BOUNDS;
@@ -833,6 +837,7 @@ export {
   AVENUES,
   CENTRAL_PARK_OUTLINE,
   CENTRAL_PARK_TOP,
+  WATER_RIDE,
   CENTRAL_PARK_GATE_SIZE,
   CENTRAL_PARK_GATES,
   inCentralPark,

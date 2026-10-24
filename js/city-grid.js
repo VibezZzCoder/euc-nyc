@@ -41,6 +41,7 @@ import {
   CUT_Z,
   CENTRAL_PARK_OUTLINE,
   CENTRAL_PARK_TOP,
+  WATER_RIDE,
   CENTRAL_PARK_GATE_SIZE,
   CENTRAL_PARK_GATES,
   centralParkGateAt
@@ -1532,7 +1533,17 @@ function buildCityGrid(scene) {
     for (const p of poly) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
     }
-    rideTops.push({ poly: poly.map((p) => ({ x: p.x, z: p.z })), top, surface, minX, maxX, minZ, maxZ });
+    const entry = { poly: poly.map((p) => ({ x: p.x, z: p.z })), top, surface, minX, maxX, minZ, maxZ };
+    rideTops.push(entry);
+    return entry;
+  }
+  // Water drawn at height `level`: the wheel cannot ride onto it, so a band along its shore is a wall too high to hop
+  // (city-config.js WATER_RIDE), and inside that band the ground is the pond's floor just under the surface, so a rider
+  // thrown in lands in the water instead of standing on an invisible lid.
+  // `floor` overrides that when something drawn sits higher under the water (the Reservoir's basin).
+  function addRideWater(poly, level, floor = level - WATER_RIDE.floorDepth) {
+    const entry = addRideTop(poly, level + WATER_RIDE.wall, 'stone');
+    if (entry) entry.water = { level, floor };
   }
   // An upright box, yawed like a three.js mesh with rotation.y = rotY (EUC BoxCollider convention: the same)
   function addRideSolid(x, z, w, d, bottom, top, rotY = 0, occludes = false) {
@@ -1944,18 +1955,18 @@ function buildCityGrid(scene) {
   for (const w of CPG.water) {
     const pts = flatPts(w.ring);
     cpWaterPolys.push(pts);
-    // The wheel does not ride on water: every pond is a wall at its shore (as the island's shore is)
-    addRideTop(pts, 3.0, 'stone');
-    if (w.name === 'Jacqueline Kennedy Onassis Reservoir') {
+    // The wheel does not ride on water: every pond is a wall at its shore, with its floor inside (addRideWater)
+    const reservoir = w.name === 'Jacqueline Kennedy Onassis Reservoir';
+    const waterY = reservoir ? 1.58 : 1.24;
+    addRideWater(pts, waterY, reservoir ? 1.56 : undefined); // the Reservoir's basin is drawn solid up to 1.56
+    if (reservoir) {
       const track = offsetPolygon(pts, -6);
       if (track) {
         group.add(createExtrudedPolygonMesh(track, 1.18, 0.38, cpPathMat, true, false));
         addRideTop(track, 1.56, 'gravel'); // the running track: hop up onto it and ride the loop
       }
-      group.add(createFlatPolygonMesh(pts, 1.58, waterMat, true));
-    } else {
-      group.add(createFlatPolygonMesh(pts, 1.24, waterMat, true));
     }
+    group.add(createFlatPolygonMesh(pts, waterY, waterMat, true));
   }
 
   // The loop drives (East, West, Center & Terrace Drives, car-free) and the four transverse roads crossing the park

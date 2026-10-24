@@ -10,6 +10,8 @@ import {
   EUC_SAMPLE_FILES, EucAudio, WHEEL_RADIUS, MOTOR, crashSampleKey, overspeedBeepPeriod, planBeeps, wheelHz,
   motorFundamentalHz, motorDrive, motorTargets, windTargets, tyreTargets, landingScale, impactScale, WIND,
 } from '../js/euc-audio.js';
+import { createWindVoice } from '../js/audio-events.js';
+import { AUDIO } from '../js/euc/data/tuning.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_DIR = join(ROOT, 'audio/euc');
@@ -130,6 +132,13 @@ test('wind: silent when stopped, noticeable from about 6 m/s, strong from about 
   assert.ok(windTargets(10, false).gain > windTargets(10).gain, 'louder in the air');
 });
 
+test('wind: the howl recording plays at its own pitch, through EUC Thrills\' band (no speed-bent pitch: it whined)', () => {
+  assert.equal(windTargets(20).rate, undefined);
+  assert.equal(WIND.q, AUDIO.windQ);
+  assert.equal(WIND.lowHz, AUDIO.windCutoffAtRest);
+  assert.equal(windTargets(0).hz, AUDIO.windCutoffAtRest);
+});
+
 test('tyre: rolls on the ground only; the toko tick follows wheel speed on pavement and not on grass', () => {
   assert.equal(tyreTargets(0).noise, 0);
   assert.ok(tyreTargets(8).noise > 0 && tyreTargets(8).toko > 0);
@@ -161,6 +170,7 @@ function fakeContext() {
     currentTime: 1, sampleRate: 48000, state: 'running', played,
     createGain: () => node({ gain: param(1) }),
     createBiquadFilter: () => node({ type: 'lowpass', frequency: param(350), Q: param(1), gain: param(0), detune: param(0) }),
+    createStereoPanner: () => node({ pan: param(0) }),
     createOscillator: () => node({ type: 'sine', frequency: param(440), detune: param(0), start() {}, stop() {} }),
     createConstantSource: () => node({ offset: param(1), start() {}, stop() {} }),
     createBufferSource: () => {
@@ -236,3 +246,19 @@ test('EucAudio: failed fetches fall back without throwing; crash picks the rider
     audio.dispose();
     audio.update(entity, [{ type: 'hop', charge: 1 }]);
   }));
+
+test('city wind: the synthesized noise gives way to the EUC Thrills howl once it is decoded (one wind sound)', () => {
+  const ctx = fakeContext();
+  const buffer = (seconds) => ctx.createBuffer(1, Math.round(seconds * 100), 100);
+  const resources = { noise: buffer(2), gusts: buffer(3) };
+  const wind = createWindVoice(ctx, resources, ctx.createGain());
+  const howl = buffer(4);
+  assert.equal(ctx.played.filter((p) => p.buffer === resources.noise).length, 2, 'two noise channels before');
+  wind.useHowl(howl);
+  wind.useHowl(howl); // only once
+  const howls = ctx.played.filter((p) => p.buffer === howl);
+  assert.equal(howls.length, 2, 'one howl per channel');
+  assert.ok(howls.every((p) => p.loop));
+  wind.update({ altitude: 2, traffic: 0.4, enclosure: 0.5 });
+  wind.dispose(true);
+});

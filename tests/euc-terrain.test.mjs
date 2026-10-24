@@ -7,7 +7,7 @@ import { EucController, createPose } from '../js/euc/simulation/EucController.js
 import { NEUTRAL_ACTIONS } from '../js/euc/input/actions.js';
 import { SIMULATION } from '../js/euc/data/tuning.js';
 import { NycTerrainSampler, boxesFromCityColliders, boxesFromFootprints } from '../js/euc-terrain.js';
-import { blockAt, streetZ, ISLAND_BOUNDS } from '../js/city-config.js';
+import { blockAt, streetZ, ISLAND_BOUNDS, WATER_RIDE } from '../js/city-config.js';
 
 const DT = 1 / SIMULATION.hz;
 const SPAWN_Z = streetZ(37); // controllers.js: 5th Ave at 37th St
@@ -195,4 +195,43 @@ test('raised tops from city-grid.js lift the ground (the highest wins) and a pon
   assert.equal(bed.height, 0.41);
   assert.equal(bed.surface, 'grass');
   assert.equal(s.sampleGround(30, SPAWN_Z - 30, probe()).height < 0.3, true, 'outside: the city as before');
+});
+
+test('a pond is a wall along its shore only: inside, its floor sits under the surface, and it counts as water', () => {
+  const level = 1.24;
+  const x0 = 0, z0 = SPAWN_Z - 40, w = 20;
+  const pond = {
+    poly: [{ x: x0, z: z0 }, { x: x0 + w, z: z0 }, { x: x0 + w, z: z0 + w }, { x: x0, z: z0 + w }],
+    top: level + WATER_RIDE.wall, surface: 'stone', minX: x0, maxX: x0 + w, minZ: z0, maxZ: z0 + w,
+    water: { level, floor: level - WATER_RIDE.floorDepth },
+  };
+  const s = new NycTerrainSampler({ tops: [pond] });
+  const shore = s.sampleGround(x0 + WATER_RIDE.band / 2, z0 + w / 2, probe());
+  assert.equal(shore.height, level + WATER_RIDE.wall, 'the shore band is a wall');
+  assert.ok(WATER_RIDE.wall > 0.64, 'higher than a charged hop (3 m/s launch: 0.46 m, +40%)');
+  const middle = s.sampleGround(x0 + w / 2, z0 + w / 2, probe());
+  assert.equal(middle.height, level - WATER_RIDE.floorDepth, 'inside: the floor, under the surface');
+  assert.equal(s.isWater(x0 + w / 2, z0 + w / 2), true);
+  assert.equal(s.isWater(x0 + 0.2, z0 + w / 2), true, 'the band counts as water too');
+  assert.equal(s.isWater(x0 - 1, z0 + w / 2), false);
+
+  // The wheel rolling at the pond stops at the band (it never reaches the floor)
+  const euc = new EucController(s, { spawn: { position: { x: x0 - 6, y: 0, z: z0 + w / 2 }, headingY: Math.PI / 2 } });
+  ride(euc, 4, { ...NEUTRAL_ACTIONS, throttle: 0.5 });
+  assert.ok(euc.x > x0 - 3, `reached the shore, x ${euc.x.toFixed(2)}`);
+  assert.ok(euc.x < x0 + WATER_RIDE.band, `stopped at the shore, x ${euc.x.toFixed(2)}`);
+});
+
+test('Bryant Park: the terrace is ridden at its drawn top, a ramp climbs to it from the sidewalk, the lawn above', () => {
+  const z0 = SPAWN_Z - 60;
+  const lawn = {
+    minX: 10, maxX: 30, minZ: z0 + 5, maxZ: z0 + 25, top: 1.32,
+    terrace: { minX: 0, maxX: 40, minZ: z0, maxZ: z0 + 30, top: 1.06, ramps: [{ fromX: 0, toX: 8, minZ: z0 + 2, maxZ: z0 + 4 }] },
+  };
+  const s = new NycTerrainSampler({ lawn });
+  assert.equal(s.sampleGround(35, z0 + 15, probe()).height, 1.06, 'terrace');
+  assert.equal(s.sampleGround(20, z0 + 15, probe()).height, 1.32, 'lawn');
+  assert.equal(s.sampleGround(0.5, z0 + 3, probe()).height, s.sidewalkHeight, 'ramp foot: the sidewalk slab');
+  assert.ok(Math.abs(s.sampleGround(6, z0 + 3, probe()).height - 1.06 * 0.75) < 1e-9, 'ramp: three quarters up');
+  assert.equal(s.sampleGround(0.5, z0 + 10, probe()).height, 1.06, 'beside the ramp: the terrace face');
 });

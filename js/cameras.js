@@ -50,6 +50,11 @@ class CameraSystem {
     this.smoothedSpeed = 0;
     this._desiredPos = new THREE.Vector3();
     this._desiredLook = new THREE.Vector3();
+    // Follow-camera occlusion (see occlude()): how far along the rider-to-camera arm the camera may sit, 0..1
+    this.armFraction = 1;
+    this._rayOrigin = { x: 0, y: 0, z: 0 };
+    this._rayDirection = { x: 0, y: 0, z: 0 };
+    this._riderPoint = new THREE.Vector3();
 
     this.bindPointerControls();
   }
@@ -351,8 +356,53 @@ class CameraSystem {
     }
 
     this.camera.position.copy(this.currentPos);
-    this.camera.lookAt(this.currentLookAt);
+    const look = this._look ??= new THREE.Vector3();
+    look.copy(this.currentLookAt);
+    if (this.activePresetId === 'chase' || this.activePresetId === 'action') this.occlude(entity, dt, look);
+    else this.armFraction = 1;
+    this.camera.lookAt(look);
+  }
+
+  /**
+   * Keep a follow camera out of buildings: one ray (euc-terrain.js raycast, buildings and landmarks; posts do not
+   * occlude) from the rider's chest to the camera. Something in the way pulls the camera in front of it at once; it
+   * eases back out once the way is clear. Only the rendered position moves, so the follow smoothing is unaffected.
+   */
+  occlude(entity, dt, look) {
+    const sampler = this.controllerManager?.eucSampler;
+    if (!sampler?.raycast || !entity?.position) return;
+    const o = this._rayOrigin, d = this._rayDirection;
+    o.x = entity.position.x;
+    o.y = entity.position.y + CAMERA_ARM.anchorHeight;
+    o.z = entity.position.z;
+    d.x = this.camera.position.x - o.x;
+    d.y = this.camera.position.y - o.y;
+    d.z = this.camera.position.z - o.z;
+    const length = Math.hypot(d.x, d.y, d.z);
+    if (!(length > CAMERA_ARM.minDistance)) return;
+    const hit = sampler.raycast(o, d, length);
+    const target = hit === null ? 1 : Math.max(CAMERA_ARM.minDistance, hit - CAMERA_ARM.clearance) / length;
+    if (target < this.armFraction) this.armFraction = target;
+    else this.armFraction += (target - this.armFraction) * (1 - Math.exp(-dt * CAMERA_ARM.easeOut));
+    if (this.armFraction >= 0.999) return;
+    const f = Math.min(1, this.armFraction);
+    // Pulled in, it also rises and tips down to look over the rider rather than into their back. Walls are upright
+    // boxes, so a point in front of one stays in front of it at any height.
+    const pull = 1 - f;
+    this.camera.position.set(o.x + d.x * f, o.y + d.y * f + CAMERA_ARM.lift * pull, o.z + d.z * f);
+    look.lerp(this._riderPoint.set(o.x, entity.position.y + CAMERA_ARM.lookHeight, o.z), Math.min(1, pull * CAMERA_ARM.lookPull));
   }
 }
+
+// The follow cameras' arm against walls (CameraSystem.occlude)
+const CAMERA_ARM = Object.freeze({
+  anchorHeight: 1.2, // m above the wheel: the rider's chest, which is never inside a building
+  clearance: 0.6, // m kept in front of the wall (the near plane is 0.35)
+  minDistance: 0.6, // m: never closer to the rider than this
+  easeOut: 4, // 1/s: back out once the way is clear
+  lift: 0.9, // m of rise when pulled all the way in
+  lookHeight: 0.9, // m above the wheel: where it looks, pulled all the way in (so the rider stays in frame)
+  lookPull: 0.4, // how far the look target moves toward that point, pulled all the way in
+});
 
 export { CAMERA_PRESETS, CameraSystem };

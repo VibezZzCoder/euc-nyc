@@ -707,10 +707,39 @@ function buildLandmarks(scene) {
       rideBox(bpGroup, pedestal, lion.position.y + 0.7); // up to the lion on top
     }
 
-    const lawnWall = new THREE.Mesh(new THREE.BoxGeometry(46, 0.85, 60), limestoneTrimMat);
-    lawnWall.position.set(-14, 0.42, 0);
-    lawnWall.receiveShadow = true;
-    bpGroup.add(lawnWall);
+    // The raised terrace (local x -37..9, z -30..30, top 0.85) with two ramps cut into its 6th Ave face, either side of
+    // the fountain, so the wheel can ride up (euc-terrain.js rides the terrace, the ramps and the lawn as drawn).
+    const TERRACE = { minX: -37, maxX: 9, minZ: -30, maxZ: 30, top: 0.85 };
+    const RAMP = { length: 3.5, width: 2.4, z: [-14, 14] };
+    const terracePart = (x0, x1, z0, z1) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, TERRACE.top, z1 - z0), limestoneTrimMat);
+      m.position.set((x0 + x1) / 2, TERRACE.top / 2 - 0.005, (z0 + z1) / 2);
+      m.receiveShadow = true;
+      bpGroup.add(m);
+    };
+    {
+      const rx = TERRACE.minX + RAMP.length;
+      terracePart(rx, TERRACE.maxX, TERRACE.minZ, TERRACE.maxZ);
+      const cuts = RAMP.z.map((z) => [z - RAMP.width / 2, z + RAMP.width / 2]).sort((a, b) => a[0] - b[0]);
+      let z = TERRACE.minZ;
+      for (const [z0, z1] of cuts) {
+        terracePart(TERRACE.minX, rx, z, z0);
+        z = z1;
+      }
+      terracePart(TERRACE.minX, rx, z, TERRACE.maxZ);
+    }
+    // Each ramp: a slab whose top climbs from road level at the terrace's edge to the terrace top (the sidewalk slab
+    // covers its foot). Built in the group's frame, so the park's stretch keeps it planar; added after the fit below,
+    // so their foot (under the road) does not change the group's measured size.
+    const ramps = RAMP.z.map((rz) => {
+      const pitch = Math.atan2(TERRACE.top, RAMP.length);
+      const slab = 0.3;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(Math.hypot(RAMP.length, TERRACE.top), slab, RAMP.width + 0.02), limestoneTrimMat);
+      m.rotation.z = pitch;
+      m.position.set(TERRACE.minX + RAMP.length / 2 + Math.sin(pitch) * slab / 2, TERRACE.top / 2 - Math.cos(pitch) * slab / 2, rz);
+      m.receiveShadow = true;
+      return { z: rz, mesh: m };
+    });
 
     const lawnGrassMat = new THREE.MeshStandardNodeMaterial({
       color: 0x388c42,
@@ -767,10 +796,36 @@ function buildLandmarks(scene) {
         colliders.push({ minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz, maxY: top });
       }
     }
+    {
+      // The fountain's basin, the same way (it stands on the terrace the wheel now rides)
+      const r = fountainBasin.geometry.parameters.radiusBottom;
+      const top = fountainBasin.position.y + fountainBasin.geometry.parameters.height / 2;
+      const x = b.cx + fountainBasin.position.x;
+      const z = b.cz + fountainBasin.position.z;
+      for (const [hx, hz] of [[r * 0.924, r * 0.383], [r * 0.383, r * 0.924], [r * 0.707, r * 0.707]]) {
+        colliders.push({ minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz, maxY: top });
+      }
+    }
     fitToSite([bpGroup], blockSite('Bryant Park'), c0, { height: 30, stretch: true });
+    for (const ramp of ramps) bpGroup.add(ramp.mesh);
     bpGroup.updateMatrixWorld(true);
     const lb = new THREE.Box3().setFromObject(lawn);
-    bryantParkLawn = { minX: lb.min.x, maxX: lb.max.x, minZ: lb.min.z, maxZ: lb.max.z, top: lb.max.y };
+    // The terrace and its ramps in world space (euc-terrain.js): the park's stretch is an axis-aligned scale
+    const world = (x, y, z) => bpGroup.localToWorld(new THREE.Vector3(x, y, z));
+    const t0 = world(TERRACE.minX, TERRACE.top, TERRACE.minZ);
+    const t1 = world(TERRACE.maxX, TERRACE.top, TERRACE.maxZ);
+    bryantParkLawn = {
+      minX: lb.min.x, maxX: lb.max.x, minZ: lb.min.z, maxZ: lb.max.z, top: lb.max.y,
+      terrace: {
+        minX: Math.min(t0.x, t1.x), maxX: Math.max(t0.x, t1.x), minZ: Math.min(t0.z, t1.z), maxZ: Math.max(t0.z, t1.z), top: t0.y,
+        // each ramp rises from road level at its foot (fromX) to the terrace top at its head (toX)
+        ramps: ramps.map(({ z }) => {
+          const a = world(TERRACE.minX, 0, z - RAMP.width / 2);
+          const c = world(TERRACE.minX + RAMP.length, 0, z + RAMP.width / 2);
+          return { fromX: a.x, toX: c.x, minZ: Math.min(a.z, c.z), maxZ: Math.max(a.z, c.z) };
+        }),
+      },
+    };
   }
 
   // =========================================================================

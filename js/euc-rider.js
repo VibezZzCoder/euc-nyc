@@ -108,7 +108,11 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       hopWasHeld = hopHeld;
 
       const resetHeld = !!keys.reset;
-      if (resetHeld && !resetWasHeld && controller.crashed) this.placeAt(current.x, current.z, current.headingY);
+      if (resetHeld && !resetWasHeld && controller.crashed) {
+        // Get up where you fell, unless that is in a pond: then at the last safe spot, as the auto-recovery does
+        if (sampler.isWater?.(current.x, current.z)) this.placeAt(controller.safeX, controller.safeZ, controller.safeHeading);
+        else this.placeAt(current.x, current.z, current.headingY);
+      }
       resetWasHeld = resetHeld;
 
       accumulator = Math.min(accumulator + dt, MAX_CATCH_UP * STEP);

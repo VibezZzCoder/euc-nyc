@@ -5,8 +5,10 @@
 //
 //   ground      city-config.js — roadway at 0, curb islands (blockAt) at ISLAND_BOUNDS.sidewalkHeight, Central Park
 //               inside its real wall at CENTRAL_PARK_TOP with a ramp at each gate (CENTRAL_PARK_GATES), Bryant Park's
-//               lawn at its top. Then the raised tops city-grid.js registers where it draws them (plazas, park walks
-//               and lawn beds, Central Park's sidewalk, its ponds as walls): the highest one under a point wins.
+//               lawn and its terrace (ramps up from 6th Ave) at their drawn tops. Then the raised tops city-grid.js
+//               registers where it draws them (plazas, park walks and lawn beds, Central Park's sidewalk, its ponds):
+//               the highest one under a point wins. A pond is a wall only along its shore (WATER_RIDE.band); inside,
+//               the ground is its floor under the surface, so a thrown rider lands in the water.
 //               Heights step exactly at a curb, which is what the EUC controller reads as a kerb
 //               (TERRAIN.curbThreshold).
 //   solids      the city's building colliders (AABB or OBB, from y 0 to maxY), the street furniture footprints
@@ -18,13 +20,28 @@
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
 import {
-  blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, inCentralPark, centralParkGateAt, pointInPoly
+  blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE
 } from './city-config.js';
 
 const SHORE_MARGIN = 8.0; // controllers.js keeps every ground mode this far inside the bulkhead
 const SHORE_WALL = 3.0; // m: well above any step the wheel can climb or hop
 const STREET_FURNITURE_HEIGHT = 2.5; // m: footprints carry no height; posts and stacks read as solid to here
 const TOP_CELL = 64; // m: grid cell of the raised-tops index
+
+/** Squared distance from (x, z) to the nearest edge of a closed polygon, stopping early once under `stop2`. */
+function edgeDistance2(poly, x, z, stop2) {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i];
+    const ex = b.x - a.x, ez = b.z - a.z;
+    const len2 = ex * ex + ez * ez;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / len2)) : 0;
+    const dx = a.x + ex * t - x, dz = a.z + ez * t - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < best && (best = d2) < stop2) return best;
+  }
+  return best;
+}
 
 /** Building colliders (controllers.js format) to EUC BoxColliders. */
 export function boxesFromCityColliders(colliders) {
@@ -69,7 +86,9 @@ export class NycTerrainSampler {
   /**
    * @param {object} options
    * @param {object[]} [options.boxes] EUC BoxColliders (see boxesFromCityColliders / boxesFromFootprints)
-   * @param {{minX:number,maxX:number,minZ:number,maxZ:number,top:number}} [options.lawn] Bryant Park's raised lawn
+   * @param {{minX:number,maxX:number,minZ:number,maxZ:number,top:number,terrace?:object}} [options.lawn] Bryant Park's
+   *   raised lawn, and the terrace round it with its ramps: { minX, maxX, minZ, maxZ, top, ramps: [{ fromX, toX, minZ,
+   *   maxZ }] }
    * @param {number} [options.sidewalkHeight] curb-island top, m (city-config.js ISLAND_BOUNDS.sidewalkHeight)
    * @param {object[]} [options.tops] raised tops from city-grid.js: { poly, top, surface, minX, maxX, minZ, maxZ }
    */
@@ -121,6 +140,26 @@ export class NycTerrainSampler {
     return best;
   }
 
+  /** Bryant Park's terrace (or one of its ramps) at (x, z): writes `out` and returns true, or false if off it. */
+  onTerrace(t, x, z, out) {
+    if (x <= t.minX || x >= t.maxX || z <= t.minZ || z >= t.maxZ) return false;
+    for (const r of t.ramps ?? []) {
+      if (z <= r.minZ || z >= r.maxZ || (x - r.fromX) * (x - r.toX) > 0) continue;
+      // From road level at the foot to the terrace top at the head; the sidewalk slab covers the foot
+      out.height = Math.max(this.sidewalkHeight, t.top * Math.min(1, Math.max(0, (x - r.fromX) / (r.toX - r.fromX))));
+      out.surface = 'pavement';
+      return true;
+    }
+    out.height = t.top;
+    out.surface = 'pavement';
+    return true;
+  }
+
+  /** True where (x, z) is on a pond or the Reservoir (shore band included): not a place to stand. */
+  isWater(x, z) {
+    return !!this.topAt(x, z)?.water;
+  }
+
   /** The city's own ground at (x, z): height and surface, before solids. */
   cityGround(x, z, out) {
     const shore = getIslandBoundsAtZ(z);
@@ -144,6 +183,8 @@ export class NycTerrainSampler {
     } else if (lawn && x > lawn.minX && x < lawn.maxX && z > lawn.minZ && z < lawn.maxZ) {
       out.height = lawn.top;
       out.surface = 'grass';
+    } else if (lawn?.terrace && this.onTerrace(lawn.terrace, x, z, out)) {
+      // Bryant Park's raised terrace round the lawn, and the ramps up to it from 6th Ave (landmarks.js)
     } else {
       const b = blockAt(x, z);
       if (b && (b.parkName === 'Central Park' || b.parkName === 'Bryant Park')) {
@@ -167,6 +208,10 @@ export class NycTerrainSampler {
     if (top && top.top > out.height) {
       out.height = top.top;
       out.surface = top.surface;
+      // Past the shore band, a pond's floor (only a thrown rider or a teleport gets here)
+      if (top.water && edgeDistance2(top.poly, x, z, WATER_RIDE.band * WATER_RIDE.band) >= WATER_RIDE.band * WATER_RIDE.band) {
+        out.height = top.water.floor;
+      }
     }
     return out;
   }

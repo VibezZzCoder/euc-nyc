@@ -27,3 +27,5 @@ Assets from EUC Thrills by VibezZzCoder — CC BY 4.0 — https://github.com/Vib
 - If a file is replaced, update its row (sha256, origin and licence) and the test together.
 - Everything else the rider hears (motor, hop, landing, kerb impact, recovery chirp and rolling tyre noise) is
   synthesized at runtime by `js/euc-audio.js`. That code was written for this fork; no upstream audio code was copied.
+- `wind_howl_loop.wav` is the game's only wind: the rider's speed wind (`js/euc-audio.js`) and, once it is decoded,
+  the city's ambient wind (`js/audio-events.js` `createWindVoice().useHowl`).
