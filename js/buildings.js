@@ -35,6 +35,7 @@ import {
   getBroadwayX,
   EAST_RIVER_BRIDGES
 } from './city-config.js';
+import { mergeSolidParts } from './solid-rects.js';
 import {
   createPreWarBuildingMaterial,
   createCurtainWallMaterial,
@@ -260,7 +261,8 @@ function carve(r, holes, axis = 'x') {
 function buildCityBlocks(scene) {
   const group = new THREE.Group();
   group.name = 'ManhattanCityBlocks';
-  const colliders = [];
+  const colliders = []; // the rider's: the ground the buildings stand on (mergeSolidParts)
+  const lotColliders = []; // traffic's: each built block's lots as one box (the road network's obstacles)
 
   // Frame of the lots being populated. Irregular blocks come with frontage frames (city-config.js BLOCKS: lots laid
   // out along the streets they front, in a frame turned by θ about p); the generator works in the frame as on a grid
@@ -270,10 +272,10 @@ function buildCityBlocks(scene) {
   const toWorld = (x, z) => (xf
     ? [xf.px + (x - xf.px) * xf.cs + (z - xf.pz) * xf.sn, xf.pz - (x - xf.px) * xf.sn + (z - xf.pz) * xf.cs]
     : [x, z]);
-  // Player collider over the rect [x0, x1] x [z0, z1] (of the current frame): an oriented box inside its world AABB
-  function pushCollider(x0, x1, z0, z1, maxY) {
+  // Collider over the rect [x0, x1] x [z0, z1] (of the current frame): an oriented box inside its world AABB
+  function pushCollider(x0, x1, z0, z1, maxY, list = colliders) {
     if (!xf) {
-      colliders.push({ minX: x0, maxX: x1, minZ: z0, maxZ: z1, maxY });
+      list.push({ minX: x0, maxX: x1, minZ: z0, maxZ: z1, maxY });
       return;
     }
     const [cx, cz] = toWorld((x0 + x1) * 0.5, (z0 + z1) * 0.5);
@@ -281,7 +283,7 @@ function buildCityBlocks(scene) {
     const hz = (z1 - z0) * 0.5;
     const ex = Math.abs(xf.cs) * hx + Math.abs(xf.sn) * hz;
     const ez = Math.abs(xf.sn) * hx + Math.abs(xf.cs) * hz;
-    colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, maxY, obb: { cx, cz, hx, hz, cs: xf.cs, sn: xf.sn } });
+    list.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, maxY, obb: { cx, cz, hx, hz, cs: xf.cs, sn: xf.sn } });
   }
 
   // Re-seeded from each block's position (see populateBlock), so every block is reproducible on its own
@@ -413,7 +415,8 @@ function buildCityBlocks(scene) {
   // A building is a list of non-overlapping parts { x0, x1, z0, z1, y0, y1 } on one lot: footprints carved into
   // plans, extruded storey by storey, tiers stacked on whole storeys
   // ============================================================================
-  const BLOCK_COLLIDER_TOP = 26; // every block gets one collider up to here; taller parts add their own
+  // Colliders rise to here at most: the rider's (taller parts add nothing at street level) and traffic's one per block
+  const BLOCK_COLLIDER_TOP = 26;
 
   // East River bridge approaches on Manhattan: no building may stand under a deck (from its street-level landing out to
   // the first tower) or on a masonry anchorage. Oriented boxes { cx, cz, ux, uz, hl, hw } (u = along the bridge).
@@ -613,7 +616,7 @@ function buildCityBlocks(scene) {
   }
 
   /**
-   * Emits building `b`: facade boxes, map footprints, colliders for parts above the block collider, stone cornices
+   * Emits building `b`: facade boxes, map footprints, its parts for the block's colliders (blk.solidParts), stone cornices
    * under every masonry roof line, rooftop bulkhead & water tower, fire escapes and avenue storefront awnings.
    * o: { cornice, corniceH, roof: 'mech' | 'prewar' | 'walkup' | 'none', wtP, hvacH, fireEscapes, rearFireEscapes,
    *      awnings, shops: 'all' | 'avenue' | 'none' | probability of 'all' (street fronts with storefronts on the
@@ -641,8 +644,8 @@ function buildCityBlocks(scene) {
       buckets[mat].push(box);
       blk.facadeBoxes.push(box);
       blk.footprints.push({ x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1, h: p.y1, tone });
+      blk.solidParts.push(p);
       if (p.y1 > blk.maxH) blk.maxH = p.y1;
-      if (p.y1 > BLOCK_COLLIDER_TOP) pushCollider(p.x0, p.x1, p.z0, p.z1, p.y1);
       if (p.y1 > top.y1 + EPS || (p.y1 > top.y1 - EPS && w * d > rectW(top) * rectD(top))) top = p;
     }
 
@@ -1835,7 +1838,8 @@ function buildCityBlocks(scene) {
       maxH: 0,
       avenueFronts: { w: [], e: [] }, // ground-floor frontage [z0, z1] along each avenue
       facadeBoxes: [], // this block's facade boxes & the lots left empty under bridge approaches (until it's built)
-      voidLots: []
+      voidLots: [],
+      solidParts: [] // every building part, in the frame's coordinates (until its colliders are made)
     };
     const bucketMarks = buckets.map((items) => items.length);
     rand = mulberry32((Math.imul(Math.round(minX * 4), 73856093) ^ Math.imul(Math.round(minZ * 4), 19349663) ^ 10019) >>> 0);
@@ -1877,8 +1881,12 @@ function buildCityBlocks(scene) {
 
     blockDetail.footprints.sort((a, b) => a.h - b.h);
     if (xf) placeInFrame(blockDetail, bucketMarks);
+    // The rider collides with the ground the buildings cover (plazas, lawns, yards and gaps stay open); traffic keeps
+    // the whole block as one obstacle (its road network never enters a block)
+    for (const r of mergeSolidParts(blockDetail.solidParts, BLOCK_COLLIDER_TOP)) pushCollider(r.x0, r.x1, r.z0, r.z1, r.y1);
+    delete blockDetail.solidParts;
     if (blockDetail.maxH > 0) {
-      pushCollider(minX + 0.5, maxX - 0.5, minZ + 0.5, maxZ - 0.5, Math.min(BLOCK_COLLIDER_TOP, blockDetail.maxH));
+      pushCollider(minX + 0.5, maxX - 0.5, minZ + 0.5, maxZ - 0.5, Math.min(BLOCK_COLLIDER_TOP, blockDetail.maxH), lotColliders);
     }
 
     quadtree.insert(blockDetail);
@@ -2624,6 +2632,7 @@ function buildCityBlocks(scene) {
   return {
     group,
     colliders,
+    lotColliders,
     quadtree,
     allBlocks,
     update,

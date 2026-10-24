@@ -2186,7 +2186,7 @@ function addIslandBuildings(list) {
 // station on the east side of 2nd Ave at 60th St and the Roosevelt Island station, up over steel towers by 1st Ave and
 // York Ave and down across the East River's west channel, all along the north side of the Queensboro Bridge (the line
 // runs parallel to the bridge, 25 m north of its centreline). Static parts go into `parts`; returns
-// { colliders, update(elapsed) } (55 s trips, 12 s dwells)
+// { colliders (traffic's), rideColliders (the rider's), update(elapsed) } (55 s trips, 12 s dwells)
 function buildRooseveltTram(group, parts, lm) {
   const QB = EAST_RIVER_BRIDGES.find((b) => b.id === 'queensboro') || EAST_RIVER_BRIDGES[0];
   const qbLen = Math.hypot(QB.b.x - QB.a.x, QB.b.z - QB.a.z);
@@ -2262,13 +2262,19 @@ function buildRooseveltTram(group, parts, lm) {
     const p = at(u, v);
     parts.box(mat, p.x, y, p.z, along, h, across, RY);
   };
-  // Axis-aligned collider around a line-aligned footprint
+  // Traffic's axis-aligned collider around a line-aligned footprint; the rider's colliders are the parts standing on
+  // the ground, as drawn (oriented boxes)
   const colliders = [];
   const collider = (u, v, along, across, maxY) => {
     const p = at(u, v);
     const ex = Math.abs(dx) * along * 0.5 + Math.abs(nx) * across * 0.5;
     const ez = Math.abs(dz) * along * 0.5 + Math.abs(nz) * across * 0.5;
     colliders.push({ minX: p.x - ex, maxX: p.x + ex, minZ: p.z - ez, maxZ: p.z + ez, maxY });
+  };
+  const rideColliders = [];
+  const rideCollider = (u, v, along, across, maxY) => {
+    const p = at(u, v);
+    rideColliders.push(orientedCollider(p.x, p.z, dx, dz, along, across, maxY));
   };
   const steel = lm.darkSteel;
   const beacon = createEmissiveTrimMaterial([1.0, 0.12, 0.08], 0.4, 5.0);
@@ -2301,6 +2307,8 @@ function buildRooseveltTram(group, parts, lm) {
     for (const v of TRACKS) lineBox(steel, tu, top - 0.1, v, 3.2, 0.5, 1.8);
     if (top > 50) for (const v of [V0 - 0.4, V1 + 0.4]) lineBox(beacon, tu, top - 0.1, v, 0.6, 0.6, 0.6);
     collider(tu, 0, 6.8, V1 - V0 + 2.6, top);
+    // The rider can pass between the legs (0.6 m beams leaning in ~0.15 m over a rider's height)
+    for (let k = 0; k < 4; k++) rideCollider(tu + legs[k][0] * 3.0, legs[k][1] * 7.4, 1.0, 1.0, top);
   }
 
   // Manhattan station: deck at the cabins' floor on steel columns, glazed platform hall, roof and drive house
@@ -2315,6 +2323,9 @@ function buildRooseveltTram(group, parts, lm) {
   lineBox(lm.limestone, M0 + 3, deckY, 0, 6, 20.4 - deckY, V1 - V0 - 1);
   lineBox(lm.limestone, M0 + 2.5, BASE, V1 - 2.5, 4.2, deckY - BASE, 4.2); // stair & lift tower
   collider(mc, 0, M1 - M0, V1 - V0, 21);
+  // Under the deck: its four columns and the stair & lift tower
+  for (const u of [M0 + 0.5, M1 - 0.5]) for (const v of [V0 + 0.5, V1 - 0.5]) rideCollider(u, v, 0.9, 0.9, deckY);
+  rideCollider(M0 + 2.5, V1 - 2.5, 4.2, 4.2, deckY);
 
   // Roosevelt Island station: a platform under a long canopy at grade, the bull-wheel house at its east end
   const I0 = uI - 8;
@@ -2367,7 +2378,7 @@ function buildRooseveltTram(group, parts, lm) {
     gear.instanceMatrix.needsUpdate = true;
   };
   update(20);
-  return { colliders, update };
+  return { colliders, rideColliders, update };
 }
 
 // Lumpy deciduous crown (unit radius, centred at the origin): overlapping low-poly lobes whose normals point away from
@@ -2832,7 +2843,7 @@ function buildCables(B, spec, f, profile, mats, steel, o) {
 
 // Manhattan footing of the bridge approaches: raised sidewalk blocks (approach columns stand only on blocks, never in a
 // roadway) and the colliders handed to traffic / pedestrians / the player. Set by buildBoroughs.
-let bridgeSite = { sidewalks: [], colliders: [] };
+let bridgeSite = { sidewalks: [], colliders: [], rideColliders: [] };
 
 function onManhattan(p) {
   return !landAt(p.x, p.z) && pointInPolygon(MANHATTAN_COASTLINE, p.x, p.z);
@@ -2843,9 +2854,21 @@ function onManhattanBlock(p, r) {
   return false;
 }
 
-// Collider for a bridge part standing on Manhattan: an oriented box (centre p, sizes along / across `dir`) as a few
-// axis-aligned cells no larger than ~10 m, so slanted parts don't block whole street corners
+// Oriented collider (controllers.js / euc-terrain.js format): centre (cx, cz), `along` the unit (ux, uz), `across` it
+function orientedCollider(cx, cz, ux, uz, along, across, maxY) {
+  const hx = along * 0.5;
+  const hz = across * 0.5;
+  const ex = Math.abs(ux) * hx + Math.abs(uz) * hz;
+  const ez = Math.abs(uz) * hx + Math.abs(ux) * hz;
+  // local x = dx*cs - dz*sn runs along u; local z = dx*sn + dz*cs across it, along (-uz, ux)
+  return { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, maxY, obb: { cx, cz, hx, hz, cs: ux, sn: -uz } };
+}
+
+// Collider for a bridge part standing on Manhattan (centre p, sizes along / across `dir`). The rider gets it as drawn,
+// one oriented box (bridgeSite.rideColliders); traffic gets a few axis-aligned cells no larger than ~10 m, so slanted
+// parts don't block whole street corners for its road network
 function addBridgeCollider(p, dir, along, across, maxY) {
+  bridgeSite.rideColliders.push(orientedCollider(p.x, p.z, dir.x, dir.z, along, across, maxY));
   const na = Math.max(1, Math.ceil(along / 10));
   const nc = Math.max(1, Math.ceil(across / 10));
   const a = along / na;
@@ -3336,8 +3359,8 @@ function createLandmarkMaterials() {
  * Builds everything around the simulated Manhattan grid: land masses, the Palisades, borough buildings, harbor islands,
  * landmarks, the East River bridges and the George Washington / Verrazzano-Narrows bridges. Call after buildCityGrid()
  * with its raised sidewalk blocks: Manhattan approach
- * columns stand only on blocks. Returns the colliders of the bridge parts standing on Manhattan (anchorages, piers,
- * columns, deck ends too low to drive under).
+ * columns stand only on blocks. Returns the colliders of the bridge and tram parts standing on Manhattan (anchorages,
+ * piers, columns, deck ends too low to drive under): `colliders` for traffic, `rideColliders` for the rider.
  */
 function buildBoroughs(scene, { sidewalks = [] } = {}) {
   const t0 = performance.now();
@@ -3371,7 +3394,7 @@ function buildBoroughs(scene, { sidewalks = [] } = {}) {
 
   // East River bridges, and the Roosevelt Island Tramway beside the Queensboro Bridge (before the island's trees,
   // which keep out from under its cabins)
-  bridgeSite = { sidewalks, colliders: [] };
+  bridgeSite = { sidewalks, colliders: [], rideColliders: [] };
   const bridgeMats = createBridgeMaterials();
   const bridgeParts = createPartCollector();
   const tram = buildRooseveltTram(group, bridgeParts, lm);
@@ -3386,7 +3409,12 @@ function buildBoroughs(scene, { sidewalks = [] } = {}) {
 
   scene.add(group);
   console.info(`[boroughs] ${list.length} buildings ${JSON.stringify(stats)} built in ${(performance.now() - t0).toFixed(0)} ms`);
-  return { group, ridgeHeightAt, landAt, colliders: bridgeSite.colliders.concat(tram.colliders), update: tram.update };
+  // colliders: traffic's (axis-aligned); rideColliders: the rider's, as drawn
+  return {
+    group, ridgeHeightAt, landAt, update: tram.update,
+    colliders: bridgeSite.colliders.concat(tram.colliders),
+    rideColliders: bridgeSite.rideColliders.concat(tram.rideColliders)
+  };
 }
 
 export { buildBoroughs, ridgeHeightAt, landAt as boroughLandAt };

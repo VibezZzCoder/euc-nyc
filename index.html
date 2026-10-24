@@ -6,19 +6,37 @@
   <title>NYC Spin-off: EUC Thrills</title>
   <link rel="icon" href="data:," />
   <meta name="description" content="NYC Spin-off: EUC Thrills. Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds. A free side project of EUC Thrills, built on Mr.doob's open-source three.js WebGPU city." />
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-  <!-- three.js, pinned to one dev-branch commit (mrdoob/three.js@e27dfa9, 2026-10-23) so a change upstream cannot change the game.
-       To move it: replace the hash in all four URLs and re-run the browser QA. -->
+  <!-- three.js, pinned to one dev-branch commit (mrdoob/three.js@e27dfa9, 2026-10-23) and served from this repo
+       (vendor/three/, the upstream files unchanged), so nothing loads from another host. To move it: change the commit
+       in tools/vendor-three.mjs, run it, run the tests and the browser QA. -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@e27dfa95ae7f453b5d7a9a36ffdb563f7c9b529b/build/three.webgpu.js",
-        "three/webgpu": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@e27dfa95ae7f453b5d7a9a36ffdb563f7c9b529b/build/three.webgpu.js",
-        "three/tsl": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@e27dfa95ae7f453b5d7a9a36ffdb563f7c9b529b/build/three.tsl.js",
-        "three/addons/": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@e27dfa95ae7f453b5d7a9a36ffdb563f7c9b529b/examples/jsm/"
+        "three": "./vendor/three/build/three.webgpu.js",
+        "three/webgpu": "./vendor/three/build/three.webgpu.js",
+        "three/tsl": "./vendor/three/build/three.tsl.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
       }
     }
   </script>
+  <!-- three.js's modules (vendor/MANIFEST.json), fetched in parallel instead of one after another -->
+  <link rel="modulepreload" href="./vendor/three/build/three.webgpu.js" />
+  <link rel="modulepreload" href="./vendor/three/build/three.core.js" />
+  <link rel="modulepreload" href="./vendor/three/build/three.tsl.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/lighting/ClusteredLighting.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/lights/SunLight.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/lights/SunLightNode.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/lights/SunLightShadow.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/lights/SunShadowNode.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/objects/SkyMesh.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/display/BloomNode.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/display/ImportanceSampledEnvironment.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/display/SSRNode.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/display/boxBlur.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/lighting/ClusteredLightsNode.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/utils/RNoise.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/tsl/utils/SpecularHelpers.js" />
+  <link rel="modulepreload" href="./vendor/three/examples/jsm/utils/BufferGeometryUtils.js" />
   <!-- Fetch the city modules in parallel before stylesheets; the module graph controls evaluation order. -->
   <link rel="modulepreload" href="./js/nyc-geodata.js" />
   <link rel="modulepreload" href="./js/city-config.js" />
@@ -31,6 +49,7 @@
   <link rel="modulepreload" href="./js/city-grid.js" />
   <link rel="modulepreload" href="./js/boroughs.js" />
   <link rel="modulepreload" href="./js/buildings.js" />
+  <link rel="modulepreload" href="./js/solid-rects.js" />
   <link rel="modulepreload" href="./js/landmarks.js" />
   <link rel="modulepreload" href="./js/street-details.js" />
   <link rel="modulepreload" href="./js/road-network.js" />
@@ -97,10 +116,10 @@
   <link rel="modulepreload" href="./js/audio-system.js" />
   <link rel="modulepreload" href="./js/main.js" />
   <script type="module" src="./js/main.js"></script>
-  <!-- Inter (UI) & Overpass (street-name signs: modelled on Highway Gothic, the US road sign typeface) -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&amp;family=Overpass:wght@600;700&amp;display=swap" />
+  <!-- Inter (UI) & Overpass (street-name signs: modelled on Highway Gothic, the US road sign typeface), from fonts/ -->
+  <link rel="preload" href="./fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="./fonts/overpass-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="./css/fonts.css" />
   <link rel="stylesheet" href="./css/style.css?v=20261023-touch-hud" />
 </head>
 <body>

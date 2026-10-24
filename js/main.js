@@ -81,20 +81,23 @@ async function initApp() {
   markInit('cityGrid');
   const boroughs = buildBoroughs(scene, { sidewalks: cityGrid.sidewalks });
   markInit('boroughs');
-  const { colliders: landmarkColliders } = buildLandmarks(scene);
+  const landmarks = buildLandmarks(scene);
   markInit('landmarks');
   const cityBlocks = buildCityBlocks(scene);
   markInit('blocks');
-  const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...boroughs.colliders, ...(cityGrid.colliders || [])];
+  // The rider's colliders: what is drawn at street level (buildings and landmarks as they stand; bridge, tram and
+  // viaduct parts as oriented boxes). Traffic keeps its own coarser obstacles (below), so its road network is unchanged.
+  const allColliders = [...landmarks.colliders, ...cityBlocks.colliders, ...boroughs.rideColliders, ...cityGrid.colliders];
 
   const streetDetails = buildStreetDetails(scene);
   markInit('streetDetails');
-  // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
-  // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them
+  // Traffic's obstacles: each built block as one box (cityBlocks.lotColliders), each landmark as one box, the bridge,
+  // tram and viaduct parts as axis-aligned cells. Blocks turned along non-grid streets have oriented colliders whose world
+  // bounds reach past their lots: they stay inside the property line anyway, so the road network doesn't need them
   const trafficSystem = createTrafficSystem(scene, cityGrid.sidewalks, [
     ...cityGrid.footprints,
     ...streetDetails.footprints,
-    ...allColliders.filter((c) => !c.obb)
+    ...[...landmarks.trafficColliders, ...cityBlocks.lotColliders, ...boroughs.colliders, ...cityGrid.trafficColliders].filter((c) => !c.obb)
   ]);
   markInit('traffic');
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);

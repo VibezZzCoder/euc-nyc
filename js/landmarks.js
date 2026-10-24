@@ -17,7 +17,42 @@ let bryantParkLawn;
 function buildLandmarks(scene) {
   const group = new THREE.Group();
   group.name = 'ManhattanLandmarks';
+  // Two collider lists. trafficColliders: one box per landmark, the lot the road network keeps clear (unchanged, so the
+  // traffic routes stay the same). colliders: the rider's, as drawn at ground level (podiums, stilts, piers, steps,
+  // oriented wings, the Flatiron's slices), so no box reaches past a wall into open air. Both go through fitToSite.
+  const trafficColliders = [];
   const colliders = [];
+  // Rider box over an unrotated BoxGeometry part, read before fitToSite (parent unscaled). maxY defaults to its top.
+  function rideBox(parent, m, maxY) {
+    const { width, height, depth } = m.geometry.parameters;
+    const x = parent.position.x + m.position.x;
+    const z = parent.position.z + m.position.z;
+    colliders.push({
+      minX: x - width / 2, maxX: x + width / 2, minZ: z - depth / 2, maxZ: z + depth / 2,
+      maxY: maxY ?? m.position.y + height / 2
+    });
+  }
+  // Rider oriented box over a yawed BoxGeometry part (controllers.js obb: local x = dx*cs - dz*sn, z = dx*sn + dz*cs)
+  function rideObb(parent, m, maxY) {
+    const { width, height, depth } = m.geometry.parameters;
+    const cs = Math.cos(m.rotation.y);
+    const sn = Math.sin(m.rotation.y);
+    const k = {
+      maxY: maxY ?? m.position.y + height / 2,
+      obb: { cx: parent.position.x + m.position.x, cz: parent.position.z + m.position.z, hx: width / 2, hz: depth / 2, cs, sn }
+    };
+    obbBounds(k);
+    colliders.push(k);
+  }
+  // An oriented box's world AABB (its minX..maxZ)
+  function obbBounds(k) {
+    const o = k.obb;
+    const ex = Math.abs(o.cs) * o.hx + Math.abs(o.sn) * o.hz;
+    const ez = Math.abs(o.sn) * o.hx + Math.abs(o.cs) * o.hz;
+    k.minX = o.cx - ex; k.maxX = o.cx + ex; k.minZ = o.cz - ez; k.maxZ = o.cz + ez;
+  }
+  // Where each landmark's colliders start in both lists (fitToSite moves only its own)
+  const mark = () => ({ traffic: trafficColliders.length, ride: colliders.length });
 
   const limestoneTrimMat = new THREE.MeshStandardNodeMaterial({
     color: 0xdad0bc,
@@ -157,8 +192,18 @@ function buildLandmarks(scene) {
       o.position.set(tx + (o.position.x - c.x) * sx, o.position.y * sy, tz + (o.position.z - c.z) * sz);
       o.scale.multiply(new THREE.Vector3(sx, sy, sz));
     }
-    for (let i = c0; i < colliders.length; i++) {
-      const k = colliders[i];
+    const fitBox = (k) => {
+      k.maxY *= sy;
+      if (k.obb) {
+        // Only uniformly scaled landmarks have yawed parts (stretch is for the park), so the half extents scale as is
+        const o = k.obb;
+        o.cx = tx + (o.cx - c.x) * sx;
+        o.cz = tz + (o.cz - c.z) * sz;
+        o.hx *= sx;
+        o.hz *= sz;
+        obbBounds(k);
+        return;
+      }
       const x0 = tx + (k.minX - c.x) * sx;
       const x1 = tx + (k.maxX - c.x) * sx;
       const z0 = tz + (k.minZ - c.z) * sz;
@@ -167,8 +212,9 @@ function buildLandmarks(scene) {
       k.maxX = Math.max(x0, x1);
       k.minZ = Math.min(z0, z1);
       k.maxZ = Math.max(z0, z1);
-      k.maxY *= sy;
-    }
+    };
+    for (let i = c0.traffic; i < trafficColliders.length; i++) fitBox(trafficColliders[i]);
+    for (let i = c0.ride; i < colliders.length; i++) fitBox(colliders[i]);
   }
   const site = (name) => LANDMARK_SITES[name];
   // A site spanning several real outlines (Grand Central + the MetLife Building over it)
@@ -192,7 +238,7 @@ function buildLandmarks(scene) {
   // 1. EMPIRE STATE BUILDING (Col 2, Row 5: 5th Ave & 34th St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(2, 5);
     const esb = new THREE.Group();
     esb.position.set(b.cx, 0, b.cz);
@@ -301,13 +347,16 @@ function buildLandmarks(scene) {
     esb.add(beacon);
 
     group.add(esb);
-    colliders.push({
+    trafficColliders.push({
       minX: b.cx - 34,
       maxX: b.cx + 34,
       minZ: b.cz - 25,
       maxZ: b.cz + 25,
       maxY: 245
     });
+    // Rider: the podium, plus the entrance portal standing proud of its 5th Ave face
+    rideBox(esb, podium, 245);
+    rideBox(esb, portal);
     fitToSite([esb], site('Empire State Building'), c0, { height: 443 });
   }
 
@@ -315,7 +364,7 @@ function buildLandmarks(scene) {
   // 2. CHRYSLER BUILDING (Col 5, Row 3: Lexington Ave & 42nd St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(5, 3);
     const chrysler = new THREE.Group();
     chrysler.position.set(b.cx - 8, 0, b.cz + 6);
@@ -390,13 +439,14 @@ function buildLandmarks(scene) {
     chrysler.add(cBeacon);
 
     group.add(chrysler);
-    colliders.push({
+    trafficColliders.push({
       minX: b.cx - 33,
       maxX: b.cx + 17,
       minZ: b.cz - 16,
       maxZ: b.cz + 28,
       maxY: 225
     });
+    rideBox(chrysler, base, 225); // the lot box is exactly the base
     fitToSite([chrysler], site('Chrysler Building'), c0, { height: 319 });
   }
 
@@ -404,7 +454,7 @@ function buildLandmarks(scene) {
   // 3. ONE VANDERBILT (Col 3, Row 3: Vanderbilt Ave & 42nd St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(3, 3);
     const vanderbilt = new THREE.Group();
     vanderbilt.position.set(b.cx + 12, 0, b.cz + 5);
@@ -424,6 +474,8 @@ function buildLandmarks(scene) {
       m.castShadow = true;
       m.receiveShadow = true;
       vanderbilt.add(m);
+      // Rider: the base, the widest tier (every tier above stands inside it)
+      if (seg === segments[0]) rideBox(vanderbilt, m, 260);
     }
 
     // SUMMIT One Vanderbilt cantilevered glass sky-boxes & structural terracotta/steel fins
@@ -447,7 +499,7 @@ function buildLandmarks(scene) {
     vanderbilt.add(ovSpire);
 
     group.add(vanderbilt);
-    colliders.push({
+    trafficColliders.push({
       minX: b.cx - 10,
       maxX: b.cx + 33,
       minZ: b.cz - 15,
@@ -462,7 +514,7 @@ function buildLandmarks(scene) {
   // 4. GRAND CENTRAL TERMINAL, PARK AVE VIADUCT & METLIFE BUILDING (Col 4, Row 3)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(4, 3);
     const gctGroup = new THREE.Group();
     gctGroup.position.set(b.cx, 0, b.cz);
@@ -544,6 +596,7 @@ function buildLandmarks(scene) {
       pier.castShadow = true;
       pier.receiveShadow = true;
       gctGroup.add(pier);
+      rideBox(gctGroup, pier); // the deck above (10 m up) needs none
     }
 
     const metlifeMat = landmarkBronzeCurtainMat;
@@ -571,13 +624,18 @@ function buildLandmarks(scene) {
     gctGroup.add(signBand);
 
     group.add(gctGroup);
-    colliders.push({
+    trafficColliders.push({
       minX: b.cx - 34,
       maxX: b.cx + 34,
       minZ: b.cz - 28,
       maxZ: b.cz + 28,
       maxY: 198
     });
+    // Rider: the terminal, the MetLife slab and its two wings turned 45 degrees (one lot box left air at every corner)
+    rideBox(gctGroup, gctBody);
+    rideBox(gctGroup, mlCenter);
+    rideObb(gctGroup, mlWingW);
+    rideObb(gctGroup, mlWingE);
     fitToSite([gctGroup], unionSite('Grand Central Terminal', 'MetLife Building'), c0, { height: 246 });
   }
 
@@ -585,7 +643,7 @@ function buildLandmarks(scene) {
   // 5. BRYANT PARK & NEW YORK PUBLIC LIBRARY (Col 2, Row 4: 5th Ave & 42nd St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(2, 4);
     const bpGroup = new THREE.Group();
     bpGroup.position.set(b.cx, 0, b.cz);
@@ -646,6 +704,7 @@ function buildLandmarks(scene) {
       const lion = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.4, 1.2), limestoneTrimMat);
       lion.position.set(36.0, 2.8, lz);
       bpGroup.add(lion);
+      rideBox(bpGroup, pedestal, lion.position.y + 0.7); // up to the lion on top
     }
 
     const lawnWall = new THREE.Mesh(new THREE.BoxGeometry(46, 0.85, 60), limestoneTrimMat);
@@ -685,13 +744,29 @@ function buildLandmarks(scene) {
     bpGroup.add(carouselRoof);
 
     group.add(bpGroup);
-    colliders.push({
+    trafficColliders.push({
       minX: b.cx + 6,
       maxX: b.cx + 35,
       minZ: b.cz - 28,
       maxZ: b.cz + 28,
       maxY: 24
     });
+    // Rider: the library (to its roof), the portico's back wall and the solid stair block (its columns stand on it), so
+    // the terrace and the 5th Ave sidewalk stay open up to the walls. The carousel drum is three boxes inside its
+    // circle (an ellipse once stretched), corners on the rim every 22.5 degrees: no corner reaches past the drum. The
+    // fountain is a low rim round water, left open.
+    rideBox(bpGroup, nypl, 24);
+    rideBox(bpGroup, porticoBack);
+    rideBox(bpGroup, stairs);
+    {
+      const r = carouselBase.geometry.parameters.radiusBottom;
+      const top = carouselBase.position.y + carouselBase.geometry.parameters.height / 2;
+      const x = b.cx + carouselBase.position.x;
+      const z = b.cz + carouselBase.position.z;
+      for (const [hx, hz] of [[r * 0.924, r * 0.383], [r * 0.383, r * 0.924], [r * 0.707, r * 0.707]]) {
+        colliders.push({ minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz, maxY: top });
+      }
+    }
     fitToSite([bpGroup], blockSite('Bryant Park'), c0, { height: 30, stretch: true });
     bpGroup.updateMatrixWorld(true);
     const lb = new THREE.Box3().setFromObject(lawn);
@@ -702,7 +777,7 @@ function buildLandmarks(scene) {
   // 6. ONE TIMES SQUARE & BROADWAY LED CANYON (Col 1, Row 3 & Broadway Corridor)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(1, 3);
     const tsGroup = new THREE.Group();
     tsGroup.position.set(b.cx, 0, b.cz);
@@ -750,7 +825,8 @@ function buildLandmarks(scene) {
 
     // (the towers around the bowtie are the procedural blocks' Broadway flush walls & billboards now)
     group.add(tsGroup);
-    colliders.push({ minX: b.cx + otsX - 9, maxX: b.cx + otsX + 9, minZ: b.cz + 1, maxZ: b.cz + 27, maxY: otsH });
+    trafficColliders.push({ minX: b.cx + otsX - 9, maxX: b.cx + otsX + 9, minZ: b.cz + 1, maxZ: b.cz + 27, maxY: otsH });
+    rideBox(tsGroup, otsTower); // the lot box is exactly the tower
     fitToSite([tsGroup], site('One Times Square'), c0, { height: 120 });
   }
 
@@ -758,7 +834,7 @@ function buildLandmarks(scene) {
   // 7. ROCKEFELLER CENTER / 30 ROCK (Col 2, Row 2: 5th-6th Ave, 45th-48th St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(2, 2);
     const rockGroup = new THREE.Group();
     rockGroup.position.set(b.cx, 0, b.cz);
@@ -783,6 +859,7 @@ function buildLandmarks(scene) {
       wing.castShadow = true;
       wing.receiveShadow = true;
       rockGroup.add(wing);
+      rideBox(rockGroup, wing);
     }
 
     const prometheus = new THREE.Mesh(
@@ -794,7 +871,11 @@ function buildLandmarks(scene) {
     rockGroup.add(prometheus);
 
     group.add(rockGroup);
-    colliders.push({
+    // Rider: the slab and its wider lower tower (the low wings are in their loop): the lot box left the slab's ends
+    // hollow and the wings unguarded
+    rideBox(rockGroup, slabMain);
+    rideBox(rockGroup, slabStep1);
+    trafficColliders.push({
       minX: b.cx - 32,
       maxX: b.cx + 4,
       minZ: b.cz - 28,
@@ -808,7 +889,7 @@ function buildLandmarks(scene) {
   // 8. CITIGROUP CENTER (Col 5, Row 1: Lexington Ave & 53rd St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(5, 1);
     const citiGroup = new THREE.Group();
     citiGroup.position.set(b.cx, 0, b.cz);
@@ -821,6 +902,7 @@ function buildLandmarks(scene) {
       stilt.castShadow = true;
       stilt.receiveShadow = true;
       citiGroup.add(stilt);
+      rideBox(citiGroup, stilt);
     }
     const core = new THREE.Mesh(new THREE.BoxGeometry(16, 30, 16), stainlessSteelMat);
     core.position.set(0, 15, 0);
@@ -847,7 +929,10 @@ function buildLandmarks(scene) {
     citiGroup.add(citiCrown);
 
     group.add(citiGroup);
-    colliders.push({
+    // Rider: the four stilts and the core (the core box keeps the tower's height for the camera). The shaft starts on
+    // top of them: the plaza under it stays open, as colliders cannot float (euc-terrain.js boxes stand on the ground)
+    rideBox(citiGroup, core, 209);
+    trafficColliders.push({
       minX: b.cx - 21,
       maxX: b.cx + 21,
       minZ: b.cz - 21,
@@ -861,7 +946,7 @@ function buildLandmarks(scene) {
   // 9. FLATIRON BUILDING (Col 2, Row 7: 5th Ave / Broadway & 23rd St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(2, 7);
     const flatironGroup = new THREE.Group();
     // Sits on the triangular island between Broadway (x = -42) and 5th Ave (x = 0)
@@ -903,7 +988,53 @@ function buildLandmarks(scene) {
     flatironGroup.add(corniceMesh);
 
     group.add(flatironGroup);
-    colliders.push({ minX: b.cx + 15, maxX: b.cx + 39, minZ: b.cz - 30, maxZ: b.cz + 20, maxY: 90 });
+    trafficColliders.push({ minX: b.cx + 15, maxX: b.cx + 39, minZ: b.cz - 30, maxZ: b.cz + 20, maxY: 90 });
+    // Rider: the prism as 5 slices along its length (one box over it left two invisible wedges up to 12 m wide at the
+    // point). The breaks share the width growth equally, so the slices are short where the sides splay near the point;
+    // each slice is as wide as the prism at its middle, widened by the walls' bevel, so its corners sit about a metre
+    // inside or outside the curved faces. The shape's y is the world z (rotateX above).
+    {
+      const outline = triShape.getPoints(24);
+      const span = (y) => {
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (let i = 0; i < outline.length; i++) {
+          const p = outline[i];
+          const q = outline[(i + 1) % outline.length];
+          if ((p.y - y) * (q.y - y) > 0 || p.y === q.y) continue;
+          const x = p.x + ((y - p.y) / (q.y - p.y)) * (q.x - p.x);
+          lo = Math.min(lo, x);
+          hi = Math.max(hi, x);
+        }
+        return [lo, hi];
+      };
+      const width = (y) => { const [lo, hi] = span(y); return hi - lo; };
+      const yTip = -26;
+      const yBase = 24 - 1e-6;
+      const full = width(yBase);
+      const breaks = [yTip];
+      for (let k = 1; k < 5; k++) {
+        let a = yTip;
+        let c = yBase;
+        for (let it = 0; it < 30; it++) {
+          const m = (a + c) / 2;
+          if (width(m) < (full * k) / 5) a = m; else c = m;
+        }
+        breaks.push((a + c) / 2);
+      }
+      breaks.push(yBase);
+      const bevel = flatGeo.parameters.options.bevelSize;
+      const gx = flatironGroup.position.x;
+      const gz = flatironGroup.position.z;
+      for (let k = 0; k < 5; k++) {
+        const [lo, hi] = span((breaks[k] + breaks[k + 1]) / 2);
+        colliders.push({
+          minX: gx + lo - bevel, maxX: gx + hi + bevel,
+          minZ: gz + breaks[k] - (k === 0 ? bevel : 0), maxZ: gz + breaks[k + 1] + (k === 4 ? bevel : 0),
+          maxY: 90
+        });
+      }
+    }
     fitToSite([flatironGroup], site('Flatiron Building'), c0, { height: 87 });
   }
 
@@ -911,7 +1042,7 @@ function buildLandmarks(scene) {
   // 10. SEAGRAM BUILDING & GRANITE PLAZA (Col 4, Row 1: Park Ave & 53rd St)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const b = getBlockBounds(4, 1);
     const seagramGroup = new THREE.Group();
     seagramGroup.position.set(b.cx, 0, b.cz);
@@ -935,10 +1066,14 @@ function buildLandmarks(scene) {
       const pool = new THREE.Mesh(new THREE.BoxGeometry(14, 0.55, 12), poolMat);
       pool.position.set(-22, 0.32, pz);
       seagramGroup.add(pool);
+      rideBox(seagramGroup, pool); // a low slab on the plaza, at its drawn height
     }
 
     group.add(seagramGroup);
-    colliders.push({
+    // Rider: the tower and the lower rear block (the lot box over both left its two back corners hollow)
+    rideBox(seagramGroup, tower);
+    rideBox(seagramGroup, bustle);
+    trafficColliders.push({
       minX: b.cx - 13,
       maxX: b.cx + 34,
       minZ: b.cz - 18,
@@ -952,7 +1087,7 @@ function buildLandmarks(scene) {
   // 11. ONE WORLD TRADE CENTER (LOWER MANHATTAN · VESEY ST & FULTON ST)
   // =========================================================================
   {
-    const c0 = colliders.length;
+    const c0 = mark();
     const owtcGroup = new THREE.Group();
     owtcGroup.position.set(-260, 0, 1234);
 
@@ -1024,13 +1159,19 @@ function buildLandmarks(scene) {
     owtcGroup.add(beacon);
 
     group.add(owtcGroup);
-    colliders.push({
+    trafficColliders.push({
       minX: -285,
       maxX: -235,
       minZ: 1209,
       maxZ: 1259,
       maxY: 364
     });
+    // Rider: the podium out to the lobby glass, which stands just proud of it
+    {
+      const h = lobbyNS.geometry.parameters.depth / 2;
+      const { x, z } = owtcGroup.position;
+      colliders.push({ minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h, maxY: 364 });
+    }
     fitToSite([owtcGroup], site('One World Trade Center'), c0, { height: 541, horizontal: 1.27 }); // a 61 m square base
   }
 
@@ -1065,7 +1206,7 @@ function buildLandmarks(scene) {
   batchStaticGroupMeshes(group, new Set([stainlessSteelMat]));
 
   scene.add(group);
-  return { group, colliders };
+  return { group, colliders, trafficColliders };
 }
 
 export { buildLandmarks, bryantParkLawn };

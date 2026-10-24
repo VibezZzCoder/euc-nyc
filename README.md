@@ -50,7 +50,9 @@ or 7th Ave at 59th St, or 5th Ave at 72nd or 90th St).
   `node tools/vendor-euc.mjs --src <path-to-EUC-thrills>`. Run it with `--check` to
   confirm the folder is current. The tool only keeps the riders in scope, and it fails if anything from a real-person
   rider reaches the output.
-- three.js is pinned to one commit in `index.html`'s import map.
+- three.js (one pinned dev commit) and the Inter and Overpass fonts are kept in the repo (`vendor/three/`, `fonts/`),
+  so the game loads from its own host only. `node tools/vendor-three.mjs` fetches them again (to move three.js, change
+  the commit in the tool first); `--check` confirms they are unchanged and complete.
 
 ## License and data
 
@@ -64,7 +66,7 @@ or 7th Ave at 59th St, or 5th Ave at 72nd or 90th St).
 - Geographic data: NYC Open Data and © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL).
   The OpenStreetMap-derived parts of `js/nyc-geodata.js` are a derivative database under the ODbL and stay openly
   available in this repository. These credits are also shown in the game, on the full map (`M`).
-- three.js (MIT) and the Inter and Overpass fonts (SIL OFL) load from jsDelivr and Google Fonts. Third-party data and
-  dependencies keep their own licenses.
+- three.js: MIT, © 2010-2026 three.js authors (`vendor/three/LICENSE`). Inter and Overpass: SIL Open Font License 1.1
+  (`fonts/OFL-Inter.txt`, `fonts/OFL-Overpass.txt`). Third-party data and dependencies keep their own licenses.
 
 This project is not affiliated with or endorsed by Mr.doob, any rider, or any manufacturer or brand.

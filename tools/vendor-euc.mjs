@@ -228,6 +228,19 @@ if (AUDIT_DIR) {
   const root = path.resolve(AUDIT_DIR);
   const found = [];
   let files = 0;
+  // Third-party files kept byte for byte (vendor/MANIFEST.json, tools/vendor-three.mjs: three.js, the fonts) are
+  // skipped while their hash matches: three.js's own variable names (mv, MV, RR...) are not names of people. A changed
+  // copy is scanned like any other file.
+  const pristine = new Set();
+  const manifestPath = path.join(root, 'vendor', 'MANIFEST.json');
+  if (fs.existsSync(manifestPath)) {
+    for (const [file, hash] of Object.entries(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).files ?? {})) {
+      const full = path.join(root, file);
+      if (fs.existsSync(full) && crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex') === hash) {
+        pristine.add(path.normalize(file));
+      }
+    }
+  }
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
@@ -236,6 +249,7 @@ if (AUDIT_DIR) {
       for (const h of hitsIn(rel, SCOPE, { includeFictional: false, generic: false })) found.push(`path ${rel}: "${h.text}"`);
       if (entry.isDirectory()) { walk(full); continue; }
       if (/\.(wav|png|jpe?g|gif|webp|ico|woff2?|ttf|bin)$/i.test(entry.name)) continue;
+      if (pristine.has(path.normalize(rel))) continue;
       files++;
       fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
         for (const h of hitsIn(line, SCOPE, { includeFictional: false, generic: false })) found.push(`${rel}:${i + 1}: "${h.text}"`);
@@ -248,7 +262,8 @@ if (AUDIT_DIR) {
     for (const f of found.slice(0, 60)) console.error(`  ${f}`);
     process.exit(1);
   }
-  console.log(`tree audit clean: ${files} text files, ${SCOPE.excluded.length} excluded roster ids checked`);
+  console.log(`tree audit clean: ${files} text files, ${SCOPE.excluded.length} excluded roster ids checked`
+    + (pristine.size ? ` (${pristine.size} unchanged third-party files in vendor/MANIFEST.json skipped)` : ''));
   process.exit(0);
 }
 

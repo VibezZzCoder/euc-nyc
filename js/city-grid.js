@@ -2673,9 +2673,13 @@ function buildCityGrid(scene) {
   // Raised sidewalk blocks bound the roads (the planted malls down Park Ave, Broadway & co. are obstacles in the
   // roadway, handed over with the footprints)
   const sidewalks = roadSidewalks;
-  // Player colliders of the South Street Viaduct's columns, ramps and portal
+  // Colliders of the South Street Viaduct's columns, ramps and both underpass portals: `colliders` the rider's, as drawn
+  // (oriented boxes); `trafficColliders` the road network's AABBs (unchanged, so the traffic network stays as it was)
   const colliders = (fdrViaduct && fdrViaduct.colliders) || [];
-  return { group, sidewalks, footprints, highwayLanes, colliders, ride: { tops: rideTops, solids: rideSolids } };
+  const trafficColliders = (fdrViaduct && fdrViaduct.trafficColliders) || [];
+  return {
+    group, sidewalks, footprints, highwayLanes, colliders, trafficColliders, ride: { tops: rideTops, solids: rideSolids }
+  };
 }
 
 // =====================================================================================================================
@@ -3071,7 +3075,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     return { x: c.x, z: c.z, nx: r.sgn, nz: 0, y: 0, half: 7.6 * r.k + 0.5 };
   });
   const wPortal = { conc: makeAcc(), roof: lawn, dark: makeAcc(), shade: makeAcc() };
-  buildUnderpassPortal(wFrames, wPortal, quad, underSpots, viaduct.colliders);
+  buildUnderpassPortal(wFrames, wPortal, quad, underSpots, viaduct.trafficColliders, viaduct.colliders);
   const inWestPortal = (x, z, m) => {
     let f = wFrames[0];
     for (const g of wFrames) if (Math.abs(g.z - z) < Math.abs(f.z - z)) f = g;
@@ -3215,6 +3219,35 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   return highwayLanes;
 }
 
+/**
+ * The rider's collider around footprint points `pts` ({ x, z }): the box with local x along the unit direction
+ * (ux, uz) that bounds them, `pad` m longer at both ends, solid from 0 to maxY. An oriented box (controllers.js format:
+ * local x = dx * cs - dz * sn, so cs = ux, sn = -uz) inside its world AABB. Axis-aligned boxes around the turned
+ * structure stuck out past its walls; a box in the structure's own frame stays on what is drawn.
+ */
+function rideBoxAround(pts, ux, uz, maxY, pad = 0) {
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+  for (const p of pts) {
+    const a = p.x * ux + p.z * uz;
+    const b = p.z * ux - p.x * uz;
+    a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b);
+  }
+  const ac = (a0 + a1) / 2;
+  const bc = (b0 + b1) / 2;
+  const cx = ac * ux - bc * uz;
+  const cz = ac * uz + bc * ux;
+  const hx = (a1 - a0) / 2 + pad;
+  const hz = (b1 - b0) / 2;
+  const ex = Math.abs(ux) * hx + Math.abs(uz) * hz;
+  const ez = Math.abs(uz) * hx + Math.abs(ux) * hz;
+  return { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, maxY, obb: { cx, cz, hx, hz, cs: ux, sn: -uz } };
+}
+// Unit direction from (ax, az) to (bx, bz)
+const unitDir = (ax, az, bx, bz) => {
+  const l = Math.hypot(bx - ax, bz - az) || 1;
+  return [(bx - ax) / l, (bz - az) / l];
+};
+
 // =====================================================================================================================
 // 11B. THE SOUTH STREET VIADUCT
 // =====================================================================================================================
@@ -3234,8 +3267,9 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
  *   fifth element 'tunnel'), groundOK(x, z) (whether a column may stand there: not in a street) }
  * Returns { lane(o): centre line (Vector3s, southbound order, without the start point, 4.7 m down at the far end of
  *   the portal) of the lane `o` m from the river edge of the at-grade carriageway, boxes: keep-clear oriented boxes
- *   along the structure, keepOut(x, z, margin), colliders: player AABBs {minX, maxX, minZ, maxZ, maxY} of the columns,
- *   the ramps on fill and the portal, portalMats: the portal's { conc, dark, shade } materials }
+ *   along the structure, keepOut(x, z, margin), colliders: the rider's boxes of the columns, the ramps on fill and the
+ *   portal, as drawn (oriented, rideBoxAround), trafficColliders: the same parts as AABBs {minX, maxX, minZ, maxZ, maxY}
+ *   (the road network's obstacles), portalMats: the portal's { conc, dark, shade } materials }
  */
 function buildSouthStreetViaduct(group, opts) {
   const { start, shoreX, obstacles, zEnd, quad, makeAcc, roadMat, lawnMat, paint, WHITE, YELLOW, lightSpots, underSpots } = opts;
@@ -3364,7 +3398,10 @@ function buildSouthStreetViaduct(group, opts) {
   const roof = makeAcc(); // portal lawn
   const dark = makeAcc(); // tunnel mouth
   const shade = makeAcc(); // darkening layer over the tunnel's road, walls & ceiling (uv.x: 0 at the mouth, 1 deep in)
-  const colliders = []; // columns, ramps on fill and the portal, for the player (js/controllers.js)
+  // Columns, ramps on fill and the portal: as drawn for the rider (controllers.js); as the AABBs the road network was
+  // built around for traffic (kept as they were, so the traffic network does not change)
+  const colliders = [];
+  const trafficColliders = [];
   const V = (i, w, y) => new THREE.Vector3(path[i].x + pn[i].x * w, y, path[i].y + pn[i].y * w);
   const side = (i, s, y = 0) => new THREE.Vector3(pn[i].x * s, y, pn[i].y * s);
   // Quad between samples i and i + 1 through cross-section points [w (inland +), h, abs]: h above the road, or above
@@ -3464,7 +3501,12 @@ function buildSouthStreetViaduct(group, opts) {
         const cz = b.z + b.t.x * w;
         obox(steel, cx, cz, b.t, 0.45, 0.45, 0.3, capTop - 1.0);
         obox(conc, cx, cz, b.t, 0.75, 0.75, -0.1, 0.3);
-        colliders.push({ minX: cx - 0.8, maxX: cx + 0.8, minZ: cz - 0.8, maxZ: cz + 0.8, maxY: capTop });
+        trafficColliders.push({ minX: cx - 0.8, maxX: cx + 0.8, minZ: cz - 0.8, maxZ: cz + 0.8, maxY: capTop });
+        // the rider's: the pedestal, turned with the bent (the column above it is narrower)
+        const ped = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, n]) => ({
+          x: cx + (b.t.x * a - b.t.y * n) * 0.75, z: cz + (b.t.y * a + b.t.x * n) * 0.75
+        }));
+        colliders.push(rideBoxAround(ped, b.t.x, b.t.y, capTop));
       }
       if (k === nB) return;
       const m = at((sb + bentS[k + 1]) / 2);
@@ -3511,22 +3553,31 @@ function buildSouthStreetViaduct(group, opts) {
   // ---- Battery Park Underpass portal (buildUnderpassPortal) -------------------------------------------------------
   const portalFrames = [];
   for (let i = iMouth; i < nP; i++) portalFrames.push({ x: path[i].x, z: path[i].y, nx: pn[i].x, nz: pn[i].y, y: Y[i], half: HALF });
-  buildUnderpassPortal(portalFrames, { deck, conc, roof, dark, shade }, quad, underSpots, colliders);
+  buildUnderpassPortal(portalFrames, { deck, conc, roof, dark, shade }, quad, underSpots, trafficColliders, colliders);
 
-  // Player colliders: the ramps on fill once the road is ~0.35 m up (four boxes across every segment; the columns are
-  // added with the bents, the portal's by buildUnderpassPortal)
+  // Colliders of the ramps on fill once the road is ~0.35 m up, solid to the parapet top (the columns are added with
+  // the bents, the portal's by buildUnderpassPortal). Traffic's: four AABBs across every segment. The rider's: one box
+  // per segment in the segment's own frame, out to the outer wall faces (±7.9; the walls run from the parapet top down
+  // to the ground there), 2 cm longer at both ends so no slit opens between segments. A run's end box lies in its end
+  // frame's plane instead, so its end face is the drawn one (the path still curves where the north ramp begins)
+  const onFill = (i) => i >= 0 && i < iMouth && !elevated(i) && Math.max(Y[i], Y[i + 1]) >= 0.35;
   for (let i = 0; i < iMouth; i++) {
-    if (elevated(i) || Math.max(Y[i], Y[i + 1]) < 0.35) continue;
+    if (!onFill(i)) continue;
     const hw = 7.9;
     const top = Math.max(Y[i], Y[i + 1]) + 0.85;
     for (let k = 0; k < 4; k++) {
       const w0 = -hw + (k * hw) / 2;
       const pts = [V(i, w0, 0), V(i, w0 + hw / 2, 0), V(i + 1, w0, 0), V(i + 1, w0 + hw / 2, 0)];
-      colliders.push({
+      trafficColliders.push({
         minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)),
         minZ: Math.min(...pts.map((p) => p.z)), maxZ: Math.max(...pts.map((p) => p.z)), maxY: top
       });
     }
+    const first = !onFill(i - 1);
+    const last = !onFill(i + 1);
+    const e = first ? i : i + 1;
+    const [ux, uz] = first !== last ? [pn[e].y, -pn[e].x] : unitDir(path[i].x, path[i].y, path[i + 1].x, path[i + 1].y);
+    colliders.push(rideBoxAround([V(i, -hw, 0), V(i, hw, 0), V(i + 1, -hw, 0), V(i + 1, hw, 0)], ux, uz, top, 0.02));
   }
 
   // ---- Meshes & keep-clear boxes ----------------------------------------------------------------------------------
@@ -3575,7 +3626,10 @@ function buildSouthStreetViaduct(group, opts) {
     }
     return out;
   };
-  return { lane, boxes, keepOut: (x, z, m = 0) => boxes.some((o) => inBox(o, x, z, m)), path, req, length: L, colliders, portalMats };
+  return {
+    lane, boxes, keepOut: (x, z, m = 0) => boxes.some((o) => inBox(o, x, z, m)), path, req, length: L, colliders,
+    trafficColliders, portalMats
+  };
 }
 
 // =====================================================================================================================
@@ -3590,9 +3644,10 @@ function buildSouthStreetViaduct(group, opts) {
  * frames: cross-sections [{ x, z, nx, nz, y, half }] from the mouth to the far end: (nx, nz) the unit vector across the
  *   road, y the road level, half the half-width between the inner wall faces
  * acc: { deck (optional), conc, roof, dark, shade } accumulators for quad() (from buildManhattanWaterfrontEdge)
- * lights: the ceiling lights are pushed as [x, y, z, yaw, 'tunnel']; colliders: player AABBs (four across each segment)
+ * lights: the ceiling lights are pushed as [x, y, z, yaw, 'tunnel']; trafficColliders: AABBs (four across each
+ * segment, the road network's); rideColliders: the rider's, as drawn (the walls, and the bore from the dark screen on)
  */
-function buildUnderpassPortal(frames, acc, quad, lights, colliders) {
+function buildUnderpassPortal(frames, acc, quad, lights, trafficColliders, rideColliders) {
   const ROOF = 6.4; // lawn level
   const CEIL = ROOF - 0.8;
   const UP = new THREE.Vector3(0, 1, 0);
@@ -3665,7 +3720,7 @@ function buildUnderpassPortal(frames, acc, quad, lights, colliders) {
     }
   }
 
-  // Player colliders: four boxes across every segment, up to the parapet
+  // Traffic's colliders: four AABBs across every segment, up to the parapet
   for (let k = 0; k < n - 1; k++) {
     for (let j = 0; j < 4; j++) {
       const pts = [];
@@ -3676,11 +3731,56 @@ function buildUnderpassPortal(frames, acc, quad, lights, colliders) {
           pts.push(new THREE.Vector3(F[kk].x + F[kk].nx * ww, 0, F[kk].z + F[kk].nz * ww));
         }
       }
-      colliders.push({
+      trafficColliders.push({
         minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)),
         minZ: Math.min(...pts.map((p) => p.z)), maxZ: Math.max(...pts.map((p) => p.z)), maxY: ROOF + 0.35
       });
     }
+  }
+  // The rider's, up to the parapet as well. Each wall (inner to outer face) per segment, in the segment's frame (2 cm
+  // longer at both ends so no slit opens between segments): the mouth stays open ground up to the dark screen. The
+  // bore is closed from the screen on: a slab whose front face is the screen, a fill box per segment and a slab inside
+  // the end wall. The fill boxes lie in their frame's own plane over the width both of the segment's ends share: a
+  // frame shifted or turned against its neighbour (West St's frames jog sideways) would otherwise push a box bounding
+  // the whole bore out past the walls. What they leave between them and the walls is closed in by the walls & slabs.
+  const top = ROOF + 0.35;
+  // Frame k's plane: a m past its line toward its neighbour (k + 1; the last frame: n - 2), b m across (along its n)
+  const plane = (k) => {
+    const f = F[k];
+    const g = F[k + 1] || F[k - 1];
+    const fw = Math.sign((g.x - f.x) * f.nz - (g.z - f.z) * f.nx) || 1;
+    const ux = f.nz * fw;
+    const uz = -f.nx * fw;
+    return {
+      ux, uz,
+      at: (a, b) => ({ x: f.x + ux * a + f.nx * b, z: f.z + uz * a + f.nz * b }),
+      of: (p) => [(p.x - f.x) * ux + (p.z - f.z) * uz, (p.x - f.x) * f.nx + (p.z - f.z) * f.nz]
+    };
+  };
+  const inPlane = (k, a0, a1, b0, b1) => {
+    const { ux, uz, at } = plane(k);
+    return rideBoxAround([at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)], ux, uz, top);
+  };
+  for (let k = 0; k < n - 1; k++) {
+    const [ux, uz] = unitDir(F[k].x, F[k].z, F[k + 1].x, F[k + 1].z);
+    for (const sd of [-1, 1]) {
+      rideColliders.push(rideBoxAround([V(k, sd, 0, 0), V(k, sd, 0.8, 0), V(k + 1, sd, 0, 0), V(k + 1, sd, 0.8, 0)], ux, uz, top, 0.02));
+    }
+    if (k < kO) continue;
+    // the far end's inner wall corners, in frame k's plane
+    const { of } = plane(k);
+    const [aL, bL] = of(V(k + 1, -1, 0, 0));
+    const [aR, bR] = of(V(k + 1, 1, 0, 0));
+    const b0 = Math.max(-F[k].half, bL);
+    const b1 = Math.min(F[k].half, bR);
+    // to the far end's farther corner (into the next box, where the frames turn), the last one to its nearer corner
+    // (short of the end wall: its slab closes the rest)
+    const a1 = (k < n - 2 ? Math.max(aL, aR) : Math.min(aL, aR)) + 0.02;
+    if (b1 - b0 > 0.3) rideColliders.push(inPlane(k, k === kO ? 0 : -0.02, a1, b0, b1));
+  }
+  if (kO < n - 1) {
+    rideColliders.push(inPlane(kO, 0, 0.5, -F[kO].half, F[kO].half)); // behind the screen
+    rideColliders.push(inPlane(n - 1, 0, 0.5, -F[n - 1].half, F[n - 1].half)); // inside the end wall
   }
   return { S, kO };
 }

@@ -47,6 +47,8 @@ Slower knocks only stop you or scrub your speed.
   not ground. The Reservoir's running track is a raised loop you can hop onto.
 - **The squares** (Madison, Union, Washington and Tompkins Square Parks) have iron fences: ride in by their gates.
   Park walks, lawn beds and the Times Square and Herald Square plazas are a little above the road, like kerbs.
+- **Buildings are solid exactly where they stand.** Plazas, the lawns round housing towers, gaps between buildings and
+  the open ground under raised buildings (601 Lexington Avenue's stilts, the tram station) can be ridden.
 - Bridges and the highway decks are not rideable yet.
 
 ## Controls
