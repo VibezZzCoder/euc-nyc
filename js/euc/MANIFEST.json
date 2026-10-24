@@ -1,0 +1,213 @@
+{
+  "upstream": "https://github.com/VibezZzCoder/EUC-thrills",
+  "commit": "5f45fff19b258e140833841ba2473069af751a12",
+  "generatedBy": "tools/vendor-euc.mjs",
+  "entries": [
+    "simulation/EucController.ts",
+    "simulation/planSampler.ts",
+    "simulation/world.ts",
+    "input/actions.ts",
+    "render/chaseCamera.ts",
+    "render/ridingRig.ts",
+    "render/riderLook.ts",
+    "render/machineLook.ts"
+  ],
+  "removedColourEntries": 106,
+  "files": {
+    "data/rideStyles.js": {
+      "source": "src/data/rideStyles.ts",
+      "sourceSha256": "3bb3fadfb1cd032ef6d51035e385824bd32d54bec1606ab35ff15266d29b0ccd",
+      "sliced": false
+    },
+    "data/surfaces.js": {
+      "source": "src/data/surfaces.ts",
+      "sourceSha256": "758e7d5c46b1c6d5f7f3a1020a5ed96b9c4407e9458b7eefeb9276b8247d19aa",
+      "sliced": false
+    },
+    "data/tuning.js": {
+      "source": "src/data/tuning.ts",
+      "sourceSha256": "d0c462aa34845cb31246063f8416f2a607a89829f60c8ecca5f89abb041bfd04",
+      "sliced": true
+    },
+    "input/actions.js": {
+      "source": "src/input/actions.ts",
+      "sourceSha256": "beed52da5550107ce52ae6a4b246ad0791690a7c6b25f52e007c98234b68eaa1",
+      "sliced": false
+    },
+    "render/blockoutKit.js": {
+      "source": "src/render/blockoutKit.ts",
+      "sourceSha256": "e651a01f03ae3e5d826195f726066b38bd10db75f94aa0e5beff4964352a2801",
+      "sliced": false
+    },
+    "render/chaseCamera.js": {
+      "source": "src/render/chaseCamera.ts",
+      "sourceSha256": "7086d89ebc6948edc7219e915227cf1fd0551ff6ed26f8e6d26deed0cbf5197a",
+      "sliced": false
+    },
+    "render/coolRiderAtlas.js": {
+      "source": "src/render/coolRiderAtlas.ts",
+      "sourceSha256": "bab14b1ec5a813afc1596c0e987c0432abcd63e742c7e6a0115682b732a26e54",
+      "sliced": false
+    },
+    "render/coolRiderLook.js": {
+      "source": "src/render/coolRiderLook.ts",
+      "sourceSha256": "d3b7e14cf6aaafd65c2f994d39019e785bfd1f270775a53553801cc3561f646f",
+      "sliced": false
+    },
+    "render/euc.js": {
+      "source": "src/render/euc.ts",
+      "sourceSha256": "c56888018a2a64c99593ccc7a8d3cf3336f357fa249d06b3c2ca4f5e90579f97",
+      "sliced": false
+    },
+    "render/inkKit.js": {
+      "source": "src/render/inkKit.ts",
+      "sourceSha256": "76e05570e3cd2b50a9e2f888f252239fe0310ef21290152a7efdbcfd0764c957",
+      "sliced": false
+    },
+    "render/machineLook.js": {
+      "source": "src/render/machineLook.ts",
+      "sourceSha256": "720088d38842186e4e43101744c564f92389dc6fec4cac98e3de0eef0cce5612",
+      "sliced": true
+    },
+    "render/paddle.js": {
+      "source": "src/render/paddle.ts",
+      "sourceSha256": "41385d417ba026ee9dace8ddf7a8f18c40c27fc4d9622862f03068444fd6082b",
+      "sliced": false
+    },
+    "render/rider.js": {
+      "source": "src/render/rider.ts",
+      "sourceSha256": "fcc67783bda9e4cc68d0522ef394c9c4145877bf48e5d56d7a79c6413d9e13b4",
+      "sliced": false
+    },
+    "render/riderClothDrape.js": {
+      "source": "src/render/riderClothDrape.ts",
+      "sourceSha256": "d716ea81d7b920c28ef80cd71e32bada0859fd6846664519dd85d1f878cec763",
+      "sliced": false
+    },
+    "render/riderJointSurface.js": {
+      "source": "src/render/riderJointSurface.ts",
+      "sourceSha256": "ed2d1d08cc47edbe2230288af1a9c12db21a70a949dcd85b4b6bc6d1d707995f",
+      "sliced": false
+    },
+    "render/riderLook.js": {
+      "source": "src/render/riderLook.ts",
+      "sourceSha256": "a5d06cdd735631c8acdc021cf6651e9843f08957e7c286d4c3d7e7fd823dacb5",
+      "sliced": true
+    },
+    "render/ridingRig.js": {
+      "source": "src/render/ridingRig.ts",
+      "sourceSha256": "7968df84e06b8cc51a61a02a27fcff9dc1acea8825c84fc26568200c5b0f67e8",
+      "sliced": false
+    },
+    "render/rigConsolidation.js": {
+      "source": "src/render/rigConsolidation.ts",
+      "sourceSha256": "64082e5d6fc76a5cf74ea1c9d8fcd8d56ba9bff979827dfbf23b2fbba0740ac7",
+      "sliced": false
+    },
+    "shared/freeze.js": {
+      "source": "src/shared/freeze.ts",
+      "sourceSha256": "c87caf18e229c9284cbe2ae217809923ebc44978077e6471ae5675210b35c43f",
+      "sliced": false
+    },
+    "shared/letterPaths.js": {
+      "source": "src/shared/letterPaths.ts",
+      "sourceSha256": "fe2db9c5a6b92ee465ce14df3c39cff5027f6cd2e4a622b4ae482f3a10b8e86c",
+      "sliced": false
+    },
+    "shared/maths.js": {
+      "source": "src/shared/maths.ts",
+      "sourceSha256": "1d5c06d01c714d271858a13aa9f172461c95b4ba5ede55d07f4720d5c2c27182",
+      "sliced": false
+    },
+    "shared/ragdollBoot.js": {
+      "source": "src/shared/ragdollBoot.ts",
+      "sourceSha256": "0be26353470074c21976d6d1966414d82b2d379882dccf8746cda0e966fb955c",
+      "sliced": false
+    },
+    "shared/ragdollContact.js": {
+      "source": "src/shared/ragdollContact.ts",
+      "sourceSha256": "262df4d8cfe1a6a99df3c95bfc6666bf23def8a91121c37ae2221d9d30775e7a",
+      "sliced": false
+    },
+    "shared/ragdollHip.js": {
+      "source": "src/shared/ragdollHip.ts",
+      "sourceSha256": "062ecd95184a29ce8abef5eb6eb821c098686f61a477c03a1ca33be858310d08",
+      "sliced": false
+    },
+    "shared/ragdollInterpolation.js": {
+      "source": "src/shared/ragdollInterpolation.ts",
+      "sourceSha256": "a6f509cbd52629bdb611166261d67006d284fc67ef75076f79d6868894ca861f",
+      "sliced": false
+    },
+    "shared/ragdollLimbContact.js": {
+      "source": "src/shared/ragdollLimbContact.ts",
+      "sourceSha256": "db362adce4057ed82f6586d898a87cb1337bf202b36098be7d8cf678a87cd100",
+      "sliced": false
+    },
+    "shared/riderOccupancy.js": {
+      "source": "src/shared/riderOccupancy.ts",
+      "sourceSha256": "631c3fc947bd7fb292464ba75150318c82d91c7b8e2bc309127a7590a64dcdba",
+      "sliced": false
+    },
+    "shared/riderSideContact.js": {
+      "source": "src/shared/riderSideContact.ts",
+      "sourceSha256": "a38965f5230cbdb519e36564a0f23a7cc20112e30f56253b04608590dfcd79fe",
+      "sliced": false
+    },
+    "simulation/EucController.js": {
+      "source": "src/simulation/EucController.ts",
+      "sourceSha256": "da69eec9eb35bae6dbef9f068c21f7bd1e6ff35afd87feeaa200546f9f23ca81",
+      "sliced": false
+    },
+    "simulation/eucStepPrimitives.js": {
+      "source": "src/simulation/eucStepPrimitives.ts",
+      "sourceSha256": "9d0a8bcabdce43282ba2de6ffd2911617ec59c4ff95edb5fe40a691c1510eea0",
+      "sliced": false
+    },
+    "simulation/hazards.js": {
+      "source": "src/simulation/hazards.ts",
+      "sourceSha256": "6c3000531e71a756dc2490a9eb23907161a099d5c7c622269adb71ceaa7f2171",
+      "sliced": false
+    },
+    "simulation/lateralCeiling.js": {
+      "source": "src/simulation/lateralCeiling.ts",
+      "sourceSha256": "2ebc0b7216371ab39d9e3069d6dff1eba23e296e4f6eb1f76cf9fb70d05aac7f",
+      "sliced": false
+    },
+    "simulation/launchPadField.js": {
+      "source": "src/simulation/launchPadField.ts",
+      "sourceSha256": "1cdf083b639d0e812d876158b1380931d5f20d88d17060a2b895f0eb09a1b9f1",
+      "sliced": false
+    },
+    "simulation/planSampler.js": {
+      "source": "src/simulation/planSampler.ts",
+      "sourceSha256": "99da7e8316d0c06cfd7d4222b6fc411c130416e74407b184b09e16a960d2934d",
+      "sliced": false
+    },
+    "simulation/ragdoll.js": {
+      "source": "src/simulation/ragdoll.ts",
+      "sourceSha256": "494188a5269e2673513ff7bc66e1d83aba047b27c568e63270b4fbe0af510d19",
+      "sliced": false
+    },
+    "simulation/riderLean.js": {
+      "source": "src/simulation/riderLean.ts",
+      "sourceSha256": "0a54a84a1908af0865c2b84c96c3713d59edaf8af306ab70c5b7c9fac6bce7ed",
+      "sliced": false
+    },
+    "simulation/roughness.js": {
+      "source": "src/simulation/roughness.ts",
+      "sourceSha256": "6cd11c0abd81fefb1073fc79a7d802f8663a79abf4029b87cfdf626dae2aa16c",
+      "sliced": false
+    },
+    "simulation/softBodies.js": {
+      "source": "src/simulation/softBodies.ts",
+      "sourceSha256": "6ca7eefc5488925a943c3be6b3f4710bed4ee8658d558746f775b154f7e0ee67",
+      "sliced": false
+    },
+    "simulation/world.js": {
+      "source": "src/simulation/world.ts",
+      "sourceSha256": "f204a73961edec7f6d530839e7b5ae489f866596cc4e024cb5b7d9ba478ae5ba",
+      "sliced": false
+    }
+  }
+}

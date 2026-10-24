@@ -1096,7 +1096,6 @@ function createFacadeBoxes(material, boxes) {
  * Chrysler Building & Architectural Stainless-Steel Crown TSL Material
  */
 let _chryslerCrownMat = null;
-const _carPaintCache = new Map();
 
 function createChryslerCrownMaterial() {
   if (_chryslerCrownMat) return _chryslerCrownMat;
@@ -1180,32 +1179,6 @@ function createChryslerCrownMaterial() {
   })();
 
   _chryslerCrownMat = mat;
-  return mat;
-}
-
-/**
- * GTA 6-Style Metallic Clearcoat Vehicle Paint TSL Material
- */
-function createCarPaintMaterial(baseHex = 0xffc218) {
-  if (_carPaintCache.has(baseHex)) return _carPaintCache.get(baseHex);
-  const mat = new THREE.MeshStandardNodeMaterial({
-    metalness: 0.56,
-    roughness: 0.11
-  });
-
-  const cBase = color(baseHex);
-
-  mat.colorNode = Fn(() => {
-    const viewDir = normalize(cameraPosition.sub(positionWorld));
-    const sunDir = normalize(cityUniforms.uSkySunDir);
-    const reflectDir = reflect(viewDir.negate(), normalWorld);
-    const fresnel = pow(clamp(float(1.0).sub(abs(dot(viewDir, normalWorld))), 0.0, 1.0), 2.2);
-    const envCol = mix(cityUniforms.uSkyHorizonColor, color(0xffffff), clamp(reflectDir.y.mul(0.55).add(0.5), 0.0, 1.0));
-    const clearcoatSpec = pow(max(dot(reflectDir, sunDir), 0.0), 36.0).mul(0.55);
-    return mix(cBase, envCol, fresnel.mul(0.48)).add(cityUniforms.uSunColor.mul(clearcoatSpec));
-  })();
-
-  _carPaintCache.set(baseHex, mat);
   return mat;
 }
 
@@ -1550,7 +1523,7 @@ function createTunnelShadeMaterial() {
 }
 
 /**
- * Duffy Square TKTS red glass bleacher steps: glossy ruby glass treads with bright LED-lit riser nosings and a
+ * Duffy Square ticket-booth red glass bleacher steps: glossy ruby glass treads with bright LED-lit riser nosings and a
  * gentle inner glow by day that becomes a strong red beacon at dusk & night. Risers are `riserH` tall from `baseY`.
  */
 function createTktsStepMaterial(baseY = 0.24, riserH = 0.18) {
@@ -1923,6 +1896,7 @@ function createCurbMaterial() {
 /**
  * High-Definition Times Square / Broadway LED Video Wall TSL Material
  * Features 6 crisp, non-pixelated HDR shader themes with fine sub-pixel LED scanlines.
+ * Every name on these posters is fictional: no real brands, papers, channels, exchanges or venues (owner rule).
  */
 const _billboardCache = new Map();
 
@@ -1933,7 +1907,7 @@ function createBillboardCanvasTexture(themeKey) {
   const ctx = c.getContext('2d');
 
   if (themeKey === 0) {
-    // Theme 0: Broadway Musical Marquee ("PHANTOM OF MANHATTAN · MAJESTIC THEATRE")
+    // Theme 0: Broadway Musical Marquee ("METROPOLIS · MERIDIAN THEATRE", both fictional)
     const grad = ctx.createLinearGradient(0, 0, 512, 256);
     grad.addColorStop(0, '#2a0412');
     grad.addColorStop(0.5, '#580a22');
@@ -1977,13 +1951,13 @@ function createBillboardCanvasTexture(themeKey) {
 
     ctx.fillStyle = '#fff3c4';
     ctx.font = '800 20px Inter, Arial, sans-serif';
-    ctx.fillText('★★★★★  "UNFORGETTABLE!" — NY TIMES', 256, 185);
+    ctx.fillText('★★★★★  "UNFORGETTABLE!" — THE CITY LEDGER', 256, 185, 424);
 
     ctx.fillStyle = '#ffae42';
     ctx.font = '700 16px JetBrains Mono, monospace';
-    ctx.fillText('MAJESTIC THEATRE · 44TH ST WEST · TONIGHT 8 PM', 256, 226);
+    ctx.fillText('MERIDIAN THEATRE · 44TH ST WEST · TONIGHT 8 PM', 256, 226, 470);
   } else if (themeKey === 1) {
-    // Theme 1: NASDAQ / Wall St MarketSite Financial Display
+    // Theme 1: Fictional "Metro Exchange" Financial Display
     const grad = ctx.createLinearGradient(0, 0, 0, 256);
     grad.addColorStop(0, '#04122c');
     grad.addColorStop(1, '#08264e');
@@ -2006,7 +1980,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#ffffff';
     ctx.font = '900 24px Inter, Arial, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('NASDAQ · TIMES SQ MARKETSITE', 18, 31);
+    ctx.fillText('METRO EXCHANGE', 18, 31, 300);
     ctx.fillStyle = '#00f5a0';
     ctx.textAlign = 'right';
     ctx.font = '800 20px JetBrains Mono, monospace';
@@ -2043,44 +2017,57 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#38d8ff';
     ctx.font = '800 20px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('NDX 21,490 ▲   SPX 6,145 ▲   DOW 44,880 ▲   NYC 100 ▲', 256, 238);
+    ctx.fillText('CITY 100 ▲   METRO 500 ▲   HARBOR 30 ▲   SKY 50 ▲', 256, 238, 496);
   } else if (themeKey === 2) {
-    // Theme 2: Gotham Cola / Iconic Red & White Wave Billboard
+    // Theme 2: Fictional "Hudson Fizz" citrus soda: teal & coral with rising bubbles (deliberately no red/white
+    // script-and-ribbon cola look)
     const grad = ctx.createLinearGradient(0, 0, 512, 256);
-    grad.addColorStop(0, '#b8061e');
-    grad.addColorStop(0.5, '#e6122e');
-    grad.addColorStop(1, '#9e0418');
+    grad.addColorStop(0, '#063f4a');
+    grad.addColorStop(0.55, '#0b8a8f');
+    grad.addColorStop(1, '#14b8a6');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 512, 256);
 
-    // Classic dynamic white wave ribbon
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(0, 170);
-    ctx.bezierCurveTo(160, 110, 340, 225, 512, 148);
-    ctx.lineTo(512, 192);
-    ctx.bezierCurveTo(340, 260, 160, 150, 0, 210);
-    ctx.closePath();
-    ctx.fill();
+    // Straight coral sash behind the name
+    ctx.fillStyle = '#ff7a59';
+    ctx.fillRect(0, 66, 512, 58);
 
-    ctx.fillStyle = '#ffe082';
+    // Rising soda bubbles (fixed layout so the texture is deterministic)
+    const bubbles = [
+      [30, 190, 9], [62, 180, 5], [96, 198, 6], [150, 186, 4], [220, 196, 5], [300, 184, 4], [360, 194, 6],
+      [410, 180, 5], [456, 196, 8], [488, 176, 5], [14, 174, 4], [498, 172, 4], [18, 40, 5], [494, 44, 6]
+    ];
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.lineWidth = 2;
+    for (const [bx, by, br] of bubbles) {
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#ffd54a';
     ctx.font = '800 18px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('ICE COLD · EST. 1898 · NEW YORK', 256, 48);
+    ctx.fillText('ICE COLD · BROOKLYN BOTTLED', 256, 48, 470);
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'italic 900 54px Georgia, serif';
-    ctx.fillText('Gotham Cola', 256, 108);
+    ctx.font = '900 50px Inter, Arial, sans-serif';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#073b43';
+    ctx.strokeText('HUDSON FIZZ', 256, 113, 470);
+    ctx.fillText('HUDSON FIZZ', 256, 113, 470);
 
-    ctx.fillStyle = '#fff5cc';
+    ctx.fillStyle = '#e8fffb';
     ctx.font = '800 22px Inter, Arial, sans-serif';
-    ctx.fillText('TASTE THE MANHATTAN SKYLINE', 256, 148);
+    ctx.fillText('SPARKLING CITRUS · TASTE THE SKYLINE', 256, 156, 470);
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#04262d';
+    ctx.fillRect(0, 210, 512, 46);
+    ctx.fillStyle = '#ffd54a';
     ctx.font = '700 17px JetBrains Mono, monospace';
-    ctx.fillText('REFRESHING TIMES SQUARE 24 HOURS A DAY', 256, 236);
+    ctx.fillText('REFRESHING TIMES SQUARE 24 HOURS A DAY', 256, 236, 496);
   } else if (themeKey === 3) {
-    // Theme 3: Fifth Avenue Luxury Watch & Couture ("CHRONO GENÈVE")
+    // Theme 3: Fifth Avenue Luxury Watch & Couture (fictional "CHRONO GENÈVE")
     const grad = ctx.createRadialGradient(256, 128, 16, 256, 128, 260);
     grad.addColorStop(0, '#2c2218');
     grad.addColorStop(1, '#0c0908');
@@ -2125,11 +2112,11 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#f5d97e';
     ctx.textAlign = 'center';
     ctx.font = '800 16px Inter, Arial, sans-serif';
-    ctx.fillText('SWISS MANUFACTURE · SINCE 1884', 345, 66);
+    ctx.fillText('SWISS MANUFACTURE · HAND FINISHED', 345, 66, 300);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '900 38px Georgia, serif';
-    ctx.fillText('CHRONO GENÈVE', 345, 114);
+    ctx.fillText('CHRONO GENÈVE', 345, 114, 300);
 
     ctx.fillStyle = '#e5c158';
     ctx.font = '700 22px Inter, Arial, sans-serif';
@@ -2139,7 +2126,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.font = '600 16px JetBrains Mono, monospace';
     ctx.fillText('5TH AVE AT 57TH ST · NEW YORK', 345, 202);
   } else if (themeKey === 4) {
-    // Theme 4: NY1 Live Skyline News & Weather Broadcast
+    // Theme 4: Fictional "Skyline News" Live Weather Broadcast
     const grad = ctx.createLinearGradient(0, 0, 512, 200);
     grad.addColorStop(0, '#0a2246');
     grad.addColorStop(1, '#1c569e');
@@ -2152,7 +2139,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#38b6ff';
     ctx.font = '900 26px Inter, Arial, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('NY1 NEWS · LIVE MANHATTAN', 18, 33);
+    ctx.fillText('SKYLINE NEWS · LIVE', 18, 33, 320);
 
     ctx.fillStyle = '#ffd15c';
     ctx.textAlign = 'right';
@@ -2184,9 +2171,9 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillText('EXPRESS: 5TH AVE & BROADWAY CLEAR', 20, 220);
     ctx.fillStyle = '#c8102e';
     ctx.font = '800 16px JetBrains Mono, monospace';
-    ctx.fillText('LIVE HD · EMPIRE STATE · CHRYSLER · ONE WTC · CENTRAL PARK', 20, 244);
+    ctx.fillText('LIVE HD · SKYLINE CAM · UPTOWN · DOWNTOWN · THE PARK', 20, 244, 476); // no landmark names in ads
   } else {
-    // Theme 5: Times Square Neon Nights & TKTS Booth
+    // Theme 5: Times Square Neon Nights & Half-Price Ticket Booth
     const grad = ctx.createLinearGradient(0, 0, 512, 256);
     grad.addColorStop(0, '#1e0638');
     grad.addColorStop(0.5, '#6a0dad');
@@ -2226,7 +2213,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillRect(0, 198, 512, 58);
     ctx.fillStyle = '#ff4081';
     ctx.font = '900 24px JetBrains Mono, monospace';
-    ctx.fillText('TKTS · 50% OFF BROADWAY SHOWS TONIGHT', 256, 234);
+    ctx.fillText('HALF-PRICE SHOW TICKETS TONIGHT', 256, 234, 496);
   }
 
   const tex = new THREE.CanvasTexture(c);
@@ -3015,7 +3002,6 @@ export {
   createPreWarBuildingMaterial,
   createFacadeBoxes,
   createChryslerCrownMaterial,
-  createCarPaintMaterial,
   createTreeMaterial,
   createParkPavingMaterial,
   createParkWallMaterial,

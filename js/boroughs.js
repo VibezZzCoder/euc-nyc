@@ -661,7 +661,7 @@ function paintLandUse() {
   luPaintPolygon([{ x: -13500, z: -9500 }, { x: -9600, z: -10200 }, { x: -7600, z: -5000 }, { x: -7200, z: 0 }, { x: -8000, z: 2500 },
     { x: -10500, z: 3200 }, { x: -13500, z: 1000 }], SUBURB, 200);
   luEllipseLL(-74.0565, 40.7895, 900, 700, MARSH, 0);           // Secaucus (built up within the marsh)
-  luEllipseLL(-74.0745, 40.8135, 500, 420, INDUSTRY);           // MetLife Stadium / Meadowlands complex
+  luEllipseLL(-74.0745, 40.8135, 500, 420, INDUSTRY);           // Meadowlands stadium / sports complex
   luEllipseLL(-74.0745, 40.8135, 500, 420, MARSH, 0);
   luPaintPolygon([{ x: -10600, z: 7500 }, { x: -8200, z: 7800 }, { x: -7900, z: 15000 }, { x: -10400, z: 15500 }], INDUSTRY, 170); // Port Newark / Elizabeth docks
   luEllipseLL(-74.1745, 40.6895, 1400, 1100, INDUSTRY);         // Newark Airport
@@ -1519,9 +1519,9 @@ const TOWER_HOTSPOTS = [
 const tower = (name, lon, lat, w, d, h, style, tint, extra = {}) => ({ name, ...LL(lon, lat), w, d, h, style, tint, ...extra });
 const SIGNATURE_TOWERS = [
   tower('99 Hudson Street', -74.0347, 40.7150, 30, 26, 270, 1, [0.24, 0.28, 0.31]),
-  tower('Goldman Sachs Tower', -74.0337, 40.7144, 40, 30, 238, 1, [0.30, 0.36, 0.40]),
-  tower('Urby Jersey City', -74.0348, 40.7182, 28, 24, 213, 3, [0.78, 0.77, 0.74]),
-  tower('Trump Plaza Jersey City', -74.0370, 40.7198, 28, 22, 163, 1, [0.20, 0.23, 0.27]),
+  tower('30 Hudson Street', -74.0337, 40.7144, 40, 30, 238, 1, [0.30, 0.36, 0.40]),
+  tower('200 Greene Street', -74.0348, 40.7182, 28, 24, 213, 3, [0.78, 0.77, 0.74]),
+  tower('88 Morgan Street', -74.0370, 40.7198, 28, 22, 163, 1, [0.20, 0.23, 0.27]),
   tower('Newport Tower', -74.0338, 40.7268, 40, 32, 161, 1, [0.26, 0.30, 0.33]),
   tower('The One Journal Square', -74.0632, 40.7322, 32, 26, 215, 1, [0.30, 0.33, 0.36]),
   tower('Skyline Tower', -73.9446, 40.7480, 30, 30, 237, 1, [0.16, 0.20, 0.25]),
@@ -2481,8 +2481,8 @@ function siteOnShore(land, lon, lat, inland, r) {
 const LANDMARK_SITES = {
   bigAllis: siteOnShore(QUEENS_LAND, -73.9455, 40.7593, 75, 110),
   eggs: { ...LL(-73.9479, 40.7353), r: 75 },
-  pepsi: siteOnShore(QUEENS_LAND, -73.9593, 40.7473, 14, 30),
-  domino: siteOnShore(BROOKLYN_LAND, -73.9677, 40.7143, 30, 55),
+  gantrySign: siteOnShore(QUEENS_LAND, -73.9593, 40.7473, 14, 30),
+  refinery: siteOnShore(BROOKLYN_LAND, -73.9677, 40.7143, 30, 55),
   yankee: { ...LL(-73.9262, 40.8296), r: 150 },
   hoboken: siteOnShore(NJ_LAND, -74.0275, 40.7350, -45, 85)
 };
@@ -2510,9 +2510,9 @@ function makeSignTexture(text, { font, color, glow, width = 1024, height = 256 }
   ctx.lineJoin = 'round';
   ctx.strokeStyle = glow;
   ctx.lineWidth = height * 0.035;
-  ctx.strokeText(text, width / 2, height * 0.54);
+  ctx.strokeText(text, width / 2, height * 0.54, width * 0.94);
   ctx.fillStyle = color;
-  ctx.fillText(text, width / 2, height * 0.54);
+  ctx.fillText(text, width / 2, height * 0.54, width * 0.94);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
@@ -2531,8 +2531,9 @@ function createSignMaterial(tex, nightGlow) {
 
 /**
  * Industrial waterfront icons seen from Manhattan: Ravenswood's red-and-white "Big Allis" stacks, the Newtown Creek
- * digester eggs, the Pepsi-Cola sign at Gantry Plaza, the Domino Sugar refinery & sign, Yankee Stadium and the
- * Hoboken Terminal clock tower.
+ * digester eggs, the rooftop neon sign at Gantry Plaza, the Williamsburg sugar refinery & sign, Yankee Stadium and the
+ * Hoboken Terminal clock tower. The two signs carry generic text, not the real companies' names or lettering styles
+ * (no brands, owner rule).
  */
 function buildBoroughLandmarks(parts, mats, list, group) {
   const rand = mulberry32(1963);
@@ -2559,14 +2560,14 @@ function buildBoroughLandmarks(parts, mats, list, group) {
   parts.box(mats.darkSteel, E.x, 44, E.z + 15, 96, 1.4, 2.6);
   list.push({ x: E.x, y: 0, z: E.z + 52, w: 100, h: 12, d: 20, rot: 0, tint: [0.55, 0.53, 0.5], style: 2, seed: 11 });
 
-  // --- Pepsi-Cola sign (Gantry Plaza State Park), facing Manhattan ---
-  const P = LANDMARK_SITES.pepsi;
-  const pepsiTex = makeSignTexture('Pepsi-Cola', { font: 'italic bold 190px "Snell Roundhand", "Brush Script MT", "Segoe Script", cursive', color: '#ff2a2a', glow: '#7a0505' });
-  const pepsiMat = createSignMaterial(pepsiTex, 4.0);
+  // --- Neon sign on a steel frame (Gantry Plaza State Park), facing Manhattan: the neighbourhood's name in cyan ---
+  const P = LANDMARK_SITES.gantrySign;
+  const gantrySignTex = makeSignTexture('LONG ISLAND CITY', { font: 'bold 150px "Avenir Next Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif', color: '#4fd8ff', glow: '#043a5c' });
+  const gantrySignMat = createSignMaterial(gantrySignTex, 4.0);
   const signW = 34;
   const signH = 9;
   const pg = new THREE.PlaneGeometry(1, 1);
-  const pm = new THREE.Mesh(pg, pepsiMat);
+  const pm = new THREE.Mesh(pg, gantrySignMat);
   pm.position.set(P.x - 1, 10.5 + signH * 0.5, P.z);
   pm.rotation.y = -Math.PI / 2;
   pm.scale.set(signW, signH, 1);
@@ -2582,13 +2583,13 @@ function buildBoroughLandmarks(parts, mats, list, group) {
     parts.box(mats.darkSteel, P.x + 1, 20, gz, 16, 3.2, 10);
   }
 
-  // --- Domino Sugar refinery & sign (Williamsburg) ---
-  const D = LANDMARK_SITES.domino;
+  // --- Sugar refinery & sign (Williamsburg) ---
+  const D = LANDMARK_SITES.refinery;
   list.push({ x: D.x - 2, y: 0, z: D.z, w: 30, h: 40, d: 60, rot: 0, tint: [0.45, 0.25, 0.18], style: 2, seed: 19 });
   list.push({ x: D.x - 2, y: 40, z: D.z - 10, w: 16, h: 10, d: 16, rot: 0, tint: [0.45, 0.25, 0.18], style: 2, seed: 23 });
   parts.add(mats.brick, new THREE.CylinderGeometry(1.8, 2.5, 64, 10), parts.matrixOf(D.x - 10, 32, D.z + 22, 1, 1, 1));
-  const dominoTex = makeSignTexture('DOMINO SUGARS', { font: 'bold 150px "Futura", "Avenir Next Condensed", "Arial Narrow", sans-serif', color: '#ffc61a', glow: '#6b4a00' });
-  const dm = new THREE.Mesh(pg, createSignMaterial(dominoTex, 3.0));
+  const refineryTex = makeSignTexture('SUGAR REFINERY', { font: 'bold 150px "Arial Narrow", "Helvetica Neue", Arial, sans-serif', color: '#ff9a3c', glow: '#5c2a00' });
+  const dm = new THREE.Mesh(pg, createSignMaterial(refineryTex, 3.0));
   dm.position.set(D.x - 17.4, 45.5, D.z);
   dm.rotation.y = -Math.PI / 2;
   dm.scale.set(36, 9, 1);

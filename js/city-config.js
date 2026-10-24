@@ -222,15 +222,15 @@ const PIER_KINDS = [
   ['Pier 88', 'Pier 88 · Cruise Terminal', 'cruise'],
   ['Pier 86', 'Pier 86 · Intrepid Museum', 'intrepid', { isLandmarkPier: true }],
   ['Pier 84', 'Pier 84 · Hudson River Pk', 'park'],
-  ['Pier 83', 'Pier 83 · Circle Line', 'ferryPier', { circleLine: true }],
-  ['Pier 81', 'Pier 81 · World Yacht', 'ferryPier', { ferries: 2, ferryLen: 24 }],
+  ['Pier 83', 'Pier 83 · Sightseeing Cruises', 'ferryPier', { circleLine: true }],
+  ['Pier 81', 'Pier 81 · Dinner Cruises', 'ferryPier', { ferries: 2, ferryLen: 24 }],
   ['Pier 76', 'Pier 76 · Hudson Yards', 'shed', { roofParking: true }],
   ['Pier 66', 'Pier 66 · 26th St', 'park', { lightship: true }],
   ['Pier 64', 'Pier 64 · Hudson River Pk', 'park'],
-  ['Pier 62', 'Pier 62 · Chelsea Piers', 'park'],
-  ['Pier 61', 'Pier 61 · Chelsea Piers', 'chelsea'],
-  ['Pier 60', 'Pier 60 · Chelsea Piers', 'chelsea', { sign: true }],
-  ['Pier 59', 'Pier 59 · Chelsea Piers', 'chelsea', { golf: true }],
+  ['Pier 62', 'Pier 62 · Sports Piers', 'park'],
+  ['Pier 61', 'Pier 61 · Sports Piers', 'chelsea'],
+  ['Pier 60', 'Pier 60 · Sports Piers', 'chelsea', { sign: true }],
+  ['Pier 59', 'Pier 59 · Sports Piers', 'chelsea', { golf: true }],
   ['Pier 57', 'Pier 57 · Rooftop Park', 'pier57'],
   ['Little Island', 'Little Island @ Pier 55', 'littleIsland'],
   ['Pier 45 at Hudson River Park', 'Pier 45 · Christopher St', 'park'],
@@ -614,7 +614,8 @@ const NYC_LANDMARKS = [
   ['timessquare', 'One Times Square & Duffy Sq', 'Times Square', 'One Times Square', 'Theater District'],
   ['bryantpark', 'Bryant Park & NYPL', 'Bryant Park', 'Stephen A. Schwarzman Building', 'Midtown'],
   ['rockefeller', 'Rockefeller Center (30 Rock)', '30 Rock', '30 Rockefeller Plaza', 'Midtown'],
-  ['citigroup', 'Citigroup Center', 'Citigroup Ctr', 'Citigroup Center', 'Midtown East'],
+  // Shown by its address (its current name), not the former owner's company name; column 4 stays the OSM key
+  ['citigroup', '601 Lexington Avenue', '601 Lexington', 'Citigroup Center', 'Midtown East'],
   ['seagram', 'Seagram Building & Plaza', 'Seagram Bldg', 'Seagram Building', 'Midtown East'],
   ['flatiron', 'Flatiron Building', 'Flatiron Bldg', 'Flatiron Building', 'Flatiron District'],
   ['owtc', 'One World Trade Center', 'One WTC', 'One World Trade Center', 'Financial District'],
@@ -752,8 +753,91 @@ function walkSignal(time, isAvenue) {
   return t < walk;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Central Park's walls and gates. The park is raised (its lawn at CENTRAL_PARK_TOP) behind a low wall on its real
+// outline. The wheel rides in only at the gates: each a paved ramp cut into the wall, from the perimeter sidewalk (or
+// the road, where a drive comes out) up to the lawn, at a real entrance. city-grid.js draws them, euc-terrain.js rides them, from this one table.
+// ---------------------------------------------------------------------------------------------------------------------
+const CENTRAL_PARK_OUTLINE = toPts(GEO.centralPark.outline);
+const CENTRAL_PARK_TOP = 1.24;
+const CENTRAL_PARK_GATE_SIZE = Object.freeze({ width: 7, length: 12 });
+
+function inCentralPark(x, z) {
+  const b = CENTRAL_PARK_BOUNDS;
+  return x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ && pointInPoly(CENTRAL_PARK_OUTLINE, x, z);
+}
+
+// Snap a point near the wall onto it: the gate's place on the wall, its tangent and its inward normal
+function wallGate(name, x, z) {
+  const ring = CENTRAL_PARK_OUTLINE;
+  let best = null;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const c = ring[(i + 1) % ring.length];
+    const dx = c.x - a.x;
+    const dz = c.z - a.z;
+    const len2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / len2));
+    const px = a.x + dx * t;
+    const pz = a.z + dz * t;
+    const d = Math.hypot(x - px, z - pz);
+    if (!best || d < best.d) best = { d, i, px, pz, tx: dx / Math.sqrt(len2), tz: dz / Math.sqrt(len2) };
+  }
+  let nx = -best.tz;
+  let nz = best.tx;
+  if (!pointInPoly(ring, best.px + nx * 2, best.pz + nz * 2)) {
+    nx = -nx;
+    nz = -nz;
+  }
+  // The ramp starts at whatever lies outside the wall: the perimeter sidewalk, or the road where a drive comes out
+  const base = blockAt(best.px - nx * 1.5, best.pz - nz * 1.5) ? ISLAND_BOUNDS.sidewalkHeight : 0;
+  return Object.freeze({ name, x: best.px, z: best.pz, tx: best.tx, tz: best.tz, nx, nz, edge: best.i, base });
+}
+
+// Real entrances (the named gates of the park wall), placed on the wall by snapping
+const CENTRAL_PARK_GATES = Object.freeze([
+  wallGate("Merchants' Gate", -770, CENTRAL_PARK_BOUNDS.maxZ),
+  wallGate("Artisans' Gate", avenueX('7'), CENTRAL_PARK_BOUNDS.maxZ),
+  wallGate("Artists' Gate", avenueX('6'), CENTRAL_PARK_BOUNDS.maxZ),
+  wallGate("Scholars' Gate", -90, CENTRAL_PARK_BOUNDS.maxZ),
+  wallGate("Inventors' Gate", CENTRAL_PARK_BOUNDS.maxX, streetZ(72)),
+  wallGate("Engineers' Gate", CENTRAL_PARK_BOUNDS.maxX, streetZ(90)),
+  wallGate("Woodman's Gate", CENTRAL_PARK_BOUNDS.maxX, streetZ(102)),
+  wallGate("Women's Gate", CENTRAL_PARK_BOUNDS.minX, streetZ(72)),
+  wallGate("Mariners' Gate", CENTRAL_PARK_BOUNDS.minX, streetZ(85)),
+  wallGate("Boys' Gate", CENTRAL_PARK_BOUNDS.minX, streetZ(100)),
+  wallGate("Farmers' Gate", avenueX('6'), CENTRAL_PARK_BOUNDS.minZ),
+  wallGate("Warriors' Gate", avenueX('7'), CENTRAL_PARK_BOUNDS.minZ),
+  wallGate("Pioneers' Gate", -90, CENTRAL_PARK_BOUNDS.minZ)
+]);
+
+/**
+ * The gate ramp at (x, z), grown by `margin` metres all round: { gate, u (along the wall), d (inward from the wall),
+ * t (0 at the sidewalk end .. 1 at the lawn) }, or null.
+ */
+function centralParkGateAt(x, z, margin = 0) {
+  const { width, length } = CENTRAL_PARK_GATE_SIZE;
+  for (const g of CENTRAL_PARK_GATES) {
+    const rx = x - g.x;
+    const rz = z - g.z;
+    const d = rx * g.nx + rz * g.nz;
+    if (d < -margin || d > length + margin) continue;
+    const u = rx * g.tx + rz * g.tz;
+    if (Math.abs(u) > width / 2 + margin) continue;
+    return { gate: g, u, d, t: Math.max(0, Math.min(1, d / length)) };
+  }
+  return null;
+}
+
 export {
   AVENUES,
+  CENTRAL_PARK_OUTLINE,
+  CENTRAL_PARK_TOP,
+  CENTRAL_PARK_GATE_SIZE,
+  CENTRAL_PARK_GATES,
+  inCentralPark,
+  centralParkGateAt,
+  pointInPoly,
   ALL_AVENUES,
   CENTRAL_PARK_BOUNDS,
   getIslandBoundsAtZ,

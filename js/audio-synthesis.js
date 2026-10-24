@@ -94,110 +94,6 @@ function combustionBuffers(context, cylinders, diesel, seed) {
   };
 }
 
-function rotorBuffers(context) {
-  const rate = context.sampleRate;
-  const revolutions = 16, blades = 4, revolutionsPerSecond = 5.2;
-  const length = Math.round(rate * revolutions / revolutionsPerSecond);
-  const rotor = context.createBuffer(1, length, rate);
-  const envelope = context.createBuffer(1, length, rate);
-  const data = rotor.getChannelData(0), modulation = envelope.getChannelData(0);
-  const random = randomSequence(0x726f746f);
-  const strengths = [1, 0.73, 0.96, 0.76];
-  const interval = length / (revolutions * blades);
-  for (let blade = 0; blade < revolutions * blades; blade++) {
-    let index = Math.round((blade + (random() - 0.5) * 0.012) * interval);
-    index = (index + length) % length;
-    const strength = strengths[blade % blades] * (0.94 + random() * 0.12);
-    let turbulence = 0;
-    for (let i = 0; i < rate * 0.085; i++) {
-      const t = i / rate;
-      turbulence += (random() * 2 - 1 - turbulence) * 0.24;
-      const attack = 1 - Math.exp(-t / 0.0003);
-      const pressure = (1 - t / 0.0032) * Math.exp(-t / 0.0032);
-      const body = Math.sin(t * 2 * Math.PI * 52) * Math.exp(-t / 0.021) * 0.32;
-      // A compact pressure pulse and low body give each blade weight; most wash is a separate modulated layer.
-      const slapTime = t - 0.005;
-      const slap = slapTime > 0 ? (1 - slapTime / 0.0008) * Math.exp(-slapTime / 0.0008) * 0.24 : 0;
-      const wash = attack * Math.exp(-t / 0.016);
-      data[index] += strength * (pressure * attack + body + slap + turbulence * wash * 0.42);
-      modulation[index] += strength * wash;
-      if (++index === length) index = 0;
-    }
-  }
-  let peak = 0;
-  for (let i = 0; i < length; i++) peak = Math.max(peak, modulation[i]);
-  for (let i = 0; i < length; i++) modulation[i] /= peak;
-  return { rotor: normalizeLoop(rotor, 0.29), envelope };
-}
-
-function turbineBuffer(context) {
-  const rate = context.sampleRate;
-  const buffer = context.createBuffer(1, Math.round(rate * 2), rate);
-  const data = buffer.getChannelData(0), random = randomSequence(0x74757262);
-  let lowNoise = 0;
-  for (let i = 0; i < data.length; i++) {
-    const t = i / rate;
-    const white = random() * 2 - 1;
-    lowNoise += (white - lowNoise) * 0.18;
-    // Two close turbine tones beat gently above the gearbox. Integer cycles and periodic phase modulation
-    // wrap continuously; baking them once avoids a stack of oscillators for every helicopter voice.
-    const flutter = Math.sin(2 * Math.PI * 23 * t) * 0.12;
-    data[i] = Math.sin(2 * Math.PI * 1580 * t + flutter) * 0.30
-      + Math.sin(2 * Math.PI * 1593 * t - flutter) * 0.24
-      + Math.sin(2 * Math.PI * 3160 * t + flutter * 2) * 0.12
-      + Math.sin(2 * Math.PI * 790 * t) * 0.08 + (white - lowNoise) * 0.25;
-  }
-  return normalizeLoop(buffer, 0.22, 0.8);
-}
-
-function ratchetBuffer(context) {
-  const rate = context.sampleRate;
-  const length = Math.round(rate * 2);
-  const buffer = context.createBuffer(1, length, rate);
-  const data = buffer.getChannelData(0);
-  const random = randomSequence(0x7061776c);
-  const teeth = 120; // Reference: sixty pawl contacts per second.
-  for (let tooth = 0; tooth < teeth; tooth++) {
-    let index = Math.round((tooth + (random() - 0.5) * 0.06) / teeth * length);
-    index = (index + length) % length;
-    const strength = (tooth % 3 ? 0.78 : 1) * (0.92 + random() * 0.16);
-    for (let i = 0; i < rate * 0.004; i++) {
-      const t = i / rate;
-      // Let the hub filter provide the resonance: faster clicks should not become a high-pitched whine.
-      const impact = Math.exp(-t / 0.00025) - 0.25 * Math.exp(-t / 0.001);
-      const click = impact + (random() * 2 - 1) * Math.exp(-t / 0.0007) * 0.7;
-      data[index] += click * strength * (1 - Math.exp(-t / 0.00008));
-      if (++index === length) index = 0;
-    }
-  }
-  return normalizeLoop(buffer, 0.15, 0.85);
-}
-
-function chainBuffer(context) {
-  const rate = context.sampleRate;
-  const buffer = context.createBuffer(1, rate, rate); // One crank revolution at 60 rpm.
-  const data = buffer.getChannelData(0);
-  const random = randomSequence(0x63686169);
-  const teeth = 48;
-  for (let tooth = 0; tooth < teeth; tooth++) {
-    // Alternating links, with two gentle, slightly unequal power strokes per crank revolution.
-    const phase = tooth / teeth * Math.PI * 2;
-    const effort = 0.72 - Math.cos(phase * 2) * 0.18 + Math.sin(phase) * 0.06;
-    const strength = effort * (tooth % 2 ? 0.88 : 1) * (0.92 + random() * 0.16);
-    let index = Math.round(tooth / teeth * data.length);
-    let previous = 0;
-    for (let i = 0; i < rate * 0.012; i++) {
-      const t = i / rate;
-      const noise = random() * 2 - 1;
-      const friction = noise - previous * 0.65;
-      previous = noise;
-      data[index] += friction * strength * (1 - Math.exp(-t / 0.0003)) * Math.exp(-t / 0.0024);
-      if (++index === data.length) index = 0;
-    }
-  }
-  return normalizeLoop(buffer, 0.16, 0.8);
-}
-
 function sirenSweepWave(context) {
   const real = new Float32Array(25), imaginary = new Float32Array(25);
   // Electronic wail/yelp circuits use a nearly triangular control voltage, with softened turning points.
@@ -269,7 +165,6 @@ export function createSynthResources(context) {
   }
 
   const wave = (harmonics) => context.createPeriodicWave(new Float32Array(harmonics.length), new Float32Array(harmonics));
-  const helicopter = rotorBuffers(context);
   return {
     noise,
     impulse,
@@ -278,11 +173,6 @@ export function createSynthResources(context) {
       suv: combustionBuffers(context, 6, false, 0x73757631),
       bus: combustionBuffers(context, 6, true, 0x64696573)
     },
-    rotor: helicopter.rotor,
-    rotorEnvelope: helicopter.envelope,
-    turbine: turbineBuffer(context),
-    ratchet: ratchetBuffer(context),
-    chain: chainBuffer(context),
     sirenWave: wave([0, 1, 0.13, 0.29, 0.055, 0.11, 0.025, 0.045, 0.012, 0.018]),
     sirenSweep: sirenSweepWave(context),
     voiceSerial: 0
@@ -303,7 +193,7 @@ function smoothParameter(parameter, timeConstant = 0.07, epsilon = 0.0001, snapI
 }
 
 export function createMotorVoice(context, resources, kind, output) {
-  if (!['sedan', 'suv', 'bus', 'helicopter', 'cyclist', 'siren'].includes(kind)) {
+  if (!['sedan', 'suv', 'bus', 'siren'].includes(kind)) {
     throw new RangeError(`Unknown motor voice: ${kind}`);
   }
   const nodes = [];
@@ -435,90 +325,6 @@ export function createMotorVoice(context, resources, kind, output) {
       roadFrequency((2200 + Math.min(1, rolling) * 2400) * doppler, now);
       noiseRate(doppler * (0.96 + variation * 0.08), now);
     };
-  } else if (kind === 'helicopter') {
-    const rotor = loop(resources.rotor);
-    const rotorFilter = filter('lowpass', 1500, 0.5);
-    const rotorGain = gain();
-    rotor.connect(rotorFilter).connect(rotorGain).connect(mix);
-    const air = loop();
-    const washFilter = filter('lowpass', 1400, 0.5);
-    const washGain = gain();
-    air.connect(washFilter).connect(washGain).connect(mix);
-    const bladeEnvelope = loop(resources.rotorEnvelope);
-    const bladeDepth = gain();
-    bladeEnvelope.connect(bladeDepth).connect(washGain.gain);
-    const turbine = loop(resources.turbine);
-    const turbineFilter = filter('bandpass', 2400, 0.55);
-    const turbineGain = gain();
-    turbine.connect(turbineFilter).connect(turbineGain).connect(mix);
-    const rotorRate = smoothParameter(rotor.playbackRate, 0.30, 0.0004, true);
-    const envelopeRate = smoothParameter(bladeEnvelope.playbackRate, 0.30, 0.0004, true);
-    const rotorLevel = smoothParameter(rotorGain.gain, 0.22);
-    const rotorCutoff = smoothParameter(rotorFilter.frequency, 0.22, 1);
-    const washLevel = smoothParameter(washGain.gain, 0.22);
-    const bladeLevel = smoothParameter(bladeDepth.gain, 0.22);
-    const washCutoff = smoothParameter(washFilter.frequency, 0.25, 1);
-    const turbineFrequency = smoothParameter(turbineFilter.frequency, 0.25, 1);
-    const turbineLevel = smoothParameter(turbineGain.gain, 0.22);
-    const turbineRate = smoothParameter(turbine.playbackRate, 0.4, 0.0005, true);
-    const noiseRate = smoothParameter(air.playbackRate, 0.15, 0.001);
-    render = (speed, load, doppler, now, verticalSpeed) => {
-      const flight = Math.min(1, speed / 40);
-      const descent = clamp(-verticalSpeed / 10, 0, 1) * Math.min(1, speed / 10) * (1 - flight * 0.6);
-      // A governed rotor changes speed very little: collective/forward flight primarily strengthen the blade slap
-      // and turbulent wash. The pressure loop and its noise envelope share the same phase and playback rate.
-      const rate = (0.994 + variation * 0.012 - load * 0.012 + flight * 0.004) * doppler;
-      rotorRate(rate, now);
-      envelopeRate(rate, now);
-      rotorLevel(0.32 + load * 0.18 + descent * 0.12 + flight * 0.025, now);
-      rotorCutoff((1150 + load * 700 + descent * 1800) * doppler, now);
-      washLevel(0.022 + load * 0.025, now);
-      bladeLevel(0.18 + load * 0.25 + descent * 0.25, now);
-      washCutoff((800 + load * 650 + flight * 900) * doppler, now);
-      turbineFrequency((2000 + load * 900) * doppler, now);
-      turbineLevel(0.055 + load * 0.055, now);
-      turbineRate((0.92 + load * 0.16) * doppler, now);
-      noiseRate(doppler, now);
-    };
-  } else if (kind === 'cyclist') {
-    const road = loop();
-    const tireHighpass = filter('highpass', 110, 0.6);
-    const tireFilter = filter('lowpass', 1400, 0.65);
-    const tireGain = gain();
-    road.connect(tireHighpass).connect(tireFilter).connect(tireGain).connect(mix);
-    const ratchet = loop(resources.ratchet);
-    const ratchetFilter = filter('bandpass', 2600, 1);
-    const ratchetGain = gain();
-    ratchet.connect(ratchetFilter).connect(ratchetGain).connect(mix);
-    const chain = loop(resources.chain);
-    const chainFilter = filter('bandpass', 1900, 0.65);
-    const chainGain = gain();
-    chain.connect(chainFilter).connect(chainGain).connect(mix);
-    const tireLevel = smoothParameter(tireGain.gain, 0.15);
-    const tireFrequency = smoothParameter(tireFilter.frequency, 0.15, 1);
-    const ratchetLevel = smoothParameter(ratchetGain.gain, 0.035);
-    const ratchetRate = smoothParameter(ratchet.playbackRate, 0.05, 0.001, true);
-    const ratchetFrequency = smoothParameter(ratchetFilter.frequency, 0.15, 1);
-    const chainLevel = smoothParameter(chainGain.gain, 0.05);
-    const chainRate = smoothParameter(chain.playbackRate, 0.05, 0.001, true);
-    const chainFrequency = smoothParameter(chainFilter.frequency, 0.15, 1);
-    const noiseRate = smoothParameter(road.playbackRate, 0.12, 0.001);
-    render = (speed, load, doppler, now) => {
-      const movement = Math.min(1.25, speed / 12);
-      const rolling = Math.min(1, speed / 2);
-      const pedaling = load > 0 ? 1 : 0;
-      tireLevel(Math.pow(movement, 1.35) * 0.16, now);
-      tireFrequency((900 + Math.min(1, movement) * 2100) * doppler, now);
-      // Even light pedaling engages the freewheel. Coasting clicks stand out above the quieter loaded chain.
-      ratchetLevel(rolling * (1 - pedaling) * 0.38, now);
-      ratchetRate(Math.max(0.01, speed * 24 / (2 * Math.PI * 0.35 * 60)) * doppler, now);
-      ratchetFrequency(2600 * (0.97 + variation * 0.06) * doppler, now);
-      chainLevel(rolling * pedaling * (0.02 + Math.sqrt(load) * 0.04), now);
-      // Match the controller's 35 cm wheels and 3.2 wheel revolutions per crank revolution.
-      chainRate(Math.max(0.01, speed / (2 * Math.PI * 0.35 * 3.2)) * doppler, now);
-      chainFrequency((1700 + load * 600) * doppler, now);
-      noiseRate((0.9 + Math.min(1, movement) * 0.2) * doppler, now);
-    };
   } else {
     const siren = oscillator(resources.sirenWave, 1125);
     const highpass = filter('highpass', 480, 0.7);
@@ -554,7 +360,7 @@ export function createMotorVoice(context, resources, kind, output) {
     };
   }
 
-  function update({ speed = 0, load = 0, doppler = 1, seed = 0, verticalSpeed = 0 } = {}, now = context.currentTime) {
+  function update({ speed = 0, load = 0, doppler = 1, seed = 0 } = {}, now = context.currentTime) {
     if (disposed) return;
     const safeSeed = Number.isFinite(seed) ? seed : 0;
     if (safeSeed !== lastSeed) {
@@ -567,8 +373,7 @@ export function createMotorVoice(context, resources, kind, output) {
       Number.isFinite(speed) ? Math.min(Math.abs(speed), 100) : 0,
       Number.isFinite(load) ? clamp(load, 0, 1) : 0,
       Number.isFinite(doppler) ? clamp(doppler, 0.5, 2) : 1,
-      time,
-      Number.isFinite(verticalSpeed) ? clamp(verticalSpeed, -30, 30) : 0
+      time
     );
   }
 

@@ -80,11 +80,19 @@ test('overlapping road segments select the matching elevation', () => {
   close(result.v, 0);
 });
 
-test('underground lanes and helicopters remain excluded', () => {
+test('underground lanes remain excluded, and no rider means no snapshot', () => {
   const road = lane([{ x: 0, y: -4.5, z: 0 }, { x: 100, y: -4.5, z: 0 }]);
   assert.equal(playerInLane(road, player(50, -4.5, 0)), null);
-  assert.equal(player(50, 0, 0, 'helicopter'), null);
-  assert.equal(snapshot(null, 'car'), null);
+  assert.equal(snapshot(null), null);
+});
+
+test('the highway snapshot is the EUC rider\'s whatever mode string a caller still passes', () => {
+  for (const mode of [undefined, 'euc', 'car', 'helicopter']) {
+    const pl = player(50, 0, 0, mode);
+    close(pl.x, 50);
+    close(pl.vx, 10);
+    assert.ok(Math.abs(pl.vz) < 1e-9);
+  }
 });
 
 function trafficFunction(name, context) {
@@ -257,4 +265,203 @@ test('crossing pedestrians fall back to a sidewalk when nearby crosswalks are un
   assert.equal(crossings, 5);
   assert.equal(ped.node, null);
   assert.equal(ped.z, 210);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The EUC rider: traffic reads the rider, never writes it (the EUC controller is the authority)
+// ---------------------------------------------------------------------------------------------------------------
+
+test('no traffic code writes the player entity\'s position, speed, velocity or mesh', () => {
+  assert.doesNotMatch(source, /\b(pe|entity|playerEntity|player\.entity)\.(position|mesh)\.(x|y|z|copy|set)\b\s*(\(|[-+*]?=(?!=))/);
+  assert.doesNotMatch(source, /\b(pe|entity|playerEntity|player\.entity)\.(speed|vx|vz|heading|angularVel|pitchVel|rollVel|heaveVel|lastCollisionSpark)\s*[-+*]?=(?!=)/);
+  assert.doesNotMatch(source, /activeMode|'helicopter'|'cyclist'/, 'the retired player modes are gone');
+});
+
+test('bus destination signs carry a generic route, not a real operator\'s', () => {
+  const sign = source.match(/function createBusDestinationTexture\(\) \{[\s\S]*?\n\}/)[0];
+  assert.doesNotMatch(sign, /#0058b8|'M1'|HARLEM|5 AV/i);
+  assert.match(sign, /'X1'/);
+});
+
+function riderHarness() {
+  const entity = Object.freeze({ type: 'euc', position: Object.freeze({ x: 0, y: 0, z: 0 }), heading: 0, speed: 0 });
+  const player = { active: true, entity, x: 0, z: 0, vx: 0, vz: 0, heading: 0, speed: 0, halfW: 0.35, halfL: 0.5 };
+  const reports = [];
+  const context = {
+    Math, player, CONTACT_SKIN: 0.08, HIT_MEMORY: 0.25,
+    clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
+    satHit: { nx: 0, nz: 0, pen: 0, localX: 0, localZ: 0, pSin: 0, pCos: 1 },
+    reportCollision: (...args) => reports.push(args),
+    spawnCollisionSparks: () => {}
+  };
+  context.overlapWithPlayer = trafficFunction('overlapWithPlayer', context);
+  const collideWithPlayer = trafficFunction('collideWithPlayer', context);
+  // a car coming up behind the rider along +Z
+  const car = (z, speed) => ({ x: 0, z, tx: 0, tz: 1, speed, vx: 0, vz: 0, dlv: 0, bus: false, isSUV: false,
+    hold: false, hitVX: 0, hitVZ: 0, hitTimer: 0, pitchVel: 0, rollVel: 0 });
+  return { entity, player, reports, collideWithPlayer, car };
+}
+
+test('a car that runs into the rider stops, remembers its impact velocity and reports it, never moving the rider', () => {
+  const { entity, reports, collideWithPlayer, car } = riderHarness();
+  const v = car(-2.6, 8); // its nose (2.18 m ahead of centre) 0.08 m into the rider's back (0.5 m behind)
+  collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(v.hold, true);
+  assert.equal(v.speed, 0);
+  assert.equal(v.hitVZ, 8);
+  assert.equal(v.hitTimer, 0.25);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0][0], entity);
+  assert.equal(reports[0][1], v);
+  assert.ok(Math.abs(reports[0][7] - 8) < 1e-9, 'approach speed');
+  // still touching next frame: holding, no second report, the impact memory runs down
+  collideWithPlayer(v, 0, 0.86, 2.18, 0.1);
+  assert.equal(v.hold, true);
+  assert.equal(reports.length, 1);
+  assert.ok(Math.abs(v.hitTimer - 0.15) < 1e-12);
+  assert.deepEqual(entity.position, { x: 0, y: 0, z: 0 });
+  assert.equal(entity.speed, 0);
+});
+
+test('a fast car within the contact skin is not held short of the rider; a slow one is', () => {
+  const { collideWithPlayer, car } = riderHarness();
+  const fast = car(-2.72, 8); // 0.04 m short of the rider: inside the 0.08 m skin
+  collideWithPlayer(fast, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(fast.hold, false);
+  assert.equal(fast.speed, 8);
+  const slow = car(-2.72, 0.5);
+  collideWithPlayer(slow, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(slow.hold, true);
+  assert.equal(slow.hitTimer, 0, 'creeping up is no impact');
+});
+
+test('a car driving on past a rider who brushes its side is not stopped, and sounds once', () => {
+  const { player, reports, collideWithPlayer, car } = riderHarness();
+  const v = car(0, 10);
+  v.x = -(0.86 + 0.35 - 0.02); // its right side 2 cm into the rider, both heading +Z
+  player.vx = -1.5; // the rider (on the car's +X side) drifting into it
+  collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(v.hold, false);
+  assert.equal(v.speed, 10);
+  assert.equal(reports.length, 1);
+  collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(reports.length, 1, 'continued contact is not a new impact');
+  assert.equal(v.hitTimer, 0, 'the car did not drive into the rider');
+});
+
+test('the hold is released once the rider has moved away or is inactive', () => {
+  const { player, collideWithPlayer, car } = riderHarness();
+  const v = car(-2.6, 0);
+  collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(v.hold, true);
+  player.x = 3;
+  collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(v.hold, false);
+  player.x = 0;
+  player.active = false;
+  collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(v.hold, false);
+});
+
+test('drivers yield to a rider about to cross their lane, not to one riding away from it', () => {
+  const playerGap = trafficFunction('playerGap', { Math, LOOKAHEAD: 70, PLAYER_CUT_IN: 0.8, player: { halfW: 0.35, halfL: 0.5 } });
+  const v = { pAhead: 20, pRight: 4, pLat: 0, half: 2.25, halfWidth: 0.86, speed: 10 };
+  assert.equal(playerGap(v, 0), Infinity, 'beside the lane, riding along it');
+  v.pLat = -6;
+  close(playerGap(v, 0), 20 - 2.25 - 0.5);
+  v.pLat = 6;
+  assert.equal(playerGap(v, 0), Infinity, 'riding away');
+  v.pRight = 0.5;
+  v.pLat = 0;
+  close(playerGap(v, 0), 20 - 2.25 - 0.5);
+  v.pAhead = -3;
+  assert.equal(playerGap(v, 0), Infinity, 'behind the car');
+});
+
+test('dynamicBodiesNear reports nearby vehicles and pedestrians as reusable upright prisms', () => {
+  const vehicles = [
+    { edge: {}, x: 3, z: 0, yaw: 0, yawOffset: 0.1, tx: 0, tz: 1, speed: 5, vx: 0, vz: 0, bus: false, isSUV: true, hitTimer: 0 },
+    { edge: {}, x: 2, z: 4, yaw: 0, yawOffset: 0, tx: 0, tz: 1, speed: 0, vx: 0, vz: 0, bus: false, isSUV: false, hitTimer: 0.1, hitVX: 0, hitVZ: 7 },
+    { edge: {}, x: 300, z: 0, yaw: 0, yawOffset: 0, tx: 0, tz: 1, speed: 5, vx: 0, vz: 0, bus: true, isSUV: false, hitTimer: 0 },
+    { edge: null, x: 0, z: 0 }
+  ];
+  const peds = [
+    { placed: true, x: -1, z: 1, ux: 1, uz: 0, dir: -1, v: 1.4 },
+    { placed: false, x: 0, z: 0 },
+    { placed: true, x: 0, z: 50, ux: 1, uz: 0, dir: 1, v: 1.4 }
+  ];
+  const context = {
+    Math, vehicles, peds, CAR_HEIGHT: 1.5, SUV_HEIGHT: 1.8, BUS_HEIGHT: 3.2, PED_HALF: 0.3, PED_HEIGHT: 1.8,
+    vehicleHalfW: (v) => (v.bus ? 1.30 : v.isSUV ? 0.92 : 0.86),
+    vehicleHalfL: (v) => (v.bus ? 5.72 : v.isSUV ? 2.22 : 2.18),
+    pedGround: () => 0.22
+  };
+  const dynamicBodiesNear = trafficFunction('dynamicBodiesNear', context);
+  const out = [];
+  dynamicBodiesNear(0, 0, 6, out);
+  assert.equal(out.length, 3);
+  const [suv, stopped, walker] = out;
+  assert.equal(suv.kind, 'vehicle');
+  assert.equal(suv.source, vehicles[0]);
+  close(suv.headingY, 0.1);
+  assert.equal(suv.halfWidthMetres, 0.92);
+  assert.equal(suv.halfLengthMetres, 2.22);
+  assert.equal(suv.maxY, 1.8);
+  assert.equal(suv.velocityZ, 5);
+  assert.equal(stopped.velocityZ, 7, 'a car that just hit the rider reports its impact velocity');
+  assert.equal(walker.kind, 'person');
+  assert.equal(walker.halfWidthMetres, walker.halfLengthMetres, 'square: the ragdoll treats it as a person');
+  close(walker.headingY, -Math.PI / 2);
+  close(walker.velocityX, -1.4);
+  assert.equal(walker.minY, 0.22);
+  close(walker.maxY, 2.02);
+  const again = [];
+  vehicles[0].x = 3.5;
+  dynamicBodiesNear(0, 0, 6, again);
+  assert.equal(again[0], suv, 'records are reused, not reallocated');
+  assert.equal(suv.x, 3.5);
+});
+
+test('pedestrians step aside from a rider coming up behind them, then back onto their track', () => {
+  const player = { active: true, x: 0, z: 0, vx: 0, vz: 5, speed: 5 };
+  const dodgeRider = trafficFunction('dodgeRider', {
+    Math, player, DODGE_AHEAD: 3, DODGE_MAX: 0.6, DODGE_RATE: 1.4, BUMP_MIN_SPEED: 1.5, BUMP_MAX_PUSH: 4.5,
+    BUMP_COOLDOWN: 3, stumble: () => {},
+    clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x))
+  });
+  const p = { x: 0.3, z: 2, ux: 0, uz: 1, dir: 1, v: 1.3, pause: 0, dodge: 0 };
+  for (let i = 0; i < 60; i++) {
+    p.x = 0.3; // walk() puts it back on its track every frame
+    dodgeRider(p, 1 / 60);
+  }
+  close(p.dodge, -0.6);
+  close(p.x, 0.9); // away from the rider's way, to its right
+  player.active = false;
+  for (let i = 0; i < 60; i++) {
+    p.x = 0.3;
+    dodgeRider(p, 1 / 60);
+  }
+  assert.equal(p.dodge, 0);
+  assert.equal(p.x, 0.3);
+});
+
+test('a pedestrian bumped by a moving wheel stumbles away, stands, complains once, then walks back to its track', () => {
+  const player = { active: true, x: 0, z: 0, vx: 0, vz: 4, speed: 4 };
+  const consts = { BUMP_MIN_SPEED: 1.5, BUMP_MAX_PUSH: 4.5, BUMP_FRICTION: 7, BUMP_RETURN: 0.5, BUMP_COOLDOWN: 3 };
+  const stumble = trafficFunction('stumble', { Math, ...consts });
+  const dodgeRider = trafficFunction('dodgeRider', {
+    Math, player, DODGE_AHEAD: 3, DODGE_MAX: 0.6, DODGE_RATE: 1.4, stumble, ...consts,
+    clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x))
+  });
+  const p = { x: 0, z: 0.5, ux: 1, uz: 0, dir: 1, v: 1.3, pause: 0, dodge: 0 };
+  const frame = () => { p.x = 0; p.z = 0.5; dodgeRider(p, 1 / 60); }; // walk() puts it back on its track
+  frame();
+  assert.equal(p.bumped, 1, 'counted once, for the audio');
+  assert.ok(p.pause >= 2, 'it stops');
+  for (let i = 0; i < 20; i++) frame();
+  assert.equal(p.bumped, 1, 'no second complaint while the wheel is still touching (cooldown)');
+  assert.ok(p.z > 0.9, `shoved away from the wheel (z ${p.z})`);
+  player.active = false;
+  for (let i = 0; i < 60 * 8; i++) { p.pause = Math.max(0, p.pause - 1 / 60); frame(); }
+  assert.ok(Math.abs(p.z - 0.5) < 1e-9 && Math.abs(p.x) < 1e-9, 'back on its track');
 });

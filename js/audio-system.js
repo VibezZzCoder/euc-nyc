@@ -2,8 +2,10 @@ import { createSynthResources, createMotorVoice, setControlRate } from './audio-
 import { createEventResources, playEvent, createWindVoice } from './audio-events.js';
 import { CityAudioSources } from './audio-sources.js';
 import { CityAcoustics } from './audio-acoustics.js';
+import { EucAudio } from './euc-audio.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const NO_EVENTS = Object.freeze([]);
 const smooth = (param, value, now, time = 0.035, immediate = false) => {
   param.cancelScheduledValues(now);
   if (immediate) param.setValueAtTime(value, now);
@@ -87,6 +89,8 @@ class SpatialEmitter {
 class CityAudioSystem {
   constructor(simulation, { onStateChange = () => {} } = {}) {
     this.sources = new CityAudioSources(simulation);
+    this.controllerManager = simulation.controllerManager;
+    this.euc = null;
     this.acoustics = new CityAcoustics(simulation.controllerManager);
     this.onStateChange = onStateChange;
     this.context = null;
@@ -111,8 +115,8 @@ class CityAudioSystem {
     this.collisionSystems = [simulation.controllerManager, simulation.trafficSystem];
     this.onCollision = (impact) => this.crash(impact);
     for (const system of this.collisionSystems) system.setCollisionListener?.(this.onCollision);
-    this.motorParams = { speed: 0, load: 0, verticalSpeed: 0, doppler: 1, seed: 0 };
-    this.windParams = { speed: 0, altitude: 0, night: 0, traffic: 0, enclosure: 0 };
+    this.motorParams = { speed: 0, load: 0, doppler: 1, seed: 0 };
+    this.windParams = { altitude: 0, night: 0, traffic: 0, enclosure: 0 };
     this.footPosition = { x: 0, y: 0, z: 0, seed: 0 };
     this.onGesture = (event) => {
       if (event.type === 'keydown' && (event.repeat || event.metaKey || event.ctrlKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName))) return;
@@ -179,6 +183,9 @@ class CityAudioSystem {
     this.reflectionFilter.Q.value = 0.5;
     this.reflections.connect(this.reverb).connect(this.reflectionFilter).connect(this.mix);
     this.wind = createWindVoice(context, this.resources, this.mix);
+    // The rider's own wheel: non-spatial, through the mix (so mute, master and suspend apply), with a reflection send.
+    // It fetches its samples now, i.e. only after a user gesture has created the context.
+    this.euc = new EucAudio(context, this.mix, { noise: this.resources.noise, reflections: this.reflections });
     context.onstatechange = () => this.onStateChange();
   }
 
@@ -214,6 +221,7 @@ class CityAudioSystem {
     this.collisionPairs = new WeakMap();
     this.haveListener = false;
     this.accumulator = 0;
+    this.euc?.reset();
     if (this.master) {
       this.master.gain.cancelScheduledValues(this.context.currentTime);
       this.master.gain.setValueAtTime(0, this.context.currentTime);
@@ -269,7 +277,7 @@ class CityAudioSystem {
         // Retiring voices count against the budget, so rapid source changes cannot temporarily double the graph.
         if (pool.size >= limit) continue;
         const emitter = new SpatialEmitter(this.context, this.mix, this.reflections, this.acoustics,
-          siren ? 9 : source.kind === 'helicopter' ? 12 : 4, siren ? 0.9 : 0, siren);
+          siren ? 9 : 4, siren ? 0.9 : 0, siren);
         slot = { emitter, voice: createMotorVoice(this.context, this.resources, siren ? 'siren' : source.kind, emitter.input),
           distance: 0, x: source.x, y: source.y, z: source.z, fresh: true };
         pool.set(source.id, slot);
@@ -283,7 +291,6 @@ class CityAudioSystem {
       const params = this.motorParams;
       params.speed = source.speed;
       params.load = source.load;
-      params.verticalSpeed = source.verticalSpeed;
       params.seed = source.seed;
       params.doppler = clamp(343 / (343 + radial), 0.85, 1.18);
       slot.voice.update(params, now);
@@ -355,6 +362,9 @@ class CityAudioSystem {
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || a === b
       || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(speed) || speed < 0.8) return false;
     if (Math.hypot(x - this.listener.x, y - this.listener.y, z - this.listener.z) > 160) return false;
+    // The rider's own wall and kerb hits are euc-audio.js's impact/crash cues. Only traffic contact sounds here.
+    const rider = a.type === 'euc' || b.type === 'euc';
+    if (rider && impact.kind !== 'vehicle') return false;
     const now = this.context.currentTime;
     let contacts = this.collisionPairs.get(a);
     if (!contacts) this.collisionPairs.set(a, contacts = new WeakMap());
@@ -371,9 +381,10 @@ class CityAudioSystem {
     // Both pair orders share the gate. Sustained rubbing stays quiet, but a substantially stronger second hit
     // or a new impact after separation can sound again; muting/reset discards this history rather than queuing it.
     if (now - contact.played < 0.18 || (!separated && speed <= Math.max(4, contact.speed * 1.8))) return false;
-    const light = a.type === 'cyclist' || b.type === 'cyclist';
-    const severity = clamp((speed - 0.8) / 22, 0, 1) * (light ? 0.65 : 1);
-    const intensity = (0.12 + 0.88 * Math.sqrt(severity)) * (light ? 0.7 : 1);
+    // The rider and wheel are light: a car hitting the EUC is a softer, shorter crash than two cars. It is still the
+    // sound of the rider's own hit, so it must not vanish under the crash voice (balance pass, 2026-10-23).
+    const severity = clamp((speed - 0.8) / 22, 0, 1) * (rider ? 0.85 : 1);
+    const intensity = 0.12 + 0.88 * Math.sqrt(severity);
     // The physics record is reused. emit() copies this position so the crash remains at the contact point.
     if (!this.emit('crash', { id: a, x, y, z, seed: ++this.collisionSequence }, { severity, intensity })) return false;
     contact.played = now;
@@ -381,15 +392,18 @@ class CityAudioSystem {
     return true;
   }
 
-  honk(entity) {
-    if (!this.ready || !this.enabled || this.context?.state !== 'running' || entity?.type !== 'car') return;
-    const now = this.context.currentTime;
-    if (now - this.lastHorn < 0.8) return;
-    if (this.emit('horn', { id: entity, ...entity.position, heading: entity.heading, seed: 4 }, { intensity: 0.7 })) this.lastHorn = now;
+  // Every frame, ahead of the 10 Hz city update: one-shots (hop, landing, crash) and over-speed beeps need frame timing.
+  // The event queue is drained even while silent, so a muted or hidden crash never plays late on unmute.
+  updateRider(playing) {
+    const entity = this.controllerManager?.getActiveEntity?.() ?? null;
+    const events = entity?.type === 'euc' && typeof entity.drainEvents === 'function' ? entity.drainEvents() : NO_EVENTS;
+    if (playing && this.euc) this.euc.update(entity, events, this.context.currentTime);
   }
 
   update(dt, elapsed, camera, night = false) {
-    if (!this.ready || !this.enabled || this.context?.state !== 'running' || document.hidden) return;
+    const playing = this.ready && this.enabled && this.context?.state === 'running' && !document.hidden;
+    this.updateRider(playing);
+    if (!playing) return;
     this.accumulator += dt;
     if (this.accumulator < 0.1) return;
     dt = Math.min(this.accumulator, 0.25);
@@ -456,6 +470,11 @@ class CityAudioSystem {
           }
         }
       }
+      // Shoved by the rider's wheel (traffic.js stumble): an indignant outburst, louder than chatter
+      if (state.bumped !== undefined && source.bumped !== state.bumped) {
+        this.emit('talk', source, { intensity: 1, seed: source.seed + 977 * source.bumped, voiceSeed: source.seed });
+      }
+      state.bumped = source.bumped;
       state.phase = source.phase; state.grounded = source.grounded;
       state.x = source.x; state.z = source.z;
     }
@@ -480,7 +499,6 @@ class CityAudioSystem {
       }
     }
     for (const source of sources.motors) {
-      if (source.player || source.kind === 'helicopter' || source.kind === 'cyclist') continue;
       const state = this.state(source, now);
       state.stopped = source.blocked ? state.stopped + dt : 0;
       if (state.stopped > 4 && now > state.horn && now - this.lastHorn > 3) {
@@ -490,7 +508,7 @@ class CityAudioSystem {
         }
       }
     }
-    Object.assign(this.windParams, { speed: Math.min(sources.motion, 50), altitude: position.y, traffic: sources.traffic, night: night ? 1 : 0, enclosure });
+    Object.assign(this.windParams, { altitude: position.y, traffic: sources.traffic, night: night ? 1 : 0, enclosure });
     this.wind.update(this.windParams, now);
   }
 
@@ -501,6 +519,7 @@ class CityAudioSystem {
     document.removeEventListener('keydown', this.onGesture);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.reset();
+    this.euc?.dispose();
     this.wind?.dispose(true);
     for (const node of [this.mix, this.compressor, this.master, this.reflections, this.reverb, this.reflectionFilter]) node?.disconnect();
     if (this.context) {

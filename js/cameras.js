@@ -3,12 +3,12 @@ import { bryantParkLawn } from './landmarks.js';
 
 // js/cameras.js
 // Multi-camera system supporting Third-Person Chase (with mouse/touch orbit + zoom),
-// Low-Angle Action Cam, POV/Cockpit Cam, 7 Iconic NYC Architectural Cameras, and Auto-Director Drone.
+// Low-Angle Action Cam, rider's-eye POV Cam, 7 Iconic NYC Architectural Cameras, and Auto-Director Drone.
 
 const CAMERA_PRESETS = [
   { id: 'chase',       name: '3rd-Person Chase',         short: 'Chase',       category: 'follow', fov: 56 },
   { id: 'action',      name: 'Low-Angle Action',         short: 'Action',      category: 'follow', fov: 60 },
-  { id: 'pov',         name: 'First-Person / Cockpit',   short: 'POV / Dash',  category: 'follow', fov: 68 },
+  { id: 'pov',         name: 'First-Person',             short: 'POV',         category: 'follow', fov: 68 },
   { id: 'centralPark', name: 'Central Park Oasis',       short: 'Central Pk',  category: 'scenic', fov: 52 },
   { id: 'fifthAve',    name: '5th Ave & Empire State',   short: '5th Ave',     category: 'scenic', fov: 48 },
   { id: 'timesSquare', name: 'Times Square Crossroads',  short: 'Times Sq',    category: 'scenic', fov: 58 },
@@ -201,7 +201,7 @@ class CameraSystem {
           entity.position.z - Math.cos(totalYaw) * horizDist
         );
 
-        const lookUpBias = entity.type === 'helicopter' ? 0.2 : (entity.type === 'car' ? 0.52 : 1.55);
+        const lookUpBias = 1.55; // a standing rider's chest, plus cameraTargetOffset (euc-rider.js)
         desiredLook.set(
           entity.position.x + Math.sin(entity.heading) * 5.2,
           entity.position.y + entity.cameraTargetOffset.y + lookUpBias,
@@ -211,9 +211,9 @@ class CameraSystem {
       }
 
       case 'action': {
-        const sideOffset = entity.type === 'car' ? 2.65 : (entity.type === 'helicopter' ? 4.2 : 0.95);
-        const backDist = (entity.type === 'car' ? 3.6 : (entity.type === 'helicopter' ? 8.5 : 2.8)) + speedLag;
-        const lowY = entity.type === 'helicopter' ? entity.position.y + 1.2 : entity.position.y + 0.92;
+        const sideOffset = 0.95;
+        const backDist = 2.8 + speedLag;
+        const lowY = entity.position.y + 0.92;
 
         desiredPos.set(
           entity.position.x - Math.sin(entity.heading) * backDist + Math.cos(entity.heading) * sideOffset,
@@ -229,18 +229,9 @@ class CameraSystem {
       }
 
       case 'pov': {
-        let fwdOffset = 0.35;
-        let eyeY = 1.68;
-        if (entity.type === 'car') {
-          fwdOffset = 0.55;
-          eyeY = 1.52;
-        } else if (entity.type === 'cyclist') {
-          fwdOffset = 0.35;
-          eyeY = 1.55;
-        } else if (entity.type === 'helicopter') {
-          fwdOffset = 1.65;
-          eyeY = 1.65;
-        }
+        // The rider stands on pedals ~0.2 m up: eyes about 1.85 m above the road, just ahead of the face
+        const fwdOffset = 0.3;
+        const eyeY = 1.85;
 
         desiredPos.set(
           entity.position.x + Math.sin(entity.heading) * fwdOffset,
@@ -337,7 +328,7 @@ class CameraSystem {
       // target by a distance that depends on the frame time (about speed x dt), so with uneven frame times the camera
       // surged back and forth behind an accelerating or fast car. Relative to the entity a steady drive keeps the
       // camera steady, while turns, orbit drags, zoom & the speed pull-back are still eased. The entity's height is
-      // eased in world space (curbs, park lawns, jumps, the helicopter climbing).
+      // eased in world space (curbs, park lawns, hops).
       if (this.followEntity !== entity) {
         // preset or mode switch: start from where the camera is and glide over to the new framing
         this.followEntity = entity;

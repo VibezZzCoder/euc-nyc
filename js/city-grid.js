@@ -38,7 +38,12 @@ import {
   ALL_STREETS,
   blockAt,
   EAST_RIVER_BRIDGES,
-  CUT_Z
+  CUT_Z,
+  CENTRAL_PARK_OUTLINE,
+  CENTRAL_PARK_TOP,
+  CENTRAL_PARK_GATE_SIZE,
+  CENTRAL_PARK_GATES,
+  centralParkGateAt
 } from './city-config.js';
 import {
   createRoadSurfaceMaterial,
@@ -559,7 +564,7 @@ function createWaterfrontPierMaterials() {
     ground.roughnessNode = P.f([0.88, 0.8, 0.96, 0.78, 0.95, 0.85, 0.9, 0.8, 0.86]);
   }
 
-  // ---- Buildings: 0 cruise terminal · 1 Chelsea Piers · 2 industrial shed · 3 Pier 57 concrete · 4 Pier 40 garage ·
+  // ---- Buildings: 0 cruise terminal · 1 sports piers · 2 industrial shed · 3 Pier 57 concrete · 4 Pier 40 garage ·
   //      5 brick vent · 6 white panels/fabric · 7 glass curtain wall · 8 green trim · 9 dark steel · 10 light concrete
   const bldg = new THREE.MeshStandardNodeMaterial({ roughness: 0.7, metalness: 0.0 });
   {
@@ -584,7 +589,7 @@ function createWaterfrontPierMaterials() {
     const wallCol = P.c([0xdadddb, 0xe2dbc8, 0xb4b7b3, 0xb0a691, 0xa39b8e, 0x84463a, 0xefeee8, 0x2f353a, 0x587061, 0x2a3033, 0xc3beb2]);
     const glassCol = P.c([0x25303a, 0x29323a, 0x333f49, 0x283039, 0x111111, 0x2b2725, 0, 0x5a7482, 0, 0, 0]);
     const roofCol = P.c([0x9a9994, 0x8b8a85, 0x91908b, 0x8c867a, 0x7c776e, 0x6b5e55, 0xe5e5e0, 0x343b41, 0x587061, 0x2a3033, 0xbdb8ac]);
-    const trim = step(abs(bv.sub(1.0)), 0.5).mul(band(fy, 0.0, 0.08, fwy)); // Chelsea Piers' green cornice bands
+    const trim = step(abs(bv.sub(1.0)), 0.5).mul(band(fy, 0.0, 0.08, fwy)); // sports piers' green cornice bands
     const seam = lines(h, bay, 0.02).mul(0.22).add(step(abs(bv.sub(2.0)), 0.5).mul(lines(h, 0.6, 0.05)).mul(0.18));
     const facade = mix(wallCol.mul(seam.oneMinus()), color(0x55705f), trim);
     const glazing = glassCol.mul(rnd.mul(0.35).add(0.8));
@@ -628,8 +633,9 @@ function createWaterfrontPierMaterialsPart2(shared) {
     paint.emissiveNode = color(0xffcf8c).mul(lamp.add(winLit));
   }
 
-  // Sign atlas: one 1024x512 canvas, one row per sign (white letters, alpha-tested, lit at night)
-  const SIGNS = ['STATEN ISLAND FERRY', 'CHELSEA PIERS', 'PIER 17', 'CIRCLE LINE'];
+  // Sign atlas: one 1024x512 canvas, one row per sign (white letters, alpha-tested, lit at night). Place and service
+  // names only; operator / company names are replaced with generic ones (no brands, owner rule)
+  const SIGNS = ['STATEN ISLAND FERRY', 'SPORTS PIERS', 'PIER 17', 'SIGHTSEEING CRUISES'];
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 512;
@@ -978,7 +984,7 @@ function buildWaterfrontPiers(group) {
     F.box(PA, a + 2, L - 4, -2.7, -0.9, hw + 1.2, hw + 10, 2);
     for (let u = a + 4; u < L - 8; u += 6.4) F.box(PA, u, u + 5.8, -0.9, 1.7, hw + 2.2, hw + 9, [5, 3, 0, 9][Math.floor(rnd() * 4)]);
   };
-  // Chelsea Piers 59-61: long low sheds behind arched headhouse facades (cream with green trim); Pier 59 golf range nets
+  // Sports piers 59-61 (Chelsea): long low sheds behind arched headhouse facades (cream with green trim); Pier 59 golf range nets
   kinds.chelsea = (F, p) => {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: false });
@@ -997,7 +1003,7 @@ function buildWaterfrontPiers(group) {
     };
     arch(-0.2, Math.min(8, hw - 3));
     if (!p.golf) arch(shedEnd + 0.2, Math.min(7, hw - 3.5));
-    if (p.sign) F.sign('CHELSEA PIERS', -0.8, DY + 16.8, 0, 1.7, -Math.PI / 2);
+    if (p.sign) F.sign('SPORTS PIERS', -0.8, DY + 16.8, 0, 1.7, -Math.PI / 2);
     if (p.golf) {
       const g0 = shedEnd, g1 = L - 2, H = 46;
       F.box(GR, g0, g1, DY, DY + 0.05, s0, s1, 6);
@@ -1112,7 +1118,7 @@ function buildWaterfrontPiers(group) {
     S.geo(BL, new THREE.CylinderGeometry(6.4, 6.4, 20, 18, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), -36, 10.8, 1.5, 0, 6);
   };
 
-  // British Airways Concorde on the pier apron
+  // Concorde-type supersonic airliner on the pier apron: plain white, no airline livery
   ships.concorde = (S) => {
     const y = DY + 2.4;
     S.box(PA, -11, 10, y, y + 1.3, -0.65, 0.65, 4);
@@ -1198,7 +1204,7 @@ function buildWaterfrontPiers(group) {
     }
   };
 
-  // Commuter / sightseeing ferry (NYC Ferry, NY Waterway, Circle Line): white hull, navy band, glazed cabins
+  // Commuter / sightseeing ferry (generic, no operator livery): white hull, navy band, glazed cabins
   ships.ferry = (S, len, decks = 1) => {
     const hb = len * 0.15;
     hull(S, len, hb * 2, 3.4, -2.6, 4, 0.3, 0.05);
@@ -1381,7 +1387,7 @@ function buildWaterfrontPiers(group) {
     for (let u = ua + 4; u < ub - 6; u += 9) F.tree(u, (u % 2 ? 1 : -1) * (hw - 3.5), UY, 1.5);
     ships.schooner(F.sub(L * 0.62, hw + 4.4, Math.PI));
   };
-  // Ferry piers (Pier 11, Pier 79, E 34th St; Circle Line at Pier 83): terminal at the head, floating barges with gangways
+  // Ferry piers (Pier 11, Pier 79, E 34th St; the sightseeing-cruise pier at Pier 83, `circleLine` flag in city-config): terminal at the head, floating barges with gangways
   kinds.ferryPier = (F, p) => {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: 16 });
@@ -1389,7 +1395,7 @@ function buildWaterfrontPiers(group) {
       F.box(BL, 2.4, 23.6, DY, DY + 4.2, -hw + 1.9, hw - 1.9, 7);
       F.box(BL, 2, 24, DY + 4.2, DY + 9.2, -hw + 1.5, hw - 1.5, 6);
       F.box(PA, 1.7, 24.3, DY + 9.2, DY + 9.7, -hw + 1.2, hw - 1.2, 5);
-      F.sign('CIRCLE LINE', 1.94, DY + 6.7, 0, 2.3, -Math.PI / 2);
+      F.sign('SIGHTSEEING CRUISES', 1.94, DY + 6.7, 0, 2.3, -Math.PI / 2);
       ships.ferry(F.sub(L * 0.5, hw + 6.8, 0), 40, 3);
       ships.ferry(F.sub(L * 0.66, -hw - 6, Math.PI), 34, 2);
       return;
@@ -1475,6 +1481,35 @@ function buildWaterfrontPiers(group) {
   B.build(group, new Set([BL, PA]));
 }
 
+// Central Park's outline with a notch cut at every gate (city-config.js CENTRAL_PARK_GATES): along the wall's edge,
+// in by the gate's length, across its width and back out. Gates on one edge go in order along it.
+function notchCentralParkWall(ring) {
+  const { width, length } = CENTRAL_PARK_GATE_SIZE;
+  const out = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    out.push({ x: a.x, z: a.z });
+    const ex = b.x - a.x;
+    const ez = b.z - a.z;
+    const len = Math.hypot(ex, ez) || 1;
+    const ux = ex / len;
+    const uz = ez / len;
+    const gates = CENTRAL_PARK_GATES.filter((g) => g.edge === i)
+      .map((g) => ({ g, t: (g.x - a.x) * ux + (g.z - a.z) * uz }))
+      .sort((p, q) => p.t - q.t);
+    for (const { g } of gates) {
+      const hx = ux * width / 2;
+      const hz = uz * width / 2;
+      const nx = g.nx * length;
+      const nz = g.nz * length;
+      out.push({ x: g.x - hx, z: g.z - hz }, { x: g.x - hx + nx, z: g.z - hz + nz });
+      out.push({ x: g.x + hx + nx, z: g.z + hz + nz }, { x: g.x + hx, z: g.z + hz });
+    }
+  }
+  return out;
+}
+
 function buildCityGrid(scene) {
   const group = new THREE.Group();
   group.name = 'ManhattanCityGrid';
@@ -1485,6 +1520,38 @@ function buildCityGrid(scene) {
   // Ground footprints that traffic and pedestrians must keep clear of (medians, plazas, monuments, parks)
   const footprints = [];
   const addFootprint = (x, z, w, d) => footprints.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+
+  // What the wheel rides (euc-terrain.js), registered where it is drawn so the rideable city is the drawn one:
+  // raised tops (plazas, park walks and lawn beds, Central Park's sidewalk, gate ramps' neighbours) and solids (park
+  // fences, gate piers, the Central Park monuments). Tops: { poly, top, surface, minX, maxX, minZ, maxZ }.
+  const rideTops = [];
+  const rideSolids = [];
+  function addRideTop(poly, top, surface = 'pavement') {
+    if (!poly || poly.length < 3) return;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of poly) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    rideTops.push({ poly: poly.map((p) => ({ x: p.x, z: p.z })), top, surface, minX, maxX, minZ, maxZ });
+  }
+  // An upright box, yawed like a three.js mesh with rotation.y = rotY (EUC BoxCollider convention: the same)
+  function addRideSolid(x, z, w, d, bottom, top, rotY = 0, occludes = false) {
+    rideSolids.push({
+      centre: { x, y: (bottom + top) / 2, z },
+      halfExtents: { x: w / 2, y: (top - bottom) / 2, z: d / 2 },
+      rotationY: rotY,
+      surface: 'stone',
+      occludes
+    });
+  }
+  function addRideFence(x1, z1, x2, z2, top, thickness = 0.3) {
+    const len = Math.hypot(x2 - x1, z2 - z1);
+    if (len < 0.2) return;
+    addRideSolid((x1 + x2) / 2, (z1 + z2) / 2, thickness, len, 0, top, Math.atan2(x2 - x1, z2 - z1));
+  }
+  const circlePoly = (cx, cz, r, n = 20) => Array.from({ length: n }, (_, i) => ({
+    x: cx + r * Math.cos((i / n) * Math.PI * 2), z: cz + r * Math.sin((i / n) * Math.PI * 2)
+  }));
 
   // =========================================================================
   // 1. NEW YORK HARBOR, HUDSON RIVER, EAST RIVER & HARLEM RIVER WATER PLANE
@@ -1606,7 +1673,7 @@ function buildCityGrid(scene) {
   curbInstanced.instanceMatrix.needsUpdate = true;
   group.add(swInstanced, curbInstanced);
 
-  // 6. Times Square Pedestrian Plazas, Duffy Square TKTS Red Steps, Herald Square & Flatiron Plaza
+  // 6. Times Square Pedestrian Plazas, Duffy Square Red Ticket-Booth Steps, Herald Square & Flatiron Plaza
   //    Curb-height light-grey granite paver plazas in Broadway's roadbed with granite benches & planters, plus the
   //    shared street-furniture instancing of the plazas & small parks (instanced at the end of section 7B)
   const pavingMat = createParkPavingMaterial();
@@ -1618,6 +1685,7 @@ function buildCityGrid(scene) {
   const pavedRects = []; // plaza & park slab bounds, exported so street trees (street-details.js) stay off them
 
   function addPavedPlaza(pts, style, topY = PLAZA_Y) {
+    addRideTop(pts, topY, 'brick');
     group.add(createExtrudedPolygonMesh(pts, 0.0, topY - 0.04, curbMat, true, false));
     const top = createExtrudedPolygonMesh(offsetConvexPolygon(pts, -0.3), 0.0, topY, pavingMat, true, false);
     setPavingStyle(top.geometry, style);
@@ -1723,7 +1791,7 @@ function buildCityGrid(scene) {
     for (const z of [pc.zN + 2.2, pc.zS - 2.2]) if (insidePiece(pc, bx.cx, z, 0.8)) addPlanter(bx.cx, z, Math.min(5.5, (bx.maxX - bx.minX) * 0.5), 1.6);
   }
 
-  // Duffy Square TKTS booth (47th St & Broadway): 27 ruby-red glass bleacher steps rising ~5 m to the north, seats
+  // Duffy Square half-price ticket booth (47th St & Broadway): 27 ruby-red glass bleacher steps rising ~5 m to the north, seats
   // facing south down Times Square toward One Times Square, the glazed ticket booth tucked under the top steps.
   // Duffy Square is the bowtie's northern piece west of 7th Ave (46th-47th St)
   const tktsStepMat = createTktsStepMaterial(PLAZA_Y, 0.18);
@@ -1828,15 +1896,43 @@ function buildCityGrid(scene) {
   const cpBlock = BLOCKS.filter((b) => b.parkName === 'Central Park').sort((a, b) => b.area - a.area)[0];
   if (cpBlock) {
     group.add(createExtrudedPolygonMesh(cpBlock.poly, 0.0, 0.18, curbMat, true, true));
+    addRideTop(cpBlock.poly, 0.22); // the perimeter sidewalk: a kerb to hop like any other
     const sw = offsetPolygonInward(cpBlock.poly, 0.25);
     if (sw) group.add(createExtrudedPolygonMesh(sw, 0.03, 0.19, sidewalkMat));
     addFootprint((cpBlock.minX + cpBlock.maxX) * 0.5, (cpBlock.minZ + cpBlock.maxZ) * 0.5, cpBlock.maxX - cpBlock.minX, cpBlock.maxZ - cpBlock.minZ);
   }
-  // Low coursed-schist perimeter wall (~0.8 m above the sidewalk) with the lawn a little inside it
-  const cpWall = flatPts(CPG.outline);
+  // Low coursed-schist perimeter wall (~0.8 m above the sidewalk) with the lawn a little inside it. The gates
+  // (city-config.js CENTRAL_PARK_GATES, real entrances) are notches in the wall and the lawn with a paved ramp up from
+  // the sidewalk: the only ways the wheel rides in
+  const cpWall = notchCentralParkWall(CENTRAL_PARK_OUTLINE);
   group.add(createExtrudedPolygonMesh(cpWall, 0.0, 1.05, createParkWallMaterial(), true, false));
   const cpLawnPts = offsetPolygonInward(cpWall, 0.6) || cpWall;
   group.add(createExtrudedPolygonMesh(cpLawnPts, 0.85, 0.34, cpLawnMat, true, false));
+  {
+    const { width: GW, length: GL } = CENTRAL_PARK_GATE_SIZE;
+    const slab = 0.3;
+    for (const g of CENTRAL_PARK_GATES) {
+      const rise = CENTRAL_PARK_TOP - g.base;
+      const pitch = Math.atan2(rise, GL);
+      const rampGeo = new THREE.BoxGeometry(GW + 0.02, slab, Math.hypot(GL, rise));
+      setPavingStyle(rampGeo, 0);
+      const ramp = new THREE.Mesh(rampGeo, pavingMat);
+      // the slab's top runs from what is outside the wall (sidewalk or road, g.base) to the lawn GL inside
+      const mid = g.base + rise / 2 - (slab / 2) / Math.cos(pitch);
+      ramp.position.set(g.x + g.nx * GL / 2, mid, g.z + g.nz * GL / 2);
+      ramp.rotation.order = 'YXZ';
+      ramp.rotation.set(-pitch, Math.atan2(g.nx, g.nz), 0);
+      ramp.receiveShadow = true;
+      group.add(ramp);
+      // stone piers either side of the opening, as at the real gates
+      for (const side of [-1, 1]) {
+        const px = g.x + g.tx * side * (GW / 2 + 0.45) - g.nx * 0.1;
+        const pz = g.z + g.tz * side * (GW / 2 + 0.45) - g.nz * 0.1;
+        addBox(cpWallMat, px, g.base, pz, 0.9, 1.65, 0.9, Math.atan2(g.nx, g.nz));
+        addRideSolid(px, pz, 0.9, 0.9, 0, g.base + 1.65, Math.atan2(g.nx, g.nz));
+      }
+    }
+  }
 
   // Sunlit open meadows & lawns: Sheep Meadow, the Great Lawn, North Meadow, the Great Hill, Cedar & Pilgrim Hills...
   const cpLawnPolys = CPG.lawns.map((l) => flatPts(l.ring));
@@ -1848,9 +1944,14 @@ function buildCityGrid(scene) {
   for (const w of CPG.water) {
     const pts = flatPts(w.ring);
     cpWaterPolys.push(pts);
+    // The wheel does not ride on water: every pond is a wall at its shore (as the island's shore is)
+    addRideTop(pts, 3.0, 'stone');
     if (w.name === 'Jacqueline Kennedy Onassis Reservoir') {
       const track = offsetPolygon(pts, -6);
-      if (track) group.add(createExtrudedPolygonMesh(track, 1.18, 0.38, cpPathMat, true, false));
+      if (track) {
+        group.add(createExtrudedPolygonMesh(track, 1.18, 0.38, cpPathMat, true, false));
+        addRideTop(track, 1.56, 'gravel'); // the running track: hop up onto it and ride the loop
+      }
       group.add(createFlatPolygonMesh(pts, 1.58, waterMat, true));
     } else {
       group.add(createFlatPolygonMesh(pts, 1.24, waterMat, true));
@@ -1860,7 +1961,45 @@ function buildCityGrid(scene) {
   // The loop drives (East, West, Center & Terrace Drives, car-free) and the four transverse roads crossing the park
   const cpDrives = [];
   const cpTransverses = [];
+  // A drive reaching a gate stops where the ramp begins, so it never floats over the cut in the wall
+  function clipAtGates(waypoints, width) {
+    const margin = width * 0.5 + 0.5;
+    const reach = CENTRAL_PARK_GATE_SIZE.length + CENTRAL_PARK_GATE_SIZE.width + margin;
+    const runs = [];
+    let run = [];
+    // samples on one source segment are collinear: keep only the run's ends on it
+    const add = (x, z, seg) => {
+      if (centralParkGateAt(x, z, margin)) {
+        if (run.length > 1) runs.push(run.map(([px, pz]) => [px, pz]));
+        run = [];
+        return;
+      }
+      const n = run.length;
+      if (n >= 2 && run[n - 1][2] === seg && run[n - 2][2] === seg) run[n - 1] = [x, z, seg];
+      else run.push([x, z, seg]);
+    };
+    add(waypoints[0][0], waypoints[0][1], 0);
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const [x1, z1] = waypoints[i];
+      const [x2, z2] = waypoints[i + 1];
+      const dx = x2 - x1;
+      const dz = z2 - z1;
+      const near = CENTRAL_PARK_GATES.some((g) => {
+        const cx = g.x + g.nx * CENTRAL_PARK_GATE_SIZE.length * 0.5;
+        const cz = g.z + g.nz * CENTRAL_PARK_GATE_SIZE.length * 0.5;
+        const t = Math.max(0, Math.min(1, ((cx - x1) * dx + (cz - z1) * dz) / (dx * dx + dz * dz || 1)));
+        return Math.hypot(cx - x1 - dx * t, cz - z1 - dz * t) < reach;
+      });
+      const n = near ? Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.5)) : 1;
+      for (let k = 1; k <= n; k++) add(x1 + (dx * k) / n, z1 + (dz * k) / n, i);
+    }
+    if (run.length > 1) runs.push(run.map(([px, pz]) => [px, pz]));
+    return runs;
+  }
   function buildParkDriveRibbon(waypoints, width, y) {
+    for (const run of clipAtGates(waypoints, width)) buildParkDriveRibbonRun(run, width, y);
+  }
+  function buildParkDriveRibbonRun(waypoints, width, y) {
     for (let i = 0; i < waypoints.length - 1; i++) {
       const [x1, z1] = waypoints[i];
       const [x2, z2] = waypoints[i + 1];
@@ -1909,9 +2048,11 @@ function buildCityGrid(scene) {
   const bethesdaTerrace = new THREE.Mesh(new THREE.BoxGeometry(48, 2.2, 16), marbleArchMat);
   bethesdaTerrace.position.set(beth.x + 4, 1.8, beth.z + 20);
   group.add(bethesdaTerrace);
+  addRideSolid(beth.x + 4, beth.z + 20, 48, 16, 0, 2.9, 0, true);
   const bethesdaBasin = new THREE.Mesh(new THREE.CylinderGeometry(9.5, 10.2, 1.1, 20), marbleArchMat);
   bethesdaBasin.position.set(beth.x, 1.5, beth.z);
   group.add(bethesdaBasin);
+  addRideSolid(beth.x, beth.z, 14.4, 14.4, 0, 2.05, Math.PI / 4); // the basin's rim, as a box inside its circle
   const bethesdaStatue = new THREE.Mesh(
     new THREE.CylinderGeometry(0.8, 1.6, 5.2, 10),
     new THREE.MeshStandardNodeMaterial({ color: 0x5c7a68, metalness: 0.65, roughness: 0.35 })
@@ -1956,6 +2097,8 @@ function buildCityGrid(scene) {
   const castleTurret = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.4, 16, 12), cpWallMat);
   castleTurret.position.set(belv.x + 6, 13.0, belv.z + 3);
   group.add(castleTurret);
+  addRideSolid(belv.x, belv.z, 12, 10, 0, 16, 0, true);
+  addRideSolid(belv.x + 6, belv.z + 3, 6.4, 6.4, 0, 21, 0, true);
 
   // Areas the Central Park woodland (street-details.js section 7) must keep clear: meadows, water, the loop
   // drives, the transverses, the Mall elm allée, Bethesda Terrace, Belvedere Castle & the schist outcrops
@@ -1977,6 +2120,7 @@ function buildCityGrid(scene) {
   const gapPlaza = new THREE.Mesh(new THREE.CylinderGeometry(16, 17, 0.45, 24), marbleArchMat);
   gapPlaza.position.set(gap.x, 0.25, gap.z);
   group.add(gapPlaza);
+  addRideTop(circlePoly(gap.x, gap.z, 16.5), 0.475, 'stone');
   addFootprint(gap.x, gap.z, 34, 34);
   const shermanGold = new THREE.Mesh(
     new THREE.BoxGeometry(2.4, 4.2, 4.4),
@@ -1989,6 +2133,8 @@ function buildCityGrid(scene) {
   const columbusCircle = new THREE.Mesh(new THREE.CylinderGeometry(15, 16, 0.5, 24), marbleArchMat);
   columbusCircle.position.set(colC.x, 0.25, colC.z);
   group.add(columbusCircle);
+  addRideTop(circlePoly(colC.x, colC.z, 15.5), 0.5, 'stone');
+  addRideSolid(colC.x, colC.z, 2.6, 2.6, 0, 18.5); // the column
   addFootprint(colC.x, colC.z, 32, 32);
   const columbusColumn = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.5, 18, 12), marbleArchMat);
   columbusColumn.position.set(colC.x, 9.5, colC.z);
@@ -2089,6 +2235,7 @@ function buildCityGrid(scene) {
       }
       if (poly.length < 3 || Math.abs(polygonArea(poly)) < 30) continue;
       const bed = poly.map((p) => ({ x: p.x + hx, z: p.z + hz }));
+      addRideTop(bed, BED_Y, 'grass');
       group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
       parkLawnGeos.push(createExtrudedPolygonMesh(offsetConvexPolygon(bed, -0.3), 0.3, BED_Y - 0.3, cpLawnMat).geometry);
       const hoop = offsetConvexPolygon(bed, -0.18);
@@ -2160,6 +2307,7 @@ function buildCityGrid(scene) {
     for (const [x1, z1, x2, z2] of fenceSegs) {
       const len = Math.hypot(x2 - x1, z2 - z1);
       addBox(graniteMat, (x1 + x2) * 0.5, PARK_Y - 0.02, (z1 + z2) * 0.5, 0.42, 0.34, len + 0.2, Math.atan2(x2 - x1, z2 - z1), false);
+      addRideFence(x1, z1, x2, z2, PARK_Y + 0.32 + 0.95, 0.42); // coping + iron fence: ride in by the gates
     }
     parkFenceGeos.push(buildFenceStripGeometry(fenceSegs, PARK_Y + 0.32, 0.95));
 
@@ -2283,6 +2431,7 @@ function buildCityGrid(scene) {
   const genericParks = BLOCKS.filter((b) => b.park > 0.6 && !b.median && !SPECIAL_PARKS.has(b.parkName) && b.area > 250);
   for (const b of genericParks) {
     const slab = offsetPolygonInward(b.poly, 0.1) || b.poly;
+    addRideTop(b.poly, PARK_Y, 'brick');
     group.add(createExtrudedPolygonMesh(b.poly, 0.0, PARK_Y - 0.04, curbMat, true, false));
     const top = createExtrudedPolygonMesh(slab, 0.0, PARK_Y, pavingMat, true, false);
     setPavingStyle(top.geometry, 0);
@@ -2291,6 +2440,7 @@ function buildCityGrid(scene) {
     addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
     const bed = offsetPolygonInward(b.poly, Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2));
     if (!bed) continue;
+    addRideTop(bed, BED_Y, 'grass');
     group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
     const lawnTop = offsetPolygonInward(bed, 0.3);
     if (lawnTop) parkLawnGeos.push(createExtrudedPolygonMesh(lawnTop, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
@@ -2506,7 +2656,7 @@ function buildCityGrid(scene) {
   // 8. AUTHENTIC HUDSON RIVER & EAST RIVER WATERFRONT PIERS (29 Piers)
   // =========================================================================
   // Concrete decks on timber piles with fenders, railings & lanterns, plus each pier's real structures:
-  // cruise terminals, Chelsea Piers, Pier 57, Little Island, Pier 40, the Intrepid, the 79th St Boat Basin,
+  // cruise terminals, the Chelsea sports piers, Pier 57, Little Island, Pier 40, the Intrepid, the 79th St Boat Basin,
   // Pier 17, the Wavertree, Pier 15, Pier 11 and the Staten Island Ferry Whitehall Terminal (see buildWaterfrontPiers)
   buildWaterfrontPiers(group);
 
@@ -2525,7 +2675,7 @@ function buildCityGrid(scene) {
   const sidewalks = roadSidewalks;
   // Player colliders of the South Street Viaduct's columns, ramps and portal
   const colliders = (fdrViaduct && fdrViaduct.colliders) || [];
-  return { group, sidewalks, footprints, highwayLanes, colliders };
+  return { group, sidewalks, footprints, highwayLanes, colliders, ride: { tops: rideTops, solids: rideSolids } };
 }
 
 // =====================================================================================================================

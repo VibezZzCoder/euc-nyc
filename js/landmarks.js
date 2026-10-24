@@ -50,11 +50,11 @@ function buildLandmarks(scene) {
     roughness: 0.28
   });
 
-  // Illuminated MetLife crown sign canvas texture
-  const metlifeSignCanvas = document.createElement('canvas');
-  metlifeSignCanvas.width = 512;
-  metlifeSignCanvas.height = 128;
-  const mlCtx = metlifeSignCanvas.getContext('2d');
+  // Illuminated crown sign band on 200 Park Avenue: the street address, not the corporate name (no brands, owner rule)
+  const crownSignCanvas = document.createElement('canvas');
+  crownSignCanvas.width = 512;
+  crownSignCanvas.height = 128;
+  const mlCtx = crownSignCanvas.getContext('2d');
   mlCtx.fillStyle = '#24221f';
   mlCtx.fillRect(0, 0, 512, 128);
   mlCtx.strokeStyle = '#6e665c';
@@ -64,10 +64,10 @@ function buildLandmarks(scene) {
   mlCtx.font = '900 76px Inter, Arial, sans-serif';
   mlCtx.textAlign = 'center';
   mlCtx.textBaseline = 'middle';
-  mlCtx.fillText('METLIFE', 256, 68);
-  const metlifeSignTex = new THREE.CanvasTexture(metlifeSignCanvas);
-  metlifeSignTex.colorSpace = THREE.SRGBColorSpace;
-  const metlifeSignMat = new THREE.MeshBasicNodeMaterial({ map: metlifeSignTex });
+  mlCtx.fillText('200 PARK', 256, 68, 480);
+  const crownSignTex = new THREE.CanvasTexture(crownSignCanvas);
+  crownSignTex.colorSpace = THREE.SRGBColorSpace;
+  const crownSignMat = new THREE.MeshBasicNodeMaterial({ map: crownSignTex });
 
   // Shared canonical landmark facade TSL materials (avoids compiling 13 separate WGSL pipelines)
   const LIMESTONE_CROWN = {
@@ -566,7 +566,7 @@ function buildLandmarks(scene) {
     mlWingE.castShadow = true;
     gctGroup.add(mlWingE);
 
-    const signBand = new THREE.Mesh(new THREE.BoxGeometry(28.5, 6.8, 25.4), metlifeSignMat);
+    const signBand = new THREE.Mesh(new THREE.BoxGeometry(28.5, 6.8, 25.4), crownSignMat);
     signBand.position.set(0, 191, -12);
     gctGroup.add(signBand);
 

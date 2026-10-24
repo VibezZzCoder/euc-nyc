@@ -26,7 +26,12 @@ test('city module preloads start after the import map and before stylesheets', (
 
 test('native module entry and imports share canonical preloaded URLs on GitHub Pages', () => {
   const links = preloads.map((match) => match[1]);
-  assert.equal(links.length, 29);
+  // 30 city modules (29 upstream + pedestrian-routes.js, which upstream missed), the 5 EUC modules (terrain, rider,
+  // dynamic world, audio, HUD) and every module
+  // tools/vendor-euc.mjs copied into js/euc/ (listed in its MANIFEST.json)
+  const vendored = Object.keys(JSON.parse(readFileSync(join(__dirname, '../js/euc/MANIFEST.json'), 'utf8')).files);
+  assert.equal(links.length, 30 + 5 + vendored.length);
+  for (const file of vendored) assert.ok(links.includes(`./js/euc/${file}`), `vendored module preloaded: ${file}`);
   assert.equal(new Set(links).size, links.length, 'each module is preloaded once');
   assert.equal(entries.length, 1);
   assert.equal(entries[0][1], './js/main.js');
@@ -35,7 +40,7 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   const base = 'https://example.test/slop-newyork/';
   const urls = new Set(links.map((src) => new URL(src, base).href));
   for (const src of links) {
-    assert.match(src, /^\.\/js\/[\w-]+\.js$/, 'preloads use the same unversioned paths as native imports');
+    assert.match(src, /^\.\/js\/(euc\/\w+\/)?[\w-]+\.js$/, 'preloads use the same unversioned paths as native imports');
     const source = readFileSync(join(__dirname, '..', src), 'utf8');
     for (const [, specifier] of source.matchAll(/(?:\bfrom\s*|\bimport\s*)['"](\.[^'"]+)['"]/g)) {
       const url = new URL(specifier, new URL(src, base));

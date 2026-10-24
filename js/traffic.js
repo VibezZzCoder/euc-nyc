@@ -29,7 +29,10 @@ import { PersonCrowd, PersonRig } from './pedestrians.js';
 //   unsignalized corners and to pedestrians on crosswalks, and never enter an intersection they can't clear.
 // - 340 pedestrians follow connected sidewalks, meet to talk, and cross signalized crosswalks on WALK.
 // - Fixed-size local populations replenish distant roads and sidewalks in every direction, protecting the near view.
-// - The player's vehicle or character pushes and is pushed by the traffic (SAT contact, impulses, sparks).
+// - The player is always the EUC rider, whose position belongs to the EUC controller: traffic never moves the rider.
+//   Drivers brake for a rider in (or about to enter) their lane, and a car that touches the rider stops there.
+//   The physical contact (blocking, crashes) is the controller's, through js/euc-dynamic.js, fed by
+//   dynamicBodiesNear() below with every vehicle and pedestrian near the rider.
 
 const NUM_CARS = 200;
 const NUM_BUSES = 12;
@@ -56,23 +59,36 @@ function createBusDestinationTexture() {
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#0c0f14';
   ctx.fillRect(0, 0, 256, 64);
-  ctx.fillStyle = '#0058b8';
+  // A generic route: a neutral teal box, an invented route number and a direction, no real operator's colours or lines
+  ctx.fillStyle = '#1f7a6d';
   ctx.fillRect(6, 8, 62, 48);
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 26px Inter, Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('M1', 37, 33);
+  ctx.fillText('X1', 37, 33);
   ctx.fillStyle = '#ff9d1c';
   ctx.font = '800 22px JetBrains Mono, monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('5 AV / HARLEM', 78, 33);
+  ctx.fillText('UPTOWN', 78, 33);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+// The EUC rider as traffic meets it: half width, half length (js/euc-dynamic.js EUC_DYNAMIC_HULL, kept in step by
+// hand so this module needs no extra import)
+const RIDER_HALF_W = 0.35;
+const RIDER_HALF_L = 0.5;
+// Physical boxes for the EUC dynamic world (dynamicBodiesNear): heights, and a pedestrian's square stand-in
+const CAR_HEIGHT = 1.5;
+const SUV_HEIGHT = 1.8;
+const BUS_HEIGHT = 3.2;
+const PED_HALF = 0.3;
+const PED_HEIGHT = 1.8;
+const CONTACT_SKIN = 0.08; // m: a car this close to the rider counts as touching (and holds still)
 
 function createTrafficSystem(scene, sidewalks, obstacles) {
   const group = new THREE.Group();
@@ -145,7 +161,9 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       dl: 0, dlv: 0, blink: 0, blinkPhase: Math.random() * 0.8,
       x: 0, z: 0, prevX: 0, prevZ: 0, tx: 0, tz: 1, nose: 0, yaw: 0, yawRate: 0, steer: 0,
       pitch: 0, roll: 0, pitchVel: 0, rollVel: 0, vx: 0, vz: 0, yawOffset: 0, yawVel: 0,
-      pAhead: Infinity, pRight: 0, pSpeed: 0, wheelSpin: Math.random() * Math.PI * 2
+      pAhead: Infinity, pRight: 0, pSpeed: 0, pLat: 0, wheelSpin: Math.random() * Math.PI * 2,
+      // touching the rider: holds still; the velocity it hit the rider with, reported to the EUC for a moment
+      touch: false, hold: false, hitVX: 0, hitVZ: 0, hitTimer: 0, body: null
     };
   }
 
@@ -356,6 +374,8 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       restTime: 0,
       socialTime: 0,
       conversation: null,
+      dodge: 0, // m stepped aside off its track, out of a rider's way
+      body: null, // its box for the EUC dynamic world, see dynamicBodiesNear()
       rig: new PersonRig({
         seed: i * 1.6180339 + 0.13,
         female,
@@ -421,7 +441,8 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   const phaseOf = (e) => (e.axisIndex === 0 ? avePhase : stPhase);
   let focusX = 0;
   let focusZ = 140;
-  const player = { active: false, entity: null, x: 0, z: 0, vx: 0, vz: 0, halfW: 0.86, halfL: 2.18, push: 0.5 };
+  // The EUC rider, read (never written) from the entity every frame
+  const player = { active: false, entity: null, x: 0, z: 0, vx: 0, vz: 0, heading: 0, speed: 0, halfW: RIDER_HALF_W, halfL: RIDER_HALF_L };
 
   // Lane lists hold pooled { v, s } entries sorted by position s along the lane, rebuilt every frame
   const pool = [];
@@ -590,12 +611,19 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     v.pAhead = dx * fx + dz * fz;
     v.pRight = dz * fx - dx * fz;
     v.pSpeed = Math.max(0, player.vx * fx + player.vz * fz);
+    v.pLat = player.vz * fx - player.vx * fz; // how fast the rider moves to v's right
   }
 
-  // Gap to the player if it is ahead in the lane whose centre is `off` metres to the right of v
+  // Gap to the player if it is ahead in the lane whose centre is `off` metres to the right of v, or will be within
+  // PLAYER_CUT_IN seconds (a rider crossing in front): drivers yield to riders entering their lane, not only to those
+  // already in it
+  const PLAYER_CUT_IN = 0.8;
   function playerGap(v, off) {
     if (v.pAhead < 0 || v.pAhead > LOOKAHEAD) return Infinity;
-    if (Math.abs(v.pRight - off) > v.halfWidth + player.halfW + 0.4) return Infinity;
+    const width = v.halfWidth + player.halfW + 0.4;
+    const now = v.pRight - off;
+    const soon = now + v.pLat * Math.min(PLAYER_CUT_IN, Math.max(0, v.pAhead) / Math.max(v.speed, 1));
+    if (Math.min(now, soon) > width || Math.max(now, soon) < -width) return Infinity;
     return v.pAhead - v.half - player.halfL;
   }
 
@@ -1015,7 +1043,10 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     const pg = playerGap(v, 0);
     if (pg < LOOKAHEAD) {
       worst = Math.min(worst, brake(v, pg, v.pSpeed));
-      if (pg < v.gap) {
+      // A rider the driver can still stop for (beyond its emergency stopping distance at 9 m/s^2) is a hard limit, like
+      // the vehicle ahead. One who cut in closer is not: the car brakes as hard as it can and may still hit them.
+      const closing = Math.max(0, v.speed - v.pSpeed);
+      if (pg > (closing * closing) / 18 && pg < v.gap) {
         v.gap = pg;
         v.leaderSpeed = v.pSpeed;
       }
@@ -1060,7 +1091,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     }
     accelerate(v);
     const speed = v.speed;
-    v.speed = Math.max(0, v.speed + v.acc * dt);
+    v.speed = v.hold ? 0 : Math.max(0, v.speed + v.acc * dt); // touching the rider: it waits for them to move
     let ds = v.speed * dt;
     if (ds > v.gap - 0.3) {
       // never into the vehicle ahead
@@ -1082,7 +1113,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     const maxLat = Math.min(1.7, 0.3 + (v.bus ? 0.1 : 0.22) * v.speed);
     const rate = Math.min(1.8, Math.max(v.speed, 1.5) / (v.axle + v.half));
     const target = clamp(-rate * v.dl, -maxLat, maxLat);
-    v.dlv += clamp(target - v.dlv, -2.5 * dt, 2.5 * dt);
+    v.dlv = v.hold ? 0 : v.dlv + clamp(target - v.dlv, -2.5 * dt, 2.5 * dt);
     v.dl += v.dlv * dt;
   }
 
@@ -1258,77 +1289,61 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     return satHit;
   }
 
-  // Player contact: push the player and the vehicle apart (a bus hardly moves) and trade momentum, with spin,
-  // suspension kicks and sparks
-  function collideWithPlayer(v, rotY, halfW, halfL) {
-    const pe = player.entity;
-    const relX = pe.position.x - v.x;
-    const relZ = pe.position.z - v.z;
+  // Rider contact. The rider belongs to the EUC controller, which decides blocking and crashes from the boxes
+  // dynamicBodiesNear() reports (js/euc-dynamic.js): nothing here writes the rider. A car touching the rider stops and
+  // holds still until they move away. A car that ran into them keeps reporting, for HIT_MEMORY seconds, the velocity it
+  // hit them with, so the controller's next steps feel the impact that the stop would otherwise hide. First contact
+  // also sounds (reportCollision) and jolts the car's body. A car driving on past a rider who brushes its side is not
+  // stopped.
+  const HIT_MEMORY = 0.25;
+  function collideWithPlayer(v, rotY, halfW, halfL, dt) {
+    if (v.hitTimer > 0) v.hitTimer = Math.max(0, v.hitTimer - dt);
+    const wasHolding = v.hold;
+    const wasTouching = v.touch;
+    v.hold = v.touch = false;
+    if (!player.active) return;
+    const relX = player.x - v.x;
+    const relZ = player.z - v.z;
     if (Math.abs(relX) > halfL + 3 || Math.abs(relZ) > halfL + 3) return;
-    const hit = overlapWithPlayer(relX, relZ, rotY, halfW, halfL, pe.heading || 0, player.halfW, player.halfL);
+    // A slow or already waiting car stops a hand's width short; a fast one only on real contact, so that it reaches
+    // the rider (and the controller sees the hit) instead of stopping just short of them
+    const skin = wasHolding || v.speed < 1 ? CONTACT_SKIN : 0;
+    const hit = overlapWithPlayer(relX, relZ, rotY, halfW + skin, halfL + skin, player.heading, player.halfW, player.halfL);
     if (!hit) return;
-    const { nx, nz, pen, localX, localZ, pSin, pCos } = hit;
-    const massRatio = v.bus ? 0.15 : v.isSUV ? 0.58 : 1.0 - player.push;
-    const pPush = 1.0 - massRatio;
-    pe.position.x += nx * pen * pPush;
-    pe.position.z += nz * pen * pPush;
-    if (pe.mesh) pe.mesh.position.copy(pe.position);
-    shove(v, -nx * pen * massRatio, -nz * pen * massRatio);
-
-    const sinY = Math.sin(rotY);
-    const cosY = Math.cos(rotY);
-    const pSpeed = pe.speed || 0;
-    const pvx = pSin * pSpeed + (pe.vx || 0);
-    const pvz = pCos * pSpeed + (pe.vz || 0);
+    v.touch = true;
+    const { nx, nz, localX, localZ } = hit;
     const cvx = v.tx * v.speed + v.vx;
     const cvz = v.tz * v.speed + v.vz;
-    const approachSpeed = (pvx - cvx) * (-nx) + (pvz - cvz) * (-nz);
-    if (approachSpeed <= 0) return;
-
-    const jImpulse = (1.0 + 0.28) * approachSpeed;
-    const cImpulse = v.bus ? approachSpeed * 0.22 : jImpulse * massRatio * 0.92;
-    v.vx -= nx * cImpulse;
-    v.vz -= nz * cImpulse;
-    v.speed *= v.bus ? 0.55 : 0.35;
-
-    const localNx = nx * cosY - nz * sinY;
-    const localNz = nx * sinY + nz * cosY;
-    if (!v.bus) {
-      const torque = localZ * localNx - localX * localNz;
-      v.yawVel -= torque * Math.min(4.2, approachSpeed * 0.26);
-      v.yawOffset = clamp(v.yawOffset - torque * Math.min(0.35, approachSpeed * 0.025), -0.65, 0.65);
-      v.pitchVel -= localNz * Math.min(12.0, approachSpeed) * 0.18;
-      v.rollVel += localNx * Math.min(12.0, approachSpeed) * 0.24;
-    }
-
-    const contactLocalX = clamp(localX, -halfW, halfW);
-    const contactLocalZ = clamp(localZ, -halfL, halfL);
-    const contactX = v.x + contactLocalX * cosY + contactLocalZ * sinY;
-    const contactZ = v.z - contactLocalX * sinY + contactLocalZ * cosY;
-    if (pe.type !== 'person') reportCollision(pe, v, contactX, v.bus ? 0.65 : 0.58, contactZ, nx, nz, approachSpeed);
-
-    if (typeof pe.speed === 'number') {
-      const headOnDot = Math.abs(pSin * nx + pCos * nz);
-      pe.speed *= 1.0 - (v.bus ? 0.68 : 0.50) * headOnDot;
-      if (pe.type === 'car') {
-        const pImpulse = v.bus ? approachSpeed * 0.65 : jImpulse * pPush * 0.48;
-        pe.vx = (pe.vx || 0) + nx * pImpulse;
-        pe.vz = (pe.vz || 0) + nz * pImpulse;
-        const pLocalNx = nx * pCos - nz * pSin;
-        const pLocalNz = nx * pSin + nz * pCos;
-        if (!v.bus) {
-          const pRelX = (contactX - pe.position.x) * pCos - (contactZ - pe.position.z) * pSin;
-          const pRelZ = (contactX - pe.position.x) * pSin + (contactZ - pe.position.z) * pCos;
-          const pTorque = pRelZ * pLocalNx - pRelX * pLocalNz;
-          pe.angularVel = (pe.angularVel || 0) + pTorque * Math.min(3.0, approachSpeed * 0.18) * pPush;
-        }
-        const kick = Math.min(v.bus ? 16.0 : 14.0, approachSpeed);
-        pe.pitchVel = (pe.pitchVel || 0) + pLocalNz * kick * (v.bus ? 0.22 : 0.18);
-        pe.rollVel = (pe.rollVel || 0) - pLocalNx * kick * (v.bus ? 0.28 : 0.24);
-        pe.heaveVel = (pe.heaveVel || 0) + Math.min(v.bus ? 1.6 : 1.4, approachSpeed * (v.bus ? 0.14 : 0.11));
+    const approachSpeed = (cvx - player.vx) * nx + (cvz - player.vz) * nz;
+    const toward = cvx * nx + cvz * nz; // the car's own speed toward the rider
+    // A car driving on past a rider brushing its side (moving along or away from them) carries on; one driving at
+    // them, or crawling, stops
+    v.hold = wasHolding || toward > 0.3 || v.speed < 1;
+    if (!wasTouching && approachSpeed > 0.5) {
+      if (toward > 0.5) {
+        v.hitVX = cvx;
+        v.hitVZ = cvz;
+        v.hitTimer = HIT_MEMORY;
       }
+      const sinY = Math.sin(rotY);
+      const cosY = Math.cos(rotY);
+      const localNz = nx * sinY + nz * cosY;
+      const localNx = nx * cosY - nz * sinY;
+      if (!v.bus) {
+        v.pitchVel += Math.min(6.0, approachSpeed) * 0.12 * (localNz >= 0 ? 1 : -1);
+        v.rollVel += localNx * Math.min(6.0, approachSpeed) * 0.08;
+      }
+      const contactLocalX = clamp(localX, -halfW, halfW);
+      const contactLocalZ = clamp(localZ, -halfL, halfL);
+      const contactX = v.x + contactLocalX * cosY + contactLocalZ * sinY;
+      const contactZ = v.z - contactLocalX * sinY + contactLocalZ * cosY;
+      reportCollision(player.entity, v, contactX, v.bus ? 0.65 : 0.58, contactZ, nx, nz, approachSpeed);
+      if (approachSpeed > 5) spawnCollisionSparks(contactX, 0.3, contactZ, nx, nz, approachSpeed * 0.5);
     }
-    if (approachSpeed > 1.8) spawnCollisionSparks(contactX, v.bus ? 0.65 : 0.58, contactZ, nx, nz, approachSpeed);
+    if (!v.hold) return;
+    v.speed = 0;
+    v.vx = v.vz = 0;
+    v.dlv = 0;
   }
 
   // =========================================================================
@@ -1638,6 +1653,139 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
         meetingCells.get(key).push(p);
       }
     }
+  }
+
+  // =========================================================================
+  // 7b. THE EUC RIDER: PHYSICAL BOXES AND PEDESTRIANS STEPPING ASIDE
+  // =========================================================================
+  // Physical half extents, as collideWithPlayer() and the EUC dynamic world use them
+  const vehicleHalfW = (v) => (v.bus ? 1.30 : v.isSUV ? 0.92 : 0.86);
+  const vehicleHalfL = (v) => (v.bus ? 5.72 : v.isSUV ? 2.22 : 2.18);
+
+  // Every vehicle and pedestrian whose box may come within `radius` m of (x, z), pushed onto `out` as the upright
+  // prisms js/euc-dynamic.js (and the EUC ragdoll) read: { x, z, headingY, halfWidthMetres, halfLengthMetres, minY,
+  // maxY, velocityX, velocityZ } plus `kind` and `source`. Each actor reuses its own record: valid until the next
+  // call. No allocation after an actor's first query; one pass over the 212 vehicles and 340 pedestrians.
+  let bodySerial = 0;
+  function dynamicBodiesNear(x, z, radius, out) {
+    for (let i = 0; i < vehicles.length; i++) {
+      const v = vehicles[i];
+      if (!v.edge) continue;
+      const halfL = vehicleHalfL(v);
+      const reach = radius + halfL + 1.5;
+      const dx = v.x - x, dz = v.z - z;
+      if (dx * dx + dz * dz > reach * reach) continue;
+      const b = v.body || (v.body = { kind: 'vehicle', source: v, x: 0, z: 0, headingY: 0, halfWidthMetres: 0,
+        halfLengthMetres: 0, minY: 0, maxY: 0, velocityX: 0, velocityZ: 0 });
+      b.x = v.x;
+      b.z = v.z;
+      b.headingY = v.yaw + v.yawOffset;
+      b.halfWidthMetres = vehicleHalfW(v);
+      b.halfLengthMetres = halfL;
+      b.minY = 0;
+      b.maxY = v.bus ? BUS_HEIGHT : v.isSUV ? SUV_HEIGHT : CAR_HEIGHT;
+      // a car that just ran into the rider has stopped, but hit them at the speed it had (collideWithPlayer)
+      b.velocityX = v.hitTimer > 0 ? v.hitVX : v.tx * v.speed + v.vx;
+      b.velocityZ = v.hitTimer > 0 ? v.hitVZ : v.tz * v.speed + v.vz;
+      out.push(b);
+    }
+    const reach = radius + PED_HALF * 2;
+    for (let i = 0; i < peds.length; i++) {
+      const p = peds[i];
+      if (!p.placed) continue;
+      const dx = p.x - x, dz = p.z - z;
+      if (dx * dx + dz * dz > reach * reach) continue;
+      const b = p.body || (p.body = { kind: 'person', source: p, x: 0, z: 0, headingY: 0, halfWidthMetres: PED_HALF,
+        halfLengthMetres: PED_HALF, minY: 0, maxY: 0, velocityX: 0, velocityZ: 0 });
+      const wx = p.ux * p.dir, wz = p.uz * p.dir;
+      b.x = p.x;
+      b.z = p.z;
+      b.headingY = Math.atan2(wx, wz);
+      b.minY = pedGround(p, p.x, p.z);
+      b.maxY = b.minY + PED_HEIGHT;
+      b.velocityX = wx * p.v;
+      b.velocityZ = wz * p.v;
+      out.push(b);
+    }
+  }
+
+  // A pedestrian steps up to DODGE_MAX m aside, off its track, out of the way of a rider coming at it (faster than
+  // 2 m/s, within DODGE_AHEAD m) or standing in its path, and stops when the rider touches it. The offset eases back
+  // once the way is clear. Called after walk(), which puts p back on its track every frame.
+  const DODGE_AHEAD = 3;
+  const DODGE_MAX = 0.6;
+  const DODGE_RATE = 1.4; // m/s sideways
+  // A bumped pedestrian is shoved off its track (BUMP_MAX_PUSH m/s at most, braking at BUMP_FRICTION /s) and walks
+  // back onto it at BUMP_RETURN m/s once it has stopped
+  const BUMP_MIN_SPEED = 1.5;
+  const BUMP_MAX_PUSH = 4.5;
+  const BUMP_FRICTION = 7;
+  const BUMP_RETURN = 0.5;
+  const BUMP_COOLDOWN = 3;
+  function stumble(p, dt) {
+    if (p.bumpCooldown > 0) p.bumpCooldown -= dt;
+    if (!p.bumpOX && !p.bumpOZ && !p.bumpVX && !p.bumpVZ) return;
+    p.bumpOX = (p.bumpOX || 0) + (p.bumpVX || 0) * dt;
+    p.bumpOZ = (p.bumpOZ || 0) + (p.bumpVZ || 0) * dt;
+    const k = Math.exp(-BUMP_FRICTION * dt);
+    p.bumpVX = (p.bumpVX || 0) * k;
+    p.bumpVZ = (p.bumpVZ || 0) * k;
+    if (Math.hypot(p.bumpVX, p.bumpVZ) < 0.05) {
+      p.bumpVX = p.bumpVZ = 0;
+      const off = Math.hypot(p.bumpOX, p.bumpOZ);
+      const step = BUMP_RETURN * dt;
+      if (off <= step) p.bumpOX = p.bumpOZ = 0;
+      else if (p.pause <= 0.6) {
+        p.bumpOX -= (p.bumpOX / off) * step;
+        p.bumpOZ -= (p.bumpOZ / off) * step;
+      }
+    }
+    p.x += p.bumpOX;
+    p.z += p.bumpOZ;
+  }
+  function dodgeRider(p, dt) {
+    let target = 0;
+    if (player.active) {
+      const dx = p.x - player.x, dz = p.z - player.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < 16) {
+        const px = -p.uz, pz = p.ux; // across its track
+        if (player.speed > 2) {
+          const fx = player.vx / player.speed, fz = player.vz / player.speed;
+          const ahead = dx * fx + dz * fz;
+          const side = dx * fz - dz * fx; // > 0: right of the rider's way
+          if (ahead > -0.3 && ahead < DODGE_AHEAD && Math.abs(side) < 1.3) {
+            const away = (px * fz - pz * fx) * (side >= 0 ? 1 : -1); // across-track share of "further from the way"
+            if (Math.abs(away) > 0.3) target = away > 0 ? DODGE_MAX : -DODGE_MAX;
+          }
+        }
+        if (target === 0) {
+          const toward = -(dx * p.ux + dz * p.uz) * p.dir; // the rider ahead along its walk
+          const lateral = -(dx * px + dz * pz); // and to which side of its track
+          if (toward > 0 && toward < 1.8 && Math.abs(lateral) < 0.9) target = lateral >= 0 ? -DODGE_MAX : DODGE_MAX;
+        }
+        if (d2 < 0.81) {
+          p.v = 0;
+          p.pause = Math.max(p.pause, 0.6);
+          // Bumped by a moving wheel: stumble away from it, stand a moment, and complain (audio-system.js hears
+          // p.bumped change). Never more often than BUMP_COOLDOWN.
+          if (player.speed > BUMP_MIN_SPEED && !(p.bumpCooldown > 0)) {
+            const d = Math.sqrt(d2) || 1;
+            const push = Math.min(BUMP_MAX_PUSH, 1.2 + player.speed * 0.6); // ~0.5-0.65 m of stumble
+            p.bumpVX = (dx / d) * push;
+            p.bumpVZ = (dz / d) * push;
+            p.pause = Math.max(p.pause, 2.2);
+            p.bumped = (p.bumped || 0) + 1;
+            p.bumpCooldown = BUMP_COOLDOWN;
+          }
+        }
+      }
+    }
+    stumble(p, dt);
+    if (target === 0 && p.dodge === 0) return;
+    p.dodge += clamp(target - p.dodge, -DODGE_RATE * dt, DODGE_RATE * dt);
+    p.x -= p.uz * p.dodge;
+    p.z += p.ux * p.dodge;
   }
 
   // =========================================================================
@@ -1954,7 +2102,10 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   let vehicleCursor = 0;
   let pedCursor = 0;
 
-  function update(dt, elapsed, focusPos = null, playerEntity = null, activeMode = 'car', camera = null) {
+  // update(dt, elapsed, focusPos, playerEntity, camera). main.js used to pass the player's mode before the camera: the
+  // player is always the EUC rider now, so a mode string there is ignored and the camera may follow it or take its place
+  function update(dt, elapsed, focusPos = null, playerEntity = null, cameraOrMode = null, camera = null) {
+    if (!camera && cameraOrMode && typeof cameraOrMode === 'object') camera = cameraOrMode;
     clock = elapsed;
     avePhase = signalPhase(elapsed, true);
     stPhase = signalPhase(elapsed, false);
@@ -1969,19 +2120,19 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     refreshNear();
     updateView(camera);
 
-    player.active = Boolean(playerEntity && activeMode !== 'helicopter' && playerEntity.position.y < 2.6);
+    // The EUC rider (read only: the controller owns its position), unless high above the traffic mid-hop
+    player.active = Boolean(playerEntity && playerEntity.position.y < 2.6);
+    player.entity = playerEntity;
     if (playerEntity) {
       const heading = playerEntity.heading || 0;
       const speed = playerEntity.speed || 0;
-      player.entity = playerEntity;
       player.x = playerEntity.position.x;
       player.z = playerEntity.position.z;
-      player.vx = Math.sin(heading) * speed + (playerEntity.vx || 0);
-      player.vz = Math.cos(heading) * speed + (playerEntity.vz || 0);
+      player.heading = heading;
+      player.speed = Math.abs(speed);
+      player.vx = Math.sin(heading) * speed;
+      player.vz = Math.cos(heading) * speed;
     }
-    player.halfW = activeMode === 'cyclist' ? 0.35 : activeMode === 'person' ? 0.32 : 0.86;
-    player.halfL = activeMode === 'cyclist' ? 0.85 : activeMode === 'person' ? 0.32 : 2.18;
-    player.push = activeMode === 'cyclist' ? 0.82 : activeMode === 'person' ? 0.88 : 0.50;
 
     // 1. Cars & buses
     // Limit attempted placements, not just successes, and rotate through the pool so an awkward location
@@ -2013,7 +2164,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       locate(v);
       knock(v, dt);
       pose(v, dt);
-      if (player.active) collideWithPlayer(v, v.yaw + v.yawOffset, v.bus ? 1.30 : v.isSUV ? 0.92 : 0.86, v.bus ? 5.72 : v.isSUV ? 2.22 : 2.18);
+      collideWithPlayer(v, v.yaw + v.yawOffset, vehicleHalfW(v), vehicleHalfL(v), dt);
       if (v.vx * v.vx + v.vz * v.vz > 0.36) knockOn(v);
 
       if (v.bus) renderBus(v);
@@ -2083,23 +2234,22 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       const p = peds[i];
       if (!p.placed) continue;
       walk(p, dt);
+      dodgeRider(p, dt);
       renderPed(p, dt);
     }
     pedCrowd.end();
 
-    // 3. Collision sparks, including the player's own impacts against buildings
-    if (playerEntity && playerEntity.lastCollisionSpark) {
-      const bs = playerEntity.lastCollisionSpark;
-      spawnCollisionSparks(bs.x, bs.y, bs.z, bs.nx, bs.nz, bs.speed);
-      playerEntity.lastCollisionSpark = null;
-    }
+    // 3. Collision sparks
     updateSparks(dt);
+    bodySerial++;
   }
 
   return {
     group,
     update,
     setCollisionListener,
+    dynamicBodiesNear,
+    bodyVersion: () => bodySerial,
     cars,
     buses,
     peds,
@@ -2124,6 +2274,11 @@ const HWY_NEAR_LOD = 170;
 const HWY_MID_LOD = 450;
 const HWY_FAR_CULL = 1600;
 const HWY_RAMP = 32; // the dip at the lane ends: 2.4 m down over this many metres
+// A highway car whose nose reaches the rider (within HWY_CONTACT m) stops dead and holds, as street cars do; for
+// HWY_HIT_MEMORY s it still reports the speed it hit at, so the controller feels the hit (euc-dynamic.js)
+const HWY_CONTACT = 0.4;
+const HWY_HIT_MEMORY = 0.25;
+const HWY_RIDER_HALF_LEN = 0.5;
 
 function createHighwayTraffic(scene, lanes) {
   const group = new THREE.Group();
@@ -2283,12 +2438,44 @@ function createHighwayTraffic(scene, lanes) {
     return null;
   }
 
-  function update(dt, camera, entity, mode) {
+  // Highway cars that may come within `radius` m of (x, z) and stand where a rider can meet them, pushed onto `out`
+  // as EUC dynamic-world boxes (see the street traffic's dynamicBodiesNear). Elevated decks are excluded by their
+  // heights (the controller compares minY / maxY with the rider's); cars dipping below ground at a lane end or in an
+  // underpass are skipped. Lanes far away are rejected by their bounds.
+  const HWY_HALF_W = 0.9;
+  const HWY_HEIGHT = 1.5;
+  let bodySerial = 0;
+  function dynamicBodiesNear(x, z, radius, out) {
+    const reach = radius + HWY_CAR_LEN * 0.5 + 1;
+    for (const lane of lanes) {
+      const box = lane.box;
+      if (x < box[0] - reach || x > box[1] + reach || z < box[2] - reach || z > box[3] + reach) continue;
+      for (const c of lane.cars) {
+        if (!c.placed || c.y < -0.8) continue;
+        const dx = c.x - x, dz = c.z - z;
+        if (dx * dx + dz * dz > reach * reach) continue;
+        const b = c.body || (c.body = { kind: 'vehicle', source: c, x: 0, z: 0, headingY: 0, halfWidthMetres: HWY_HALF_W,
+          halfLengthMetres: HWY_CAR_LEN * 0.5, minY: 0, maxY: 0, velocityX: 0, velocityZ: 0 });
+        b.x = c.x;
+        b.z = c.z;
+        b.headingY = c.yaw;
+        b.minY = c.y;
+        b.maxY = c.y + HWY_HEIGHT;
+        const hitSpeed = c.hitTimer > 0 ? c.hitV : c.v;
+        b.velocityX = Math.sin(c.yaw) * hitSpeed;
+        b.velocityZ = Math.cos(c.yaw) * hitSpeed;
+        out.push(b);
+      }
+    }
+  }
+
+  // update(dt, camera, entity): a fourth argument (the old player mode) is ignored; the player is the EUC rider
+  function update(dt, camera, entity) {
     // 1. Car following (IDM) in every lane, the player counting as a leader
-    const pl = entity && mode !== 'helicopter' ? {
+    const pl = entity ? {
       x: entity.position.x, y: entity.position.y, z: entity.position.z,
-      vx: Math.sin(entity.heading || 0) * (entity.speed || 0) + (entity.vx || 0),
-      vz: Math.cos(entity.heading || 0) * (entity.speed || 0) + (entity.vz || 0)
+      vx: Math.sin(entity.heading || 0) * (entity.speed || 0),
+      vz: Math.cos(entity.heading || 0) * (entity.speed || 0)
     } : null;
     for (const lane of lanes) {
       const list = lane.cars;
@@ -2305,14 +2492,29 @@ function createHighwayTraffic(scene, lanes) {
           gap -= HWY_CAR_LEN;
           dv = c.v - lead.v;
         }
-        if (pIn && pIn.u > c.u && pIn.u - c.u - HWY_CAR_LEN < gap) {
-          gap = pIn.u - c.u - HWY_CAR_LEN;
-          dv = c.v - pIn.v;
+        // The rider counts as the leader once level with the car's nose or ahead of it (not only once fully ahead)
+        c.touching = false;
+        if (pIn && pIn.u > c.u - HWY_CAR_LEN * 0.5) {
+          if (pIn.u - c.u - HWY_CAR_LEN < gap) {
+            gap = pIn.u - c.u - HWY_CAR_LEN;
+            dv = c.v - pIn.v;
+          }
+          c.touching = pIn.u - HWY_RIDER_HALF_LEN - (c.u + HWY_CAR_LEN * 0.5) < HWY_CONTACT;
         }
         const sStar = D.s0 + Math.max(0, c.v * D.T + (c.v * dv) / brakeTerm);
         c.acc = Math.max(-9, D.a * (1 - (c.v / lane.speed) ** 4 - (sStar / Math.max(gap, 0.1)) ** 2));
       }
       for (const c of list) {
+        if (c.hitTimer > 0) c.hitTimer -= dt;
+        if (c.touching) {
+          if (c.v > 0.5) {
+            c.hitTimer = HWY_HIT_MEMORY;
+            c.hitV = c.v;
+          }
+          c.v = 0;
+          c.acc = 0;
+          continue;
+        }
         c.v = Math.max(0, c.v + c.acc * dt);
         c.u += c.v * dt;
         if (c.u >= lane.len) {
@@ -2476,9 +2678,10 @@ function createHighwayTraffic(scene, lanes) {
       spot.intensity = 0;
       spot.position.set(0, -1000, 0);
     }
+    bodySerial++;
   }
 
-  return { group, update, cars, lanes };
+  return { group, update, dynamicBodiesNear, bodyVersion: () => bodySerial, cars, lanes };
 }
 
 export { createTrafficSystem, createHighwayTraffic };

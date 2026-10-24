@@ -7,35 +7,12 @@ const SIGNAL_RANGE = 35;
 const unit = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 const seedAt = (index) => ((Math.imul(index + 1, 2654435761) >>> 0) / 4294967296);
 
-function driveLoad(keys, speed, cyclist) {
-  // Match the controller's forward priority, and distinguish propulsion from braking.
-  const throttle = unit(+keys.forward) || -unit(+keys.backward) * (cyclist ? 0.6 : 1);
-  if ((cyclist && throttle <= 0) || speed * throttle < 0) return 0;
-  return unit(Math.abs(throttle) * (cyclist || keys.boost ? 1 : 0.8));
-}
-
-function helicopterVerticalSpeed(entity) {
-  const speed = Number.isFinite(entity.verticalSpeed) ? entity.verticalSpeed : 0;
-  // The controller clamps altitude without clearing its stored vertical velocity.
-  return (entity.position.y <= 0.25 && speed < 0) || (entity.position.y >= 380 && speed > 0) ? 0 : speed;
-}
-
-function helicopterLoad(entity, keys, verticalSpeed) {
-  const forward = unit(+keys.forward) || -unit(+keys.backward);
-  const collective = unit(+keys.up) || -unit(+keys.down);
-  const grounded = entity.position.y <= 0.35 && verticalSpeed <= 0.03;
-  return unit((grounded ? 0.12 : 0.45)
-    + 0.28 * Math.max(collective, 0) - 0.16 * Math.max(-collective, 0)
-    + 0.15 * unit(verticalSpeed / 16) - 0.08 * unit(-verticalSpeed / 16)
-    + 0.1 * Math.abs(forward) + 0.12 * unit(Math.abs(entity.speed) / 52));
-}
-
 function roadLoad(speed, acceleration, maxAcceleration) {
   // Constant speed still needs power against rolling resistance and air drag.
   return unit(acceleration / maxAcceleration + unit(speed / 2) * (0.12 + 0.28 * unit(speed / 30) ** 2));
 }
 
-function writeMotor(item, id, kind, x, y, z, speed, load, heading, police, player, seed, blocked, gain, range, verticalSpeed = 0) {
+function writeMotor(item, id, kind, x, y, z, speed, load, heading, police, seed, blocked, gain, range) {
   item.id = id;
   item.kind = kind;
   item.x = x;
@@ -43,10 +20,8 @@ function writeMotor(item, id, kind, x, y, z, speed, load, heading, police, playe
   item.z = z;
   item.speed = Number.isFinite(speed) ? Math.abs(speed) : 0;
   item.load = unit(load);
-  item.verticalSpeed = Number.isFinite(verticalSpeed) ? verticalSpeed : 0;
   item.heading = heading;
   item.police = police;
-  item.player = player;
   item.seed = seed;
   item.blocked = blocked;
   item.gain = gain;
@@ -82,10 +57,10 @@ class NearestSources {
 
 // Read at audio's control rate (10 Hz), after simulation updates. Snapshots remain valid until the next collect().
 // IDs are the simulation objects, independent of pooled record order, so voices survive ranking changes/recycling.
+// Street sources only: the player's electric unicycle is heard through js/euc-audio.js (motor, wind, tyre, one-shots),
+// which audio-system.js drives every frame.
 class CityAudioSources {
-  constructor({ controllerManager, trafficSystem, highwayTraffic, streetDetails }) {
-    this.controllers = controllerManager;
-    this.players = Object.values(controllerManager.entities);
+  constructor({ trafficSystem, highwayTraffic, streetDetails }) {
     this.cars = trafficSystem.cars;
     this.buses = trafficSystem.buses;
     this.peds = trafficSystem.peds;
@@ -97,7 +72,7 @@ class CityAudioSources {
     this.signals = new NearestSources(2);
     this.snapshot = {
       motors: this.motors.items, sirens: this.sirens.items,
-      people: this.people.items, signals: this.signals.items, traffic: 0, motion: 0
+      people: this.people.items, signals: this.signals.items, traffic: 0
     };
   }
 
@@ -108,24 +83,23 @@ class CityAudioSources {
     return dx * dx + dy * dy + dz * dz;
   }
 
-  motor(id, kind, x, y, z, speed, load, heading, police, player, seed, blocked, gain = 1, range = kind === 'helicopter' ? 500 : 160, verticalSpeed = 0) {
+  motor(id, kind, x, y, z, speed, load, heading, police, seed, blocked, gain = 1, range = 160) {
     const d2 = this.distanceSq(x, y, z);
     if (!Number.isFinite(d2)) return;
     if (police && d2 <= SIREN_RANGE * SIREN_RANGE) {
       const siren = this.sirens.take(d2);
-      if (siren) writeMotor(siren, id, 'siren', x, y, z, speed, load, heading, true, player, seed, blocked, 1, 200);
+      if (siren) writeMotor(siren, id, 'siren', x, y, z, speed, load, heading, true, seed, blocked, 1, 200);
     }
-    const reach = kind === 'helicopter' ? range : MOTOR_RANGE;
-    if (d2 > reach * reach) return;
-    const item = this.motors.take(player ? -1 : d2);
+    if (d2 > MOTOR_RANGE * MOTOR_RANGE) return;
+    const item = this.motors.take(d2);
     if (!item) return;
-    writeMotor(item, id, kind, x, y, z, speed, load, heading, police, player, seed, blocked, gain, range, verticalSpeed);
+    writeMotor(item, id, kind, x, y, z, speed, load, heading, police, seed, blocked, gain, range);
   }
 
-  person(id, x, y, z, speed, grounded, rig, player = false, priority = player) {
+  person(id, x, y, z, speed, grounded, rig) {
     const d2 = this.distanceSq(x, y, z);
     if (!Number.isFinite(d2) || d2 > PEOPLE_RANGE * PEOPLE_RANGE) return;
-    const item = this.people.take(priority ? -1 : d2);
+    const item = this.people.take(d2);
     if (!item) return;
     item.id = id;
     item.x = x;
@@ -135,8 +109,8 @@ class CityAudioSources {
     item.grounded = grounded;
     item.seed = rig.seed;
     item.phase = rig.phase;
-    item.player = player;
-    item.conversation = player ? null : id.conversation || null;
+    item.conversation = id.conversation || null;
+    item.bumped = id.bumped || 0; // traffic.js: counts the times a wheel shoved this pedestrian
     const left = rig.feet[0], right = rig.feet[1];
     item.leftX = left.px; item.leftY = left.py; item.leftZ = left.pz;
     item.rightX = right.px; item.rightY = right.py; item.rightZ = right.pz;
@@ -155,7 +129,7 @@ class CityAudioSources {
       const green = !v.edge.to.signal || signalPhase(elapsed, v.edge.axisIndex === 0) === 'green';
       const blocked = v.wait > 2 && v.speed < 0.5 && v.gap < 8 && v.leaderSpeed < 0.5 && green && !v.conn && !v.yielding;
       this.motor(v, v.bus ? 'bus' : v.isSUV ? 'suv' : 'sedan', v.x, 0.7, v.z,
-        v.speed, roadLoad(v.speed, v.acc, v.driver.a), v.yaw + v.yawOffset, !!v.isNYPD, false, seedAt(seedOffset + i), blocked);
+        v.speed, roadLoad(v.speed, v.acc, v.driver.a), v.yaw + v.yawOffset, !!v.isNYPD, seedAt(seedOffset + i), blocked);
     }
   }
 
@@ -163,33 +137,6 @@ class CityAudioSources {
     this.listener = listenerPosition;
     this.motors.items.length = this.sirens.items.length = this.people.items.length = this.signals.items.length = 0;
     this.snapshot.traffic = 0;
-    const active = this.controllers.getActiveEntity();
-    const keys = this.controllers.keys;
-    this.snapshot.motion = active.type === 'person' ? active.rig.speed
-      : Math.hypot(active.speed, active.type === 'helicopter' ? helicopterVerticalSpeed(active) : 0);
-
-    for (let i = 0; i < this.players.length; i++) {
-      const entity = this.players[i];
-      if (entity.mesh.visible === false || entity.position.y < -0.05) continue;
-      const { x, y, z } = entity.position;
-      const player = entity === active;
-      if (entity.type === 'person') {
-        const ground = this.controllers.getGroundHeight(x, z, 'person');
-        const grounded = y <= ground + 0.03 && Math.abs(entity.verticalVel) < 0.1;
-        this.person(entity, x, y, z, entity.rig.speed, grounded, entity.rig, true, player);
-      } else {
-        // Inactive bicycles stop updating and are silent, even if their stored speed is left over from riding.
-        if (!player && entity.type === 'cyclist') continue;
-        const kind = entity.type === 'car' ? 'sedan' : entity.type;
-        const helicopter = kind === 'helicopter';
-        const verticalSpeed = player && helicopter ? helicopterVerticalSpeed(entity) : 0;
-        const load = player ? helicopter ? helicopterLoad(entity, keys, verticalSpeed) : driveLoad(keys, entity.speed, kind === 'cyclist') : 0;
-        const gain = player ? 1 : helicopter ? 0.22 : 0.5;
-        const range = helicopter ? (player ? 500 : 200) : 160;
-        this.motor(entity, kind, x, y + (helicopter ? 2.66 : 0.7), z, player ? entity.speed : 0, load, entity.heading,
-          false, player, seedAt(i), false, gain, range, verticalSpeed);
-      }
-    }
 
     this.streetVehicles(this.cars, elapsed, 100);
     this.streetVehicles(this.buses, elapsed, 1000);
@@ -201,7 +148,7 @@ class CityAudioSources {
       if (!Number.isFinite(d2) || d2 > MOTOR_RANGE * MOTOR_RANGE) continue;
       this.snapshot.traffic += (1 - d2 / (MOTOR_RANGE * MOTOR_RANGE)) * (0.2 + 0.8 * unit(car.v / 12));
       this.motor(car, car.kind === 'suv' ? 'suv' : 'sedan', car.x, car.y + 0.7, car.z,
-        car.v, roadLoad(car.v, car.acc, 1.6), car.yaw, false, false, seedAt(2000 + i), car.v < 0.5);
+        car.v, roadLoad(car.v, car.acc, 1.6), car.yaw, false, seedAt(2000 + i), car.v < 0.5);
     }
     this.snapshot.traffic = unit(this.snapshot.traffic / 16);
 

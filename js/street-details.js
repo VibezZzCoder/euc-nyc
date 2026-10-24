@@ -10,7 +10,9 @@ import {
   fromOldFrame,
   CENTRAL_PARK_BOUNDS as CPB,
   BLOCKS,
-  LANDMARK_SITES
+  LANDMARK_SITES,
+  centralParkGateAt,
+  inCentralPark
 } from './city-config.js';
 import { cityUniforms, createSteamMaterial, createTreeGrateMaterial, createGodRayMaterial } from './tsl-materials.js';
 import { createTreeField } from './trees.js';
@@ -21,10 +23,10 @@ import { bryantParkLawn } from './landmarks.js';
 // Populates Manhattan streets with authentic NYC street furniture using InstancedMesh:
 // - Cantilevered NYC Yellow Traffic Signals at all 63 intersections
 // - NYC DOT Cobra-head LED Streetlights
-// - Con Edison Orange/White Steam Stacks + Volumetric TSL Rising Steam Plumes
-// - MTA Subway Stair Entrances with Glowing Green Globe Lamps
+// - Utility Orange/White Steam Stacks + Volumetric TSL Rising Steam Plumes
+// - Subway Stair Entrances with Glowing Green Globe Lamps
 // - NYC Hot Dog / Halal Street Carts with Blue & Yellow Umbrellas
-// - Fire Hydrants, USPS Mailboxes, Litter Baskets, and Park/Street Trees
+// - Fire Hydrants, Blue Mailboxes, Litter Baskets, and Park/Street Trees
 
 function createStreetSignBladeTexture(label) {
   const c = document.createElement('canvas');
@@ -522,7 +524,7 @@ function buildStreetDetails(scene) {
   }
 
   // =========================================================================
-  // 3. CON EDISON ORANGE/WHITE STRIPED STEAM STACKS, NYCDOT SAWHORSE BARRICADES
+  // 3. UTILITY ORANGE/WHITE STRIPED STEAM STACKS, NYCDOT SAWHORSE BARRICADES
   //    & BILLOWING WIND-DRIFTED VOLUMETRIC STEAM CLOUD TRAILS (REFERENCE PHOTO!)
   // =========================================================================
   const steamLocations = [
@@ -550,7 +552,7 @@ function buildStreetDetails(scene) {
   }
 
   const steamOrangeMat = new THREE.MeshStandardNodeMaterial({
-    color: 0xff5518, // High-visibility ConEd safety orange
+    color: 0xff5518, // High-visibility utility safety orange
     roughness: 0.42
   });
   const steamWhiteMat = new THREE.MeshStandardNodeMaterial({
@@ -574,7 +576,7 @@ function buildStreetDetails(scene) {
     const { x: sx, z: sz, windX, windZ } = steamLocations[sIdx];
     addFootprint(sx, sz, 2, 2); // stack + sawhorse barricades
 
-    // 5-Band Alternating Orange & White Candy-Cane ConEd Steam Stack (height = 2.85m)
+    // 5-Band Alternating Orange & White Candy-Cane Utility Steam Stack (height = 2.85m)
     for (let b = 0; b < 5; b++) {
       const bandH = 0.56;
       const by = 0.28 + b * bandH;
@@ -628,7 +630,7 @@ function buildStreetDetails(scene) {
       }
     }
 
-    // 36 Camera-Facing Volumetric Smoke Sprites per ConEd Steam Stack (SpriteNodeMaterial)
+    // 36 Camera-Facing Volumetric Smoke Sprites per Utility Steam Stack (SpriteNodeMaterial)
     for (let p = 0; p < puffsPerStack; p++) {
       const idx3 = spriteCursor * 3;
       const idx4 = spriteCursor * 4;
@@ -670,10 +672,10 @@ function buildStreetDetails(scene) {
   group.add(steamInstancedSprites);
 
   // =========================================================================
-  // 4. MTA SUBWAY ENTRANCES WITH GLOWING GREEN GLOBE LAMPS
+  // 4. SUBWAY ENTRANCES WITH GLOWING GREEN GLOBE LAMPS
   // =========================================================================
   const subwayRailingMat = new THREE.MeshStandardNodeMaterial({
-    color: 0x1a3826, // Classic MTA Subway forest green ironwork
+    color: 0x1a3826, // Classic subway forest green ironwork
     roughness: 0.5,
     metalness: 0.65
   });
@@ -688,7 +690,7 @@ function buildStreetDetails(scene) {
     [-236.5, -74], // Times Sq - 45th St
     [126.5, -16],  // Grand Central - 42nd St
     [203.5, -16],  // Lexington Ave / Chrysler
-    [203.5, -252], // 53rd St - Lex Ave (Citigroup)
+    [203.5, -252], // 53rd St - Lex Ave (601 Lexington)
     [-16.5, -162], // 47th-50th Sts Rockefeller Ctr
     [-16.5, 342]   // 23rd St - Flatiron
   ];
@@ -721,7 +723,7 @@ function buildStreetDetails(scene) {
     subwayRailMatrices.push(dummy.matrix.clone());
     addFootprint(subX, subZ, 2.1, 6.2);
 
-    // Twin MTA Green Globe Post Lamps at stair entrance
+    // Twin Green Globe Post Lamps at stair entrance
     for (const ox of [-0.85, 0.85]) {
       dummy.position.set(subX + ox, 1.9, subZ + 2.9);
       dummy.scale.set(0.09, 1.4, 0.09);
@@ -786,7 +788,7 @@ function buildStreetDetails(scene) {
   addMatrixArrayInstanced(new THREE.ConeGeometry(1, 1, 8), umbrellaMat, umbrellaMatrices);
 
   // =========================================================================
-  // 6. FIRE HYDRANTS & USPS BLUE MAILBOXES ALONG CURBS (INSTANCED)
+  // 6. FIRE HYDRANTS & BLUE MAILBOXES ALONG CURBS (INSTANCED)
   // =========================================================================
   const hydrantPositions = [];
   const mailboxPositions = [];
@@ -938,6 +940,14 @@ function buildStreetDetails(scene) {
         treePositions.push({ x: tx, y: CP_LAWN_Y, z: tz, scale, species: mixSpecies(hashPos(tx, 4.4, tz), 0.4, 0.15) });
       }
     }
+  }
+
+  // The Central Park trees keep to the lawn inside the wall: none in a gate's cut, none outside the real outline
+  // (Grand Army Plaza's corner lies inside the park's bounds but outside its wall)
+  for (let i = treePositions.length - 1; i >= 0; i--) {
+    const t = treePositions[i];
+    if (t.y !== CP_LAWN_Y) continue;
+    if (centralParkGateAt(t.x, t.z, 2.5) || !inCentralPark(t.x, t.z)) treePositions.splice(i, 1);
   }
 
   // B5. The squares, the other parks & the plazas (sites laid out by city-grid.js)

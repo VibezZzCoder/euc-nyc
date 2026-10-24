@@ -19,6 +19,9 @@ import { LightingSystem } from './lighting.js';
 import { NYCMapSystem } from './nyc-map.js';
 import { setupSceneCulling, updateSceneCulling } from './scene-culling.js';
 import { CityAudioSystem } from './audio-system.js';
+import { createEucDynamicWorld, combineBodySources } from './euc-dynamic.js';
+import { PLAYABLE_RIDERS, RIDERS, isPlayableRider } from './euc-rider.js';
+import { EucHud, formatSpeed } from './euc-hud.js';
 
 // js/main.js
 // Main entry point for New York City (Midtown Manhattan) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
@@ -98,28 +101,32 @@ async function initApp() {
   buildRoadPaint(scene, trafficSystem.network);
   markInit('roadPaint');
 
-  // 4. Initialize Third-Person Controllers (Person, Car, Cyclist, Helicopter) & Multi-Camera System
-  const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
-  // Reuse teleport placement so saved players return at rest, close to their last positions.
-  try {
-    const saved = JSON.parse(localStorage.getItem('nyc-player-state'));
-    if (saved?.version === 1) {
-      for (const mode of Object.keys(controllerManager.entities)) {
-        const p = saved.entities?.[mode];
-        if (!p || ![p.x, p.y, p.z, p.heading].every(Number.isFinite)) continue;
-        controllerManager.setMode(mode);
-        controllerManager.teleportActiveTo(p.x, p.z, p.heading, p.y);
-      }
-      controllerManager.setMode(Object.hasOwn(controllerManager.entities, saved.activeMode) ? saved.activeMode : 'car');
-    }
-  } catch { /* Missing or unavailable storage does not prevent playing. */ }
+  // 4. The player's EUC (controllers.js, euc-rider.js) & Multi-Camera System
+  // Saved state: { version: 2, rider, euc: { x, y, z, heading } }. Version 1 (the spike's multi-mode save) still loads
+  // its EUC pose. The fork keeps its own key, so it never shares a save with Slop New York on the same origin.
+  const PLAYER_STATE_KEY = 'euc-newyork-player-state';
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PLAYER_STATE_KEY)); } catch { /* Missing or unavailable storage. */ }
+  // ?rider=cool-rider | trollina overrides the saved rider (handy for links and QA)
+  const riderParam = new URLSearchParams(location.search).get('rider');
+  const rider = [riderParam, saved?.rider].find(isPlayableRider) ?? PLAYABLE_RIDERS[0];
+  // Cars, buses and pedestrians are moving obstacles for the wheel (euc-dynamic.js): a hit at speed is a crash
+  const dynamicWorld = createEucDynamicWorld(combineBodySources(trafficSystem, highwayTraffic));
+  const controllerManager = new ThirdPersonControllerManager(scene, allColliders, {
+    streetFootprints: streetDetails.footprints, ride: cityGrid.ride, rider, dynamicWorld
+  });
+  // Reuse teleport placement so a saved rider returns at rest, close to where they were.
+  const savedPose = saved?.version === 2 ? saved.euc : saved?.version === 1 ? saved.entities?.euc : null;
+  if (savedPose && [savedPose.x, savedPose.z, savedPose.heading].every(Number.isFinite)) {
+    controllerManager.teleportActiveTo(savedPose.x, savedPose.z, savedPose.heading);
+  }
 
   function savePlayerState() {
     try {
-      const entities = Object.fromEntries(Object.entries(controllerManager.entities).map(([mode, entity]) => [mode, {
-        x: entity.position.x, y: entity.position.y, z: entity.position.z, heading: entity.heading
-      }]));
-      localStorage.setItem('nyc-player-state', JSON.stringify({ version: 1, activeMode: controllerManager.activeMode, entities }));
+      const e = controllerManager.getActiveEntity();
+      localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
+        version: 2, rider: e.riderId, euc: { x: e.position.x, y: e.position.y, z: e.position.z, heading: e.heading }
+      }));
     } catch { /* Storage may be disabled or full. */ }
   }
 
@@ -209,50 +216,68 @@ async function initApp() {
   const renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
 
   // 6. Wire UI Controls (Strictly using safe DOM APIs: textContent, classList, addEventListener)
-  const modeButtons = document.querySelectorAll('[data-mode]');
+  const riderButtons = document.querySelectorAll('[data-rider]');
   const cameraButtons = document.querySelectorAll('[data-camera]');
   const timeButtons = document.querySelectorAll('[data-time]');
   const teleportButtons = document.querySelectorAll('[data-teleport]');
   const hudToggleBtn = document.getElementById('btn-toggle-hud');
-  const modeSwitch = document.getElementById('mode-switch');
-  touchControls.onAvailabilityChange = placeModeIndicator;
+  const riderSwitch = document.getElementById('rider-switch');
+  touchControls.onAvailabilityChange = placeRiderIndicator;
 
   const elFps = document.getElementById('hud-fps');
   const elMode = document.getElementById('hud-active-mode');
   const elCamera = document.getElementById('hud-active-camera');
   const elSpeed = document.getElementById('hud-speed');
+  const elSpeedKmh = document.getElementById('hud-speed-kmh');
+  const eucHud = new EucHud(document);
   const elSpeedMeter = document.getElementById('hud-speed-meter');
-  const elAltitude = document.getElementById('hud-altitude');
   const elLocation = document.getElementById('hud-location');
   const elControlsHint = document.getElementById('hud-controls-hint');
   const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
-    onCycleMode: (step) => {
-      const modes = ['person', 'car', 'cyclist', 'helicopter'];
-      selectMode(modes[(modes.indexOf(controllerManager.activeMode) + step + modes.length) % modes.length]);
+    onCycleRider: (step) => {
+      const i = PLAYABLE_RIDERS.indexOf(controllerManager.getActiveEntity().riderId);
+      selectRider(PLAYABLE_RIDERS[(i + step + PLAYABLE_RIDERS.length) % PLAYABLE_RIDERS.length]);
     },
     onCycleCamera: cycleCamera,
     onToggleMap: () => mapSystem.toggleFullMap(!mapSystem.isFullMapOpen),
-    onCloseMap: () => mapSystem.toggleFullMap(false)
+    onCloseMap: () => mapSystem.toggleFullMap(false),
+    onActivity: () => setPromptDevice('gamepad')
   });
 
-  // Keyboard guide for each mode: [keys, action]
+  // Control guide per input device: [buttons, action]. Gamepad names follow the Xbox layout (standard mapping).
   const controlHints = {
-    person: [[['W', 'S'], 'Walk'], [['A', 'D'], 'Turn'], [['Shift'], 'Sprint'], [['Space'], 'Jump'], [['Drag'], 'Orbit']],
-    car: [[['W', 'S'], 'Drive / Reverse'], [['A', 'D'], 'Steer'], [['Shift'], 'Boost'], [['B'], 'Horn'], [['Drag'], 'Orbit']],
-    cyclist: [[['W', 'S'], 'Pedal / Brake'], [['A', 'D'], 'Lean & Turn'], [['Shift'], 'Sprint'], [['Drag'], 'Orbit']],
-    helicopter: [[['W', 'S'], 'Pitch'], [['A', 'D'], 'Yaw'], [['Space', 'E'], 'Ascend'], [['Q', 'C'], 'Descend'], [['Shift'], 'Boost']]
+    keyboard: [[['W', 'S'], 'Lean forward / back'], [['A', 'D'], 'Carve'], [['Space'], 'Hop'], [['Shift'], 'Crouch'],
+      [['R'], 'Get up'], [['1', '2'], 'Rider'], [['Drag'], 'Orbit']],
+    gamepad: [[['RT', 'LT'], 'Lean forward / back'], [['LS'], 'Carve'], [['A'], 'Hop'], [['X'], 'Crouch'],
+      [['B'], 'Get up'], [['LB', 'RB'], 'Rider'], [['RS'], 'Orbit'], [['Y'], 'Camera']],
+    // Touch shows its own on-screen controls; the guide row is hidden there (style.css)
+    touch: []
   };
-  // Boosted top speeds in mph (controllers.js caps them at 8.2, 36, 19 & 52 m/s): full scale of the speed meter
-  const topSpeedMph = { person: 18, car: 81, cyclist: 43, helicopter: 116 };
+  // keyboard | gamepad | touch: which buttons the prompts name. A touch screen starts on touch until a key is pressed.
+  let promptDevice = touchControls.available ? 'touch' : 'keyboard';
+  function setPromptDevice(device) {
+    if (device === promptDevice || !controlHints[device]) return;
+    promptDevice = device;
+    document.body.dataset.input = device;
+    renderControlHints();
+  }
+  window.addEventListener('keydown', (e) => { if (!isTypingInField(e)) setPromptDevice('keyboard'); }, true);
+  window.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') setPromptDevice('keyboard');
+    else if (e.pointerType === 'touch') setPromptDevice('touch');
+  }, true);
+  // Full scale of the speed meter: the wheel's derived top speed (EucController.derivedTopSpeed), in mph
+  const topSpeedMph = () => Math.max(20, controllerManager.getActiveEntity().controller.derivedTopSpeed * 2.237);
 
-  function renderControlHints(mode) {
+  function renderControlHints() {
     if (!elControlsHint) return;
-    const items = (controlHints[mode] || []).map(([keys, action]) => {
+    const items = controlHints[promptDevice].map(([keys, action]) => {
       const item = document.createElement('span');
       item.className = 'hint';
       for (const key of keys) {
         const kbd = document.createElement('kbd');
         kbd.textContent = key;
+        if (promptDevice === 'gamepad') kbd.dataset.pad = key;
         item.appendChild(kbd);
       }
       const label = document.createElement('span');
@@ -264,32 +289,29 @@ async function initApp() {
     elControlsHint.replaceChildren(...items);
   }
 
-  // The taxi-yellow pill under the selected mode glides from button to button
-  function placeModeIndicator() {
-    const active = modeSwitch ? modeSwitch.querySelector('.mode-btn.active') : null;
+  // The taxi-yellow pill under the selected rider glides from button to button
+  function placeRiderIndicator() {
+    const active = riderSwitch ? riderSwitch.querySelector('.mode-btn.active') : null;
     if (!active) return;
-    modeSwitch.style.setProperty('--ind-x', `${active.offsetLeft}px`);
-    modeSwitch.style.setProperty('--ind-w', `${active.offsetWidth}px`);
+    riderSwitch.style.setProperty('--ind-x', `${active.offsetLeft}px`);
+    riderSwitch.style.setProperty('--ind-w', `${active.offsetWidth}px`);
   }
 
-  function selectMode(mode) {
-    controllerManager.setMode(mode);
-    touchControls.setMode(controllerManager.activeMode);
-    gamepadControls.reset();
-    modeButtons.forEach((btn) => {
-      btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
-    });
-    document.body.dataset.mode = mode;
-    placeModeIndicator();
+  function selectRider(id) {
+    if (!isPlayableRider(id)) return;
+    controllerManager.setRider(id);
     const ent = controllerManager.getActiveEntity();
-    if (elMode) elMode.textContent = ent.label;
-    renderControlHints(mode);
+    riderButtons.forEach((btn) => {
+      const on = btn.getAttribute('data-rider') === ent.riderId;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+    placeRiderIndicator();
+    if (elMode) elMode.textContent = RIDERS[ent.riderId].name;
+    savePlayerState();
 
-    // If currently on a static scenic camera, switch to 3rd-Person Chase so user sees their selected character/vehicle
-    const currentCam = cameraSystem.getActivePreset();
-    if (currentCam.category !== 'follow') {
-      selectCamera('chase', false);
-    }
+    // If currently on a static scenic camera, switch to 3rd-Person Chase so the new rider is in view
+    if (cameraSystem.getActivePreset().category !== 'follow') selectCamera('chase', false);
   }
 
   function selectCamera(camId, snap = false) {
@@ -354,9 +376,9 @@ async function initApp() {
     });
   });
 
-  modeButtons.forEach((btn) => {
+  riderButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
-      selectMode(btn.getAttribute('data-mode'));
+      selectRider(btn.getAttribute('data-rider'));
     });
   });
 
@@ -378,7 +400,7 @@ async function initApp() {
     });
   });
 
-  // A mouse click mustn't leave the focus on a HUD button, or Space (jump / ascend) and Enter would press it again
+  // A mouse click mustn't leave the focus on a HUD button, or Space (hop) and Enter would press it again
   document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('button') : null;
     if (btn && e.detail > 0) btn.blur();
@@ -485,21 +507,13 @@ async function initApp() {
     });
   }
 
-  // Global keyboard shortcuts for modes (1-4), cameras (V / 5-0), and HUD (H)
+  // Global keyboard shortcuts for riders (1-2), cameras (V / 5-0), HUD (H) and sound (N)
   window.addEventListener('keydown', (e) => {
     if (isTypingInField(e)) return;
     switch (e.code) {
       case 'Digit1':
-        selectMode('person');
-        break;
       case 'Digit2':
-        selectMode('car');
-        break;
-      case 'Digit3':
-        selectMode('cyclist');
-        break;
-      case 'Digit4':
-        selectMode('helicopter');
+        if (!e.repeat) selectRider(PLAYABLE_RIDERS[Number(e.code.slice(5)) - 1]);
         break;
       case 'Digit5':
         selectCamera('chase', true);
@@ -528,28 +542,29 @@ async function initApp() {
       case 'KeyN':
         if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) audioSystem.setEnabled(!audioSystem.enabled);
         break;
-      case 'KeyB':
-        if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !mapSystem.isFullMapOpen) audioSystem.honk(controllerManager.getActiveEntity());
-        break;
     }
   });
 
   window.addEventListener('resize', () => {
     cameraSystem.onResize(window.innerWidth, window.innerHeight);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    placeModeIndicator();
+    placeRiderIndicator();
     if (mapSystem.isFullMapOpen) {
       mapSystem.resizeFullCanvas();
       mapSystem.renderFullMap();
     }
   });
 
-  // Initialize the UI and chase camera around the restored player, or the default taxi on a first visit.
-  selectMode(controllerManager.activeMode);
+  // Initialize the UI and chase camera around the restored (or first-visit) rider.
+  document.body.dataset.mode = 'euc';
+  document.body.dataset.input = promptDevice;
+  touchControls.setMode('euc');
+  renderControlHints();
+  selectRider(controllerManager.getActiveEntity().riderId);
   selectCamera('chase', true);
   selectTime('golden');
   // the web fonts change the buttons' widths once they arrive
-  if (document.fonts) document.fonts.ready.then(placeModeIndicator);
+  if (document.fonts) document.fonts.ready.then(placeRiderIndicator);
   markInit('ui');
 
   // The loading screen stays up while the shaders compile (precompileShaders() & the warm-up frame, see the loop) and
@@ -656,15 +671,8 @@ async function initApp() {
     controllerManager.update(dt, elapsed);
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
-    trafficSystem.update(
-      dt,
-      elapsed,
-      cameraSystem.currentPos,
-      controllerManager.getActiveEntity(),
-      controllerManager.activeMode,
-      cameraSystem.camera
-    );
-    highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity(), controllerManager.activeMode);
+    trafficSystem.update(dt, elapsed, cameraSystem.currentPos, controllerManager.getActiveEntity(), cameraSystem.camera);
+    highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity());
     if (!document.hidden && now >= nextPlayerSave) {
       savePlayerState();
       nextPlayerSave = now + 5000;
@@ -676,6 +684,10 @@ async function initApp() {
     lightingSystem.update(cameraSystem.currentPos);
     mapSystem.update();
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.activePresetId === 'midnight');
+    // Wheel cues and the get-up prompt (every frame: the over-speed blink and the prompt must not lag)
+    const riderController = controllerManager.getActiveEntity().controller;
+    eucHud.update(riderController, elapsed, promptDevice);
+    touchControls.setDown(riderController.crashed);
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
 
     // Render frame via TSL RenderPipeline (SSR + Bloom)
@@ -721,18 +733,17 @@ async function initApp() {
       fpsTimer = 0;
 
       const activeEnt = controllerManager.getActiveEntity();
-      const mode = controllerManager.activeMode;
       const mph = Math.round(Math.abs(activeEnt.speed) * 2.237);
-      const altFt = Math.max(0, Math.round(activeEnt.position.y * 3.281));
 
       if (elFps) {
         elFps.textContent = String(currentFps);
         elFps.className = currentFps >= 50 ? 'fps-ok' : currentFps >= 30 ? 'fps-warn' : 'fps-bad';
       }
-      if (elSpeed) elSpeed.textContent = String(mph);
-      if (elSpeedMeter) elSpeedMeter.style.transform = `scaleX(${Math.min(1, mph / (topSpeedMph[mode] || 80))})`;
-      document.body.classList.toggle('is-boosting', controllerManager.keys.boost && mph > 0);
-      if (elAltitude) elAltitude.textContent = altFt.toLocaleString('en-US');
+      if (elSpeed) elSpeed.textContent = formatSpeed(activeEnt.speed, 'mph');
+      if (elSpeedKmh) elSpeedKmh.textContent = formatSpeed(activeEnt.speed, 'kmh');
+      if (elSpeedMeter) elSpeedMeter.style.transform = `scaleX(${Math.min(1, mph / topSpeedMph())})`;
+      // The meter turns warning-yellow while the wheel is beeping for overspeed (cutout ahead)
+      document.body.classList.toggle('is-overspeed', activeEnt.controller.overspeed > 0 && !activeEnt.controller.crashed);
       // The street corner of the player on the follow cameras, of the camera itself on the scenic ones
       const where = cameraSystem.getActivePreset().category === 'follow' ? activeEnt.position : cameraSystem.currentPos;
       renderLocation(getLocationLabel(where.x, where.z));

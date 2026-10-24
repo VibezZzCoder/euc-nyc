@@ -19,6 +19,13 @@ function buttonValue(pad, index) {
   return Number.isFinite(button?.value) ? Math.max(0, Math.min(1, button.value)) : button?.pressed ? 1 : 0;
 }
 
+// Any stick past the dead zone or any pressed button: the player is using this pad (on-screen prompts follow it)
+function active(pad, pressed) {
+  if (pressed.some(Boolean)) return true;
+  for (let i = 0; i < 4; i++) if (Math.abs(axis(pad.axes?.[i])) > 0.5) return true;
+  return false;
+}
+
 function buttons(pad) {
   return Array.from({ length: BUTTON_COUNT }, (_, i) => Boolean(pad.buttons?.[i]?.pressed) || buttonValue(pad, i) > 0.5);
 }
@@ -36,6 +43,7 @@ class GamepadControls {
     this.suppressedButtons = [];
     this.syncButtons = true;
     this.revision = 0;
+    this.wasActive = false;
     this.focused = typeof document.hasFocus !== 'function' || document.hasFocus();
 
     window.addEventListener('blur', () => {
@@ -110,10 +118,12 @@ class GamepadControls {
     for (let i = 0; i < BUTTON_COUNT; i++) if (!pressed[i]) this.suppressedButtons[i] = false;
     const edge = (i) => pressed[i] && !this.previousButtons[i] && !this.suppressedButtons[i];
     const held = (i) => pressed[i] && !this.suppressedButtons[i];
-    // Capture edges before callbacks: changing mode or opening the map may synchronously call reset().
+    // Capture edges before callbacks: changing rider or opening the map may synchronously call reset().
     const toggleMap = edge(9), closeMap = edge(1);
-    const cycleMode = Number(Boolean(edge(5))) - Number(Boolean(edge(4)));
+    const cycleRider = Number(Boolean(edge(5))) - Number(Boolean(edge(4)));
     const cycleCamera = edge(3), recenter = edge(11);
+    const wasActive = this.wasActive;
+    this.wasActive = active(pad, pressed);
     this.previousButtons = pressed;
 
     const target = document.activeElement;
@@ -124,6 +134,7 @@ class GamepadControls {
       return;
     }
 
+    if (this.wasActive && !wasActive) this.callbacks.onActivity?.();
     const revision = this.revision;
     if (toggleMap) {
       this.controller.clearGamepadInput();
@@ -136,28 +147,23 @@ class GamepadControls {
       if (closeMap) this.callbacks.onCloseMap?.();
       return;
     }
-    if (cycleMode) this.callbacks.onCycleMode?.(cycleMode);
+    if (cycleRider) this.callbacks.onCycleRider?.(cycleRider);
     if (revision !== this.revision) return;
     if (cycleCamera) this.callbacks.onCycleCamera?.(1);
     if (revision !== this.revision) return;
     if (recenter) this.camera.resetOrbit();
 
+    // EUC: lean with RT / LT or the left stick's Y, carve with its X; A hops, X crouches, B gets up after a crash
     const movement = stick(pad, 0), look = stick(pad, 2);
-    const mode = this.controller.activeMode;
-    let drive = -movement.y;
-    let vertical = 0;
-    if (mode === 'car' || mode === 'cyclist') {
-      drive = Math.max(0, drive, buttonValue(pad, 7)) - Math.max(0, -drive, buttonValue(pad, 6));
-    } else if (mode === 'helicopter') {
-      vertical = buttonValue(pad, 7) - buttonValue(pad, 6);
-    }
+    const lean = -movement.y;
+    const drive = Math.max(0, lean, buttonValue(pad, 7)) - Math.max(0, -lean, buttonValue(pad, 6));
     this.controller.setGamepadInput('forward', Math.max(0, drive));
     this.controller.setGamepadInput('backward', Math.max(0, -drive));
     this.controller.setGamepadInput('left', Math.max(0, -movement.x));
     this.controller.setGamepadInput('right', Math.max(0, movement.x));
-    this.controller.setGamepadInput('up', mode === 'person' ? Number(Boolean(held(0))) : Math.max(0, vertical));
-    this.controller.setGamepadInput('down', Math.max(0, -vertical));
+    this.controller.setGamepadInput('up', Number(Boolean(held(0))));
     this.controller.setGamepadInput('boost', Number(Boolean(held(2))));
+    this.controller.setGamepadInput('reset', Number(Boolean(held(1))));
     const zoom = Number(Boolean(held(13))) - Number(Boolean(held(12)));
     this.camera.applyGamepadInput(look.x, look.y, zoom, Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0);
   }

@@ -1442,7 +1442,7 @@ function buildCityBlocks(scene) {
 
   // East River lots between 1st Ave and the FDR Drive (23rd–58th St), too narrow for regular lots: a 2-4 storey podium
   // with a slab rising from it, as tall as the lot is wide allows (Kips Bay & NYU Langone hospital slabs, glass towers
-  // on the old Con Ed site at 35th–41st St, Beekman & Sutton Place apartment towers). On the 42nd–45th St superblock
+  // on the old power-plant site at 35th–41st St, Beekman & Sutton Place apartment towers). On the 42nd–45th St superblock
   // stands the United Nations Secretariat (1952): a blue-green curtain-wall slab between marble end walls, with the
   // low General Assembly hall and the North Lawn Building on the lots north of it.
   function riverfrontBlock(blk, cfg, x0, x1) {
@@ -2324,9 +2324,10 @@ function buildCityBlocks(scene) {
   }
   group.add(awningInst);
 
+  // Fictional shop names only: no real chains or brands (owner rule)
   const signThemes = [
     { bg: '#161210', border: '#c89d54', text: 'FIFTH AVE BISTRO · EST. 1928', color: '#ffe4a8' },
-    { bg: '#0c2244', border: '#38b6ff', text: 'DUANE READE · PHARMACY', color: '#ffffff' },
+    { bg: '#0f3d2e', border: '#7ee0a1', text: 'CORNER PHARMACY · OPEN LATE', color: '#ffffff' },
     { bg: '#142b20', border: '#d4af37', text: 'MANHATTAN BOOKS & ESPRESSO', color: '#fff2cc' },
     { bg: '#280a10', border: '#ff5252', text: 'BROADWAY DELI & GRILL · 24HR', color: '#ffd180' },
     { bg: '#101318', border: '#e0e6ed', text: 'EMPIRE WATCHES · NEW YORK', color: '#f5f9ff' }
@@ -2346,7 +2347,7 @@ function buildCityBlocks(scene) {
     ctx.font = '800 26px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(st.text, 256, 50);
+    ctx.fillText(st.text, 256, 50, 480);
 
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;

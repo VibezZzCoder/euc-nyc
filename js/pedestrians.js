@@ -775,7 +775,9 @@ function createPersonMaterial(pose) {
     return mix(qrot(qa, p).mul(ta.w).add(ta.xyz), qrot(qb, p).mul(tb.w).add(tb.xyz), w);
   })();
 
-  const vInfo = varying(info, 'vPersonInfo');
+  // Flat: every vertex of a person carries the same seed, and lane() magnifies
+  // interpolation noise ~570,000x, which gave per-pixel confetti on NVIDIA/Vulkan.
+  const vInfo = varying(info, 'vPersonInfo').setInterpolation('flat');
   const isPart = (partId, id) => step(abs(partId.sub(id)), 0.25);
   const lane = (salt) => fract(sin(vInfo.x.add(salt).mul(12.9898)).mul(43758.5453));
   const partOf = () => attribute('skin', 'vec4').w;
@@ -967,7 +969,6 @@ const _qa = new THREE.Quaternion();
 const _qPelvis = new THREE.Quaternion();
 const _qChest = new THREE.Quaternion();
 const _qUpper = new THREE.Quaternion();
-const _qRoot = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _pelvis = new THREE.Vector3();
@@ -979,12 +980,10 @@ const _ankle = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _pole = new THREE.Vector3();
 const _front = new THREE.Vector3();
-const _fwd = new THREE.Vector3();
 const _bx = new THREE.Vector3();
 const _by = new THREE.Vector3();
 const _bz = new THREE.Vector3();
 const _m = new THREE.Matrix4();
-const _rootPos = new THREE.Vector3();
 const AX = new THREE.Vector3(1, 0, 0);
 const AY = new THREE.Vector3(0, 1, 0);
 const AZ = new THREE.Vector3(0, 0, 1);
@@ -1418,79 +1417,6 @@ class PersonRig {
       _v.copy(j[LIMB.toe[i]]).sub(j[LIMB.foot[i]]).multiplyScalar(s).applyQuaternion(_qa).add(ankle);
       qY(_q2, footYaw).multiply(qX(_q, foot.pitch + foot.toe));
       this.writeBone(LIMB.toe[i], _q2, _v);
-    }
-  }
-
-  /**
-   * Riding a bicycle: `root` (Object3D) is the bike frame (pose in its parent's space, e.g. the scene), `crank` the
-   * pedal crank angle. Seat, bars and bottom bracket in the frame's space (metres, +Z forward).
-   */
-  ride(root, crank, { seat, bars, gripHalf = 0.22, bracket, crankLength = 0.17 }) {
-    const s = this.s;
-    const j = this.bind;
-    this.gait = 0;
-    this.run = 0;
-    root.updateWorldMatrix(true, false);
-    root.matrixWorld.decompose(_rootPos, _qRoot, _v);
-    const toWorld = (local) => local.applyQuaternion(_qRoot).add(_rootPos);
-
-    // Pelvis on the saddle, leaning forward; chest further forward, head up looking ahead
-    qX(_qPelvis, 0.42).premultiply(_qRoot);
-    _pelvis.set(0, seat.y + 0.055 * s, seat.z + 0.03);
-    toWorld(_pelvis);
-    this.writeBone(BONE.PELVIS, _qPelvis, _pelvis);
-    _qChest.copy(_qPelvis).multiply(qX(_q, 0.2));
-    _chest.copy(j[BONE.CHEST]).sub(j[BONE.PELVIS]).multiplyScalar(s).applyQuaternion(_qPelvis).add(_pelvis);
-    this.writeBone(BONE.CHEST, _qChest, _chest);
-    _qa.copy(_qRoot).multiply(qX(_q, -0.12));
-    _v.copy(j[BONE.HEAD]).sub(j[BONE.CHEST]).multiplyScalar(s).applyQuaternion(_qChest).add(_chest);
-    this.writeBone(BONE.HEAD, _qa, _v);
-    this.headPosition = (this.headPosition || new THREE.Vector3()).copy(_v);
-    this.headQuaternion = (this.headQuaternion || new THREE.Quaternion()).copy(_qa);
-
-    // Hands on the grips (two-bone arm IK, elbows out & down), feet on the pedals (leg IK, knees over the feet)
-    _fwd.set(0, 0, 1).applyQuaternion(_qRoot);
-    this.yaw = Math.atan2(_fwd.x, _fwd.z);
-    for (let i = 0; i < 2; i++) {
-      const side = SIDES[i];
-      _shoulder.copy(j[LIMB.upperArm[i]]).sub(j[BONE.CHEST]).multiplyScalar(s).applyQuaternion(_qChest).add(_chest);
-      _target.set(side * gripHalf, bars.y + 0.02, bars.z - 0.07);
-      toWorld(_target);
-      const l1 = UPPER_ARM * s;
-      const l2 = (FOREARM + 0.07) * s;
-      _v.subVectors(_target, _shoulder);
-      let dist = _v.length();
-      const dn = _v.divideScalar(dist || 1);
-      dist = Math.max(Math.abs(l1 - l2) + 1e-3, Math.min((l1 + l2) * 0.999, dist));
-      _pole.set(side * 0.6, -1, -0.4).applyQuaternion(_qRoot);
-      _pole.addScaledVector(dn, -_pole.dot(dn)).normalize();
-      const cosA = (l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist);
-      const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
-      _knee.copy(_shoulder).addScaledVector(dn, l1 * cosA).addScaledVector(_pole, l1 * sinA);
-      _ankle.copy(_shoulder).addScaledVector(dn, dist);
-      // Bind arms point down & slightly out; their +Z (front) is kept towards the bike's front
-      this.basis(_v2.subVectors(_shoulder, _knee), _fwd, _qUpper);
-      _qUpper.multiply(qZ(_q, -side * ARM_BIND_ABDUCTION));
-      this.writeBone(LIMB.upperArm[i], _qUpper, _shoulder);
-      this.basis(_v2.subVectors(_knee, _ankle), _fwd, _q2);
-      _q2.multiply(qZ(_q, -side * ARM_BIND_ABDUCTION));
-      this.writeBone(LIMB.forearm[i], _q2, _knee);
-
-      // pedals go round bottom, back, top, front as `crank` grows (pedalling forwards)
-      const a = crank + (i === 0 ? 0 : Math.PI);
-      const pedal = _v.set(side * 0.1, bracket.y - Math.cos(a) * crankLength, bracket.z - Math.sin(a) * crankLength);
-      const footPitch = 0.16 + 0.16 * Math.cos(a) - 0.1 * Math.sin(a);
-      qX(_q2, footPitch);
-      // ball of the foot on the pedal: ankle = pedal - R * (ball offset from the ankle)
-      _v2.set(0, TOE_JOINT.y * s - 0.012, TOE_JOINT.z * s * 0.85).applyQuaternion(_q2);
-      const ankleTarget = _target.copy(pedal).sub(_v2);
-      toWorld(ankleTarget);
-      _hip.copy(j[LIMB.thigh[i]]).sub(j[BONE.PELVIS]).multiplyScalar(s).applyQuaternion(_qPelvis).add(_pelvis);
-      const ankle = this.solveLeg(i, _hip, ankleTarget, this.yaw);
-      _qa.copy(_qRoot).multiply(_q2);
-      this.writeBone(LIMB.foot[i], _qa, ankle);
-      _v.copy(j[LIMB.toe[i]]).sub(j[LIMB.foot[i]]).multiplyScalar(s).applyQuaternion(_qa).add(ankle);
-      this.writeBone(LIMB.toe[i], _qa, _v);
     }
   }
 }

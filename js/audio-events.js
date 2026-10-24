@@ -311,7 +311,9 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
   const random = randomSource(options.seed);
   const start = Math.max(ctx.currentTime, finite(options.when, ctx.currentTime));
   const intensity = clamp(finite(options.intensity, 1));
-  const levels = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35 };
+  // Talk and crosswalk signals +4 dB from upstream (EUC balance pass, 2026-10-23): with the rider's wheel quieter they
+  // are what makes a street sound alive, and upstream's levels were near the edge of hearing.
+  const levels = { footstep: 0.22, talk: 0.1, horn: 0.23, signal: 0.2, crash: 0.35 };
   if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() {} };
   const gain = ctx.createGain();
   gain.gain.value = intensity * levels[kind];
@@ -460,17 +462,17 @@ export function createWindVoice(ctx, resources, output) {
     gust.start(ctx.currentTime, i * resources.gusts.duration * 0.37);
   }
   return {
-    update({ speed = 0, altitude = 0, night = 0, traffic = 0, enclosure = 0 } = {}, now = ctx.currentTime) {
+    update({ altitude = 0, night = 0, traffic = 0, enclosure = 0 } = {}, now = ctx.currentTime) {
       if (disposed) return;
       now = Math.max(ctx.currentTime, finite(now, ctx.currentTime));
-      const motion = clamp(Math.abs(finite(speed)) / 55);
       const exposure = Math.sqrt(clamp(altitude / 300));
       const quiet = 1 - clamp(Number(night)) * 0.3;
       const shelter = 1 - clamp(enclosure) * 0.65;
       for (const channel of channels) {
-        // Walls shelter ambient wind; the rush from riding or flying still follows the player's motion.
-        channel.air((0.010 * shelter + motion * 0.024 + exposure * 0.015) * quiet, now);
-        channel.cutoff(1550 + motion * 1400 + exposure * 850, now);
+        // Ambient city wind only: walls shelter it, height exposes it. The rider's own speed wind is the EUC howl
+        // in euc-audio.js, so it is not doubled here.
+        channel.air((0.010 * shelter + exposure * 0.015) * quiet, now);
+        channel.cutoff(1550 + exposure * 850, now);
         channel.rumble((0.003 + clamp(traffic) * 0.020) * quiet * (1 - exposure * 0.5), now);
       }
     },
