@@ -1068,6 +1068,27 @@ class NYCMapSystem {
       }
     }
 
+    // Officer Dorkins while he chases (nemesis.js; main.js sets this.chaser): a blip flashing his light bar's red and
+    // blue, held at the radar's rim when he is further off, so it points the way he comes from
+    const cop = this.chaser;
+    if (cop?.active && cop.director.state.phase === 'chasing') {
+      let cx = toX(cop.position.x);
+      let cy = toY(cop.position.z);
+      const rim = Math.max(Math.abs(cx) / (w * 0.44), Math.abs(cy) / (h * 0.44));
+      if (rim > 1) {
+        cx /= rim;
+        cy /= rim;
+      }
+      ctx.fillStyle = MAP.halo;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = (performance.now() % 900) < 450 ? '#ff3b3b' : '#3b6bff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     // Camera FOV Cone & Player Arrow at center (0, 0)
     const camDir = this.cameraSystem.currentLookAt.clone().sub(this.cameraSystem.currentPos);
     const camAngle = Math.atan2(camDir.x, camDir.z);

@@ -9,6 +9,7 @@ import { buildBoroughs } from './boroughs.js';
 import { buildLandmarks } from './landmarks.js';
 import { buildCityBlocks } from './buildings.js';
 import { buildStreetDetails } from './street-details.js';
+import { buildNorthBarricades } from './barricades.js';
 import { createTrafficSystem, createHighwayTraffic } from './traffic.js';
 import { buildRoadPaint } from './road-paint.js';
 import { ThirdPersonControllerManager } from './controllers.js';
@@ -23,6 +24,8 @@ import { createEucDynamicWorld, combineBodySources } from './euc-dynamic.js';
 import { PLAYABLE_RIDERS, RIDERS, isPlayableRider } from './euc-rider.js';
 import { EucHud, formatSpeed } from './euc-hud.js';
 import { TitleScreen } from './title-screen.js';
+import { createNemesis } from './nemesis.js';
+import { NemesisHud } from './nemesis-chase.js';
 
 // js/main.js
 // Main entry point for New York City (Midtown Manhattan) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
@@ -79,6 +82,7 @@ async function initApp() {
 
   // 3. Build Manhattan Geography, Iconic Landmarks, Blocks, Street Details & Traffic
   const cityGrid = buildCityGrid(scene);
+  buildNorthBarricades(scene); // where the detailed island ends (the rider's wall stands there: euc-terrain.js)
   markInit('cityGrid');
   const boroughs = buildBoroughs(scene, { sidewalks: cityGrid.sidewalks });
   markInit('boroughs');
@@ -135,11 +139,21 @@ async function initApp() {
   }
 
   const cameraSystem = new CameraSystem(renderer.domElement, controllerManager);
+  // Officer Dorkins, the chaser on his hover-wheel (nemesis.js), made now with his searchlight; ?cop=0 leaves him out
+  const nemesis = new URLSearchParams(location.search).get('cop') === '0' ? null : createNemesis({
+    scene,
+    sampler: controllerManager.eucSampler,
+    network: trafficSystem.network,
+    getPlayer: () => controllerManager.getActiveEntity(),
+    camera: cameraSystem.camera
+  });
   const touchControls = new TouchControls(controllerManager);
   const soundButton = document.getElementById('btn-sound');
   const audioSystem = new CityAudioSystem({ controllerManager, trafficSystem, highwayTraffic, streetDetails }, {
     onStateChange: updateSoundButton
   });
+  if (nemesis) audioSystem.setChaser(nemesis);
+  const nemesisHud = nemesis ? new NemesisHud(document) : null;
   function updateSoundButton() {
     if (!soundButton) return;
     soundButton.disabled = !audioSystem.supported;
@@ -160,7 +174,7 @@ async function initApp() {
 
   // Island-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
   // (scene-culling.js)
-  const cullingRoots = ['ManhattanCityGrid', 'ManhattanCityBlocks', 'ManhattanStreetDetails', 'ManhattanLandmarks', 'Boroughs']
+  const cullingRoots = ['ManhattanCityGrid', 'ManhattanCityBlocks', 'ManhattanStreetDetails', 'ManhattanLandmarks', 'Boroughs', 'NorthBarricades']
     .map((name) => scene.getObjectByName(name))
     .filter(Boolean);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
@@ -502,6 +516,7 @@ async function initApp() {
   });
 
   const openMapBtn = document.getElementById('btn-open-map');
+  mapSystem.chaser = nemesis; // Officer Dorkins' blip on the radar
   if (openMapBtn) openMapBtn.addEventListener('click', () => mapSystem.toggleFullMap(true));
 
   if (hudToggleBtn) {
@@ -699,6 +714,7 @@ async function initApp() {
     if (titleScreen.isOpen) titleScreen.update();
     else if (titleScreen.started || !titleScreen.root) gamepadControls.update(dt);
     controllerManager.update(dt, elapsed);
+    nemesis?.update(dt, (titleScreen.started || !titleScreen.root) && !mapSystem.isFullMapOpen); // no ambush under the map
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
     trafficSystem.update(dt, elapsed, cameraSystem.currentPos, controllerManager.getActiveEntity(), cameraSystem.camera);
@@ -718,6 +734,7 @@ async function initApp() {
     const riderController = controllerManager.getActiveEntity().controller;
     eucHud.update(riderController, elapsed, promptDevice);
     touchControls.setDown(riderController.crashed);
+    if (nemesis) nemesisHud.update(nemesis.hudView);
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
 
     // Render frame via TSL RenderPipeline (SSR + Bloom)

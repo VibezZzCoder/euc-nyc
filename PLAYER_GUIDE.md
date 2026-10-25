@@ -57,7 +57,32 @@ Slower knocks only stop you or scrub your speed.
   Park walks, lawn beds and the Times Square and Herald Square plazas are a little above the road, like kerbs.
 - **Buildings are solid exactly where they stand.** Plazas, the lawns round housing towers, gaps between buildings and
   the open ground under raised buildings (601 Lexington Avenue's stilts, the tram station) can be ridden.
+- **The waterfront** can be ridden out to the river: along the Hudson and the East River you go all the way to the
+  esplanade's iron railing, round the Battery to its railing, and where there is no railing to the edge of the quay.
+  The piers are not rideable yet.
+- **The north end:** the city stops just past 129th St, at a line of blue police barricades ("Police line · do not
+  cross") across the island. Cars drive on past them and out of sight.
 - Bridges and the highway decks are not rideable yet.
+
+## Officer Dorkins
+
+Now and then, **Officer Dorkins** ambushes you on his police hover-wheel: a glowing ring where the tyre should be,
+thrusters under his feet, a red and blue light bar. A siren blast and a banner announce him; he turns up somewhere
+you can't see, usually behind you, flies over the traffic and the low roofs, and drops in low right behind you. His
+siren gets louder the closer he is, his blip flashes on the radar, and at night his searchlight finds you.
+
+- **Losing him:** get out of his sight (round corners, behind buildings) and stay out of it for 6 seconds, or get more
+  than 150 m away from him for 2 seconds. While he can't see you, the cue by the speedometer says so and fills up as
+  you get away. Your wheel is faster than his on a straight (about 100 km/h against his 61), but he cuts over the
+  low rooftops.
+- Crashing doesn't help: his clocks stop while you are down.
+- Once you lose him, he climbs away into the sky. He comes back, but not for a while.
+- **His paddle:** when he catches up with you (and you are not getting away at speed), he swoops in low on your left,
+  crouches and swings his paddle at your wheel. You get a moment's warning: "Paddle! Hop or swerve", his light bar
+  racing and a rising whoosh. Hop as it comes (a charged hop, Shift then Space, is easier to time) or swerve away
+  from him. If it connects you go down: busted. He hovers over you a moment, then flies off; he comes back, but not
+  for a while. If he misses, he tries again a couple of seconds later.
+- `?cop=0` at the end of the address leaves him out.
 
 ## Controls
 

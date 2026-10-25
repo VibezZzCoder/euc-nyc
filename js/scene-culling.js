@@ -143,7 +143,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
       if (!o.isInstancedMesh || !isStaticMesh(o) || o.count < 64 || o.count !== o.instanceMatrix.count) return;
       if (o.count * triangleCount(o.geometry) < 40000) return;
       if (!o.boundingSphere) o.computeBoundingSphere();
-      if (o.boundingSphere.radius < 1500) return;
+      if (o.boundingSphere.radius < 1500 && !o.userData.chunkCull) return; // (a long thin line opts in)
       chunkable.push(o);
     });
   }

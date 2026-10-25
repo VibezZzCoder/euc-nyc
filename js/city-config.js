@@ -192,6 +192,47 @@ function getIslandBoundsAtZ(z) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// The waterfront's edge as drawn (city-grid.js) and as ridden (euc-terrain.js): one set of numbers for both
+// ---------------------------------------------------------------------------------------------------------------------
+// The granite seawall and its coping: the bulkhead line pushed 6 m out (east / west, and north / south at the ends)
+const SEAWALL_POLYGON = MANHATTAN_COASTLINE.map((p) => ({
+  x: p.x + (p.x < -100 ? -6 : (p.x > 100 ? 6 : 0)),
+  z: p.z + (p.z > 1350 ? 6 : (p.z < -1550 ? -6 : 0))
+}));
+// The esplanade's iron railing along both rivers (city-grid.js buildManhattanWaterfrontEdge): `d` m inland of the
+// shore x at z (getIslandBoundsAtZ; < 0: out on the coping), drawn from `z0` down to `westZ1` / `eastZ1`
+const ESPLANADE_RAIL = { d: -5.8, z0: CUT_Z + 40, westZ1: 6000, eastZ1: 6150 };
+// The Battery: the esplanade carried round the island's tip, its railing `BATTERY_RAIL.inset` m inside the bulkhead
+// line (MANHATTAN_COASTLINE), gapped `terminalR` m round the Whitehall ferry terminal. `tip` is that stretch of the
+// coastline (from Battery Place round to Whitehall), in the coastline's own order.
+const BATTERY_RAIL = (() => {
+  const castle = { x: GEO.points.castleClinton[0], z: GEO.points.castleClinton[1] };
+  const terminal = { x: GEO.points.whitehallTerminal[0], z: GEO.points.whitehallTerminal[1] };
+  const C = MANHATTAN_COASTLINE;
+  const iStart = C.reduce((bi, p, i) => (p.z > C[bi].z ? i : bi), 0); // southernmost point
+  const onTip = (p) => p.z > castle.z - 260 && p.x < terminal.x + 60 && p.x > castle.x - 420;
+  const fwd = [];
+  for (let i = iStart, k = 0; k < C.length && onTip(C[i]); i = (i + 1) % C.length, k++) fwd.push(C[i]);
+  const back = [];
+  for (let i = (iStart - 1 + C.length) % C.length, k = 0; k < C.length && onTip(C[i]); i = (i - 1 + C.length) % C.length, k++) back.push(C[i]);
+  return { tip: [...back.reverse(), ...fwd], inset: 0.6, castle, terminal, terminalR: 48 };
+})();
+// The north end: the detailed island stops at the cut (CUT_Z, just north of 129th St). A line of police barricades
+// (barricades.js) stands along z = `z` from x0 to x1, across the island and its seawall coping; the rider's wall runs
+// from band[0] to band[1] (z) and traffic turns back short of it (road-network.js).
+const NORTH_BARRIER = (() => {
+  const z = CUT_Z - 0.7;
+  const xs = [];
+  const P = SEAWALL_POLYGON;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const a = P[j];
+    const b = P[i];
+    if ((a.z > z) !== (b.z > z)) xs.push(a.x + ((z - a.z) * (b.x - a.x)) / (b.z - a.z));
+  }
+  return { z, band: [CUT_Z - 1.3, CUT_Z + 0.2], x0: Math.min(...xs) + 0.5, x1: Math.max(...xs) - 0.5 };
+})();
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Broadway: the real centreline (north to south), its x at any z
 // ---------------------------------------------------------------------------------------------------------------------
 const BROADWAY_LINE = toPts(GEO.broadway);
@@ -847,6 +888,10 @@ export {
   CENTRAL_PARK_BOUNDS,
   getIslandBoundsAtZ,
   MANHATTAN_COASTLINE,
+  SEAWALL_POLYGON,
+  ESPLANADE_RAIL,
+  BATTERY_RAIL,
+  NORTH_BARRIER,
   getBroadwayX,
   BROADWAY_LINE,
   WATERFRONT_PIERS,

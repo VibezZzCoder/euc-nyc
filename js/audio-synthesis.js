@@ -353,8 +353,8 @@ export function createMotorVoice(context, resources, kind, output) {
       // keeps its phase through a change, and Doppler shifts both the pitch and the sweep cadence.
       const yelp = (now + variation * 24) % 24 >= 19;
       sweepFrequency((yelp ? 3 : 0.2) * (0.97 + variation * 0.06) * doppler, now);
-      sirenLevel(0.09, now);
-      envelopeLevel(0.01, now);
+      sirenLevel(0.045, now); // -6 dB from upstream's 0.09 (owner, 2026-10-24: the police cars' sirens were a bit loud)
+      envelopeLevel(0.005, now); // halved with the level, keeping its depth
       sirenCutoff(4200 * doppler, now);
       hornFrequency(1750 * doppler, now);
     };

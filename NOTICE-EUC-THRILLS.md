@@ -60,6 +60,8 @@ If you use this project's original assets under CC BY 4.0, attribute as:
   - `crash_trollina.wav` (Trollina's crash): its synthesised layers are CC BY 4.0; **its vocal layer is
     machine-generated (TTS) and is not covered by CC BY 4.0.** It is included by the owner's choice.
   - `wind_howl_loop.wav`: Freesound #117611 by swiftoid, CC0.
+  - `siren_far_loop.wav` and `siren_close_loop.wav` (Officer Dorkins' siren): Freesound #746302 by TitanKaempfer and
+    #52906 by vlammenos, CC0.
   - The wheel's motor, hop, landing, kerb-strike and recovery sounds are new code written for this fork
     (`js/euc-audio.js`), not copied.
 - **Modified:** `render/riderLook.ts` and `render/machineLook.ts` are cut down to those riders and machines;
@@ -67,6 +69,9 @@ If you use this project's original assets under CC BY 4.0, attribute as:
   (`js/euc-rider.js`, `js/euc-terrain.js`, `js/euc-dynamic.js`, `js/euc-audio.js`) adapts the controller to New York:
   the city's ground, buildings and street furniture, and its cars and pedestrians as moving obstacles. The wheel keeps
   the stock tuning, so Manhattan's 0.22 m curbs must be hopped.
+- **Ported (MIT):** `js/nemesis-swing.js` carries the paddle's swing arc from upstream `src/simulation/paddle.ts`
+  (its angle, arm commitment and head position), changed for the chasing cop. Officer Dorkins' siren levels and paddle
+  sounds follow upstream's tuning (`AUDIO.siren*`, `swing*`, `hit*`); the sound code is new.
 - **Not included:** every real-person rider, their looks, machines, logos and recordings (including every other crash
   sample); The Drunkard; the game modes, levels, menus and the built game in upstream `docs/`. No licence here covers
   anything that is not included, and nothing in this fork implies endorsement by any rider.

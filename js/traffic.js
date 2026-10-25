@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { buildRoadNetwork } from './road-network.js';
 import { createPedestrianRoutes } from './pedestrian-routes.js';
-import { signalPhase, walkSignal, blockAt } from './city-config.js';
+import { signalPhase, walkSignal, blockAt, NORTH_BARRIER } from './city-config.js';
 import { cityUniforms, createContactShadowMaterial, createCarFlareMaterial } from './tsl-materials.js';
 import { HEADLIGHTS, headlightBeamScale, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
 import {
@@ -1795,6 +1795,10 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // body + 4 separate wheel instances; vehicles outside the view frustum (with a margin for cast shadows and headlight
   // cones) are skipped altogether.
   const CAR_PROXY_DISTANCE = 90;
+  // The north end (city-config.js NORTH_BARRIER): the road network runs on past the police barricades along the cut,
+  // where vehicles turn round off stage. A vehicle is not drawn once its nose reaches the barricades (owner: vanishing
+  // there is fine; the network, and so the traffic on every avenue, stays as it was).
+  const OFF_STAGE_Z = NORTH_BARRIER.z + 2.6;
   const dirtyPaint = new Set();
   const dirtyState = new Set();
   const litVehicles = [];
@@ -1848,6 +1852,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     const forwardDist = (c.x - c.prevX) * sinY + (c.z - c.prevZ) * cosY;
     const rawStep = forwardDist / spec.wheelRadius;
     c.wheelSpin = (c.wheelSpin + Math.sign(rawStep) * Math.min(Math.abs(rawStep), 0.48)) % (Math.PI * 2);
+    if (c.z < OFF_STAGE_Z) return;
     if (hasView && !visible(c.x, c.z, 18)) return;
 
     const near = Math.hypot(c.x - focusX, c.z - focusZ) < CAR_PROXY_DISTANCE;
@@ -1922,6 +1927,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     const forwardDist = (b.x - b.prevX) * sinY + (b.z - b.prevZ) * cosY;
     const rawStep = forwardDist / BUS_SPEC.wheelRadius;
     b.wheelSpin = (b.wheelSpin + Math.sign(rawStep) * Math.min(Math.abs(rawStep), 0.48)) % (Math.PI * 2);
+    if (b.z < OFF_STAGE_Z + 3.6) return; // a bus's nose is ~6 m ahead of its centre
     if (hasView && !visible(b.x, b.z, 22)) return;
 
     const i = visibleBuses++;

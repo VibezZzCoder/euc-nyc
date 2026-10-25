@@ -3,6 +3,7 @@ import { createEventResources, playEvent, createWindVoice } from './audio-events
 import { CityAudioSources } from './audio-sources.js';
 import { CityAcoustics } from './audio-acoustics.js';
 import { EucAudio } from './euc-audio.js';
+import { NemesisAudio } from './nemesis-audio.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const NO_EVENTS = Object.freeze([]);
@@ -91,6 +92,8 @@ class CityAudioSystem {
     this.sources = new CityAudioSources(simulation);
     this.controllerManager = simulation.controllerManager;
     this.euc = null;
+    this.cop = null; // Officer Dorkins' siren and hum (nemesis-audio.js), heard when setChaser() gave a chaser
+    this.chaser = null;
     this.acoustics = new CityAcoustics(simulation.controllerManager);
     this.onStateChange = onStateChange;
     this.context = null;
@@ -190,7 +193,24 @@ class CityAudioSystem {
       reflections: this.reflections,
       onWindHowl: (buffer) => this.wind?.useHowl(buffer), // one wind sound for the whole game: the EUC Thrills howl
     });
+    this.cop = new NemesisAudio(context, this.mix, { noise: this.resources.noise, reflections: this.reflections });
     context.onstatechange = () => this.onStateChange();
+  }
+
+  /** The chasing cop (nemesis.js): anything with an `audioView` { present, chasing, x, z, range, closing, ... }. */
+  setChaser(chaser) {
+    this.chaser = chaser;
+  }
+
+  // Every frame, like the rider: his sting must land on the frame he appears. Panned by where he is from the camera.
+  updateChaser(camera) {
+    const view = this.chaser?.audioView;
+    if (!view || !this.cop) return;
+    const m = camera.matrixWorld.elements; // the camera's right vector is (m[0], m[1], m[2])
+    const dx = view.x - camera.position.x, dz = view.z - camera.position.z;
+    const d = Math.hypot(dx, dz);
+    view.pan = d > 0.5 ? (dx * m[0] + dz * m[2]) / d : 0;
+    this.cop.update(view, this.context.currentTime);
   }
 
   setEnabled(enabled) {
@@ -226,6 +246,7 @@ class CityAudioSystem {
     this.haveListener = false;
     this.accumulator = 0;
     this.euc?.reset();
+    this.cop?.reset();
     if (this.master) {
       this.master.gain.cancelScheduledValues(this.context.currentTime);
       this.master.gain.setValueAtTime(0, this.context.currentTime);
@@ -408,6 +429,7 @@ class CityAudioSystem {
     const playing = this.ready && this.enabled && this.context?.state === 'running' && !document.hidden;
     this.updateRider(playing);
     if (!playing) return;
+    this.updateChaser(camera);
     this.accumulator += dt;
     if (this.accumulator < 0.1) return;
     dt = Math.min(this.accumulator, 0.25);
@@ -524,6 +546,7 @@ class CityAudioSystem {
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.reset();
     this.euc?.dispose();
+    this.cop?.dispose();
     this.wind?.dispose(true);
     for (const node of [this.mix, this.compressor, this.master, this.reflections, this.reverb, this.reflectionFilter]) node?.disconnect();
     if (this.context) {

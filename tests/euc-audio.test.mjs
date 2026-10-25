@@ -11,17 +11,19 @@ import {
   motorFundamentalHz, motorDrive, motorTargets, windTargets, tyreTargets, landingScale, impactScale, WIND,
 } from '../js/euc-audio.js';
 import { createWindVoice } from '../js/audio-events.js';
+import { COP_SAMPLE_FILES } from '../js/nemesis-audio.js';
 import { AUDIO } from '../js/euc/data/tuning.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_DIR = join(ROOT, 'audio/euc');
-const ALLOWED = ['crash_trollina.wav', 'crash_wipeout.wav', 'overspeed_beep.wav', 'tyre_solid_loop.wav', 'wind_howl_loop.wav'];
+const ALLOWED = ['crash_trollina.wav', 'crash_wipeout.wav', 'overspeed_beep.wav', 'siren_close_loop.wav', 'siren_far_loop.wav',
+  'tyre_solid_loop.wav', 'wind_howl_loop.wav'];
 const near = (actual, expected, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 
-test('only the five approved sample files ship, matching PROVENANCE.md hashes', () => {
+test('only the seven approved sample files ship, matching PROVENANCE.md hashes', () => {
   const files = readdirSync(SAMPLE_DIR).sort();
   assert.deepEqual(files, [...ALLOWED, 'PROVENANCE.md'].sort());
-  assert.deepEqual(Object.values(EUC_SAMPLE_FILES).sort(), ALLOWED);
+  assert.deepEqual([...Object.values(EUC_SAMPLE_FILES), ...Object.values(COP_SAMPLE_FILES)].sort(), ALLOWED);
   const provenance = readFileSync(join(SAMPLE_DIR, 'PROVENANCE.md'), 'utf8');
   assert.match(provenance, /Assets from EUC Thrills by VibezZzCoder — CC BY 4\.0 — https:\/\/github\.com\/VibezZzCoder\/EUC-thrills/);
   assert.match(provenance, /5f45fff/);
@@ -33,7 +35,7 @@ test('only the five approved sample files ship, matching PROVENANCE.md hashes', 
 });
 
 test('the audio modules name no crash sample other than the two in scope', () => {
-  const sources = ['euc-audio.js', ...readdirSync(join(ROOT, 'js')).filter((f) => /^audio-.*\.js$/.test(f))];
+  const sources = ['euc-audio.js', 'nemesis-audio.js', ...readdirSync(join(ROOT, 'js')).filter((f) => /^audio-.*\.js$/.test(f))];
   for (const file of sources) {
     const text = readFileSync(join(ROOT, 'js', file), 'utf8');
     for (const [name] of text.matchAll(/crash_[a-z_]+/g)) {

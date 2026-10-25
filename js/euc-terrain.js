@@ -15,22 +15,25 @@
 //               (lamp and signal posts, steam stacks, subway stairs) and city-grid.js's solids (park fences, Central
 //               Park's gate piers and monuments), as upright yawed boxes in an EUC
 //               PlanTerrainSampler, which supplies the swept obstacle casts, wall normals and ragdoll records.
-//   the shore   SHORE_MARGIN inside the bulkhead (as controllers.js keeps teleports) a band SHORE_BAND wide is a wall
-//               too high to climb or hop, so the wheel stops where it always did. Past it is what is drawn: the ground
-//               out to the seawall's edge (SEAWALL_OUT past the bulkhead, city-grid.js), then the river, floored just
-//               under its surface, so a rider thrown over the band lands on the esplanade or in the water, not on air.
-//               The island's north and south ends stay plain walls.
+//   the shore   the wheel rides what is drawn out to the waterfront's edge (city-config.js, the numbers city-grid.js
+//               draws it from): the island's ground and the seawall coping, up to the esplanade railing along both
+//               rivers (ESPLANADE_RAIL) and round the Battery (BATTERY_RAIL), or the quay's edge where no railing
+//               stands. There a band SHORE_BAND deep is a wall too high to climb or hop (a railing, or the drop); past
+//               it, the river floored just under its surface, so a thrown rider lands in the water, not on air. At the
+//               north end the wall stands at the police barricades along the cut (NORTH_BARRIER); past them is
+//               Upper Manhattan's ground, off limits (getting up there goes back to the last safe spot).
 //
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
 import {
-  blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE
+  blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE,
+  MANHATTAN_COASTLINE, SEAWALL_POLYGON, ESPLANADE_RAIL, BATTERY_RAIL, NORTH_BARRIER
 } from './city-config.js';
 
-const SHORE_MARGIN = 8.0; // controllers.js keeps every ground mode this far inside the bulkhead
 const SHORE_WALL = 3.0; // m: well above any step the wheel can climb or hop
 const SHORE_BAND = 1.0; // m: how deep the shore wall is (a thrown rider can fly over it)
-const SEAWALL_OUT = 6.0; // m: the seawall coping past the bulkhead line (city-grid.js seawallPolygon)
+const RAIL_CLEAR = 0.5; // m: the wall's face stands this far inside a railing, so the wheel (and the rider leaning over it) stops short of it
+const SHORE_ROW = 0.5; // m of z between the rows of the shore index
 const STREET_FURNITURE_HEIGHT = 2.5; // m: footprints carry no height; posts and stacks read as solid to here
 const TOP_CELL = 64; // m: grid cell of the raised-tops index
 
@@ -47,6 +50,128 @@ function edgeDistance2(poly, x, z, stop2) {
     if (d2 < best && (best = d2) < stop2) return best;
   }
   return best;
+}
+
+// ---- The shore (see the header): which side of the waterfront's drawn edge a point is on --------------------------
+// Each polygon becomes rows of sorted x crossings every SHORE_ROW m of z, so "inside" is a count of the crossings left
+// of x in one short row: exact for the island's coves and inlets, which a per-z west / east shore x cannot describe.
+const SHORE_GROUND = 0;
+const SHORE_WALLED = 1;
+const SHORE_WATER = 2;
+const SHORE_BEYOND = 3; // past the north barricades: Upper Manhattan's ground
+
+function crossingRows(poly, z0, n) {
+  const count = new Int32Array(n + 1);
+  const each = (fn) => {
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[j], b = poly[i];
+      if (a.z === b.z) continue;
+      const lo = Math.min(a.z, b.z), hi = Math.max(a.z, b.z);
+      for (let k = Math.max(0, Math.ceil((lo - z0) / SHORE_ROW)); k < n; k++) {
+        const z = z0 + k * SHORE_ROW + 1e-3;
+        if (z >= hi) break;
+        if (z >= lo) fn(k, a.x + ((z - a.z) * (b.x - a.x)) / (b.z - a.z));
+      }
+    }
+  };
+  each((k) => count[k + 1]++);
+  for (let k = 0; k < n; k++) count[k + 1] += count[k];
+  const xs = new Float32Array(count[n]);
+  const fill = count.slice(0, n);
+  each((k, x) => { xs[fill[k]++] = x; });
+  for (let k = 0; k < n; k++) xs.subarray(count[k], count[k + 1]).sort();
+  return { start: count, xs };
+}
+
+/** The coastline with the Battery's stretch pulled in behind its railing (plus RAIL_CLEAR). */
+function batteryLimitPolygon() {
+  const C = MANHATTAN_COASTLINE;
+  let area = 0;
+  for (let i = 0, j = C.length - 1; i < C.length; j = i++) area += C[j].x * C[i].z - C[i].x * C[j].z;
+  const s0 = area > 0 ? 1 : -1; // city-grid.js: outward = right of travel for a CCW ring
+  const inward = (a, b) => {
+    const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    return { x: (-s0 * (b.z - a.z)) / l, z: (s0 * (b.x - a.x)) / l };
+  };
+  const tip = new Set(BATTERY_RAIL.tip);
+  const d = BATTERY_RAIL.inset + RAIL_CLEAR;
+  return C.map((p, i) => {
+    if (!tip.has(p)) return p;
+    const n1 = inward(C[(i - 1 + C.length) % C.length], p);
+    const n2 = inward(p, C[(i + 1) % C.length]);
+    let mx = n1.x + n2.x, mz = n1.z + n2.z;
+    const ml = Math.hypot(mx, mz) || 1;
+    mx /= ml; mz /= ml;
+    const k = d / Math.max(0.5, mx * n1.x + mz * n1.z); // mitred, so both edges move in by d
+    return { x: p.x + mx * k, z: p.z + mz * k };
+  });
+}
+
+let shoreIndex = null;
+function buildShoreIndex() {
+  const z0 = NORTH_BARRIER.band[0] - 2;
+  const n = Math.ceil((ISLAND_BOUNDS.maxZ + 12 - z0) / SHORE_ROW) + 1;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of BATTERY_RAIL.tip) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+  }
+  const m = 10; // past the coping (6 m) beyond the railing
+  return {
+    z0, n,
+    island: crossingRows(MANHATTAN_COASTLINE, z0, n),
+    seawall: crossingRows(SEAWALL_POLYGON, z0, n),
+    battery: crossingRows(batteryLimitPolygon(), z0, n),
+    tipBox: { minX: minX - m, maxX: maxX + m, minZ: minZ - m, maxZ: maxZ + m },
+  };
+}
+
+function insideRows(rows, k, x) {
+  let c = 0;
+  for (let i = rows.start[k], e = rows.start[k + 1]; i < e && rows.xs[i] < x; i++) c++;
+  return (c & 1) === 1;
+}
+
+/** True where the wheel may ride: on the drawn island or its coping, inside the railings. */
+function shoreAllows(x, z) {
+  const S = shoreIndex;
+  const k = Math.round((z - S.z0) / SHORE_ROW);
+  if (k < 0 || k >= S.n || z < NORTH_BARRIER.band[1]) return false;
+  // Most of the island: one stretch of land across this row, x well inside it (past any railing or inset)
+  const I = S.island;
+  const i0 = I.start[k];
+  if (I.start[k + 1] - i0 === 2 && x > I.xs[i0] + 12 && x < I.xs[i0 + 1] - 12) return true;
+  const t = S.tipBox;
+  if (x > t.minX && x < t.maxX && z > t.minZ && z < t.maxZ
+    && Math.hypot(x - BATTERY_RAIL.terminal.x, z - BATTERY_RAIL.terminal.z) >= BATTERY_RAIL.terminalR) {
+    return insideRows(S.battery, k, x); // round the Battery: inside its railing
+  }
+  if (!insideRows(S.island, k, x) && !insideRows(S.seawall, k, x)) return false;
+  // Along the rivers: inside the esplanade railing (drawn at ESPLANADE_RAIL.d off the shore x at z)
+  if (z < ESPLANADE_RAIL.z0) return true;
+  const shore = getIslandBoundsAtZ(z);
+  const west = x - shore.westX < shore.eastX - x;
+  if (z > (west ? ESPLANADE_RAIL.westZ1 : ESPLANADE_RAIL.eastZ1)) return true;
+  return (west ? x - shore.westX : shore.eastX - x) >= ESPLANADE_RAIL.d + RAIL_CLEAR;
+}
+
+/** SHORE_GROUND, SHORE_WALLED (the band at the edge), SHORE_WATER or SHORE_BEYOND at (x, z). */
+function shoreAt(x, z) {
+  shoreIndex ??= buildShoreIndex();
+  const [b0, b1] = NORTH_BARRIER.band;
+  if (z < b1) {
+    if (z >= b0) return SHORE_WALLED;
+    // past the barricades: Upper Manhattan, as wide as the island's cut
+    const R = shoreIndex.island;
+    const k = Math.round((b1 + 0.5 - shoreIndex.z0) / SHORE_ROW);
+    return R.start[k + 1] > R.start[k] && x > R.xs[R.start[k]] && x < R.xs[R.start[k + 1] - 1] ? SHORE_BEYOND : SHORE_WATER;
+  }
+  if (shoreAllows(x, z)) return SHORE_GROUND;
+  const k = Math.round((z - shoreIndex.z0) / SHORE_ROW);
+  const S = shoreIndex;
+  const onLand = k >= 0 && k < S.n && (insideRows(S.island, k, x) || insideRows(S.seawall, k, x));
+  if (onLand) return SHORE_WALLED; // the coping past a railing
+  const b = SHORE_BAND;
+  return shoreAllows(x - b, z) || shoreAllows(x + b, z) || shoreAllows(x, z - b) || shoreAllows(x, z + b) ? SHORE_WALLED : SHORE_WATER;
 }
 
 /** Building colliders (controllers.js format) to EUC BoxColliders. */
@@ -171,33 +296,20 @@ export class NycTerrainSampler {
    * river) and the island's ends. Getting up there goes to the last safe spot instead.
    */
   isOffLimits(x, z) {
-    if (z < ISLAND_BOUNDS.minZ + 30 || z > ISLAND_BOUNDS.maxZ) return true;
-    const shore = getIslandBoundsAtZ(z);
-    if (Math.min(x - shore.westX, shore.eastX - x) < SHORE_MARGIN) return true;
+    if (shoreAt(x, z) !== SHORE_GROUND) return true;
+    // not right at the edge either: a rider put back there would stand against the wall
+    if (shoreAt(x - 1, z) !== SHORE_GROUND || shoreAt(x + 1, z) !== SHORE_GROUND) return true;
+    if (shoreAt(x, z - 1) !== SHORE_GROUND || shoreAt(x, z + 1) !== SHORE_GROUND) return true;
     return this.isWater(x, z);
   }
 
   /** The city's own ground at (x, z): height and surface, before solids. */
   cityGround(x, z, out) {
-    if (z < ISLAND_BOUNDS.minZ + 30 || z > ISLAND_BOUNDS.maxZ) {
-      out.height = SHORE_WALL;
+    const edge = shoreAt(x, z);
+    if (edge !== SHORE_GROUND) {
+      out.height = edge === SHORE_WALLED ? SHORE_WALL : edge === SHORE_WATER ? ISLAND_BOUNDS.waterLevel - WATER_RIDE.floorDepth : 0;
       out.surface = 'pavement';
       return out;
-    }
-    const shore = getIslandBoundsAtZ(z);
-    const inland = Math.min(x - shore.westX, shore.eastX - x); // m inside the bulkhead line (< 0: over the water)
-    if (inland < SHORE_MARGIN) {
-      if (inland >= SHORE_MARGIN - SHORE_BAND) {
-        out.height = SHORE_WALL;
-        out.surface = 'pavement';
-        return out;
-      }
-      if (inland <= -SEAWALL_OUT) {
-        out.height = ISLAND_BOUNDS.waterLevel - WATER_RIDE.floorDepth;
-        out.surface = 'pavement';
-        return out;
-      }
-      // the strip between the band and the seawall's edge: the island's own ground, as drawn (below)
     }
     const lawn = this.lawn;
     if (inCentralPark(x, z)) {

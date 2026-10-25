@@ -58,6 +58,7 @@
   <link rel="modulepreload" href="./js/traffic.js" />
   <link rel="modulepreload" href="./js/pedestrian-routes.js" />
   <link rel="modulepreload" href="./js/euc-terrain.js" />
+  <link rel="modulepreload" href="./js/barricades.js" />
   <link rel="modulepreload" href="./js/euc-rider.js" />
   <link rel="modulepreload" href="./js/euc-dynamic.js" />
   <link rel="modulepreload" href="./js/euc-audio.js" />
@@ -116,6 +117,11 @@
   <link rel="modulepreload" href="./js/audio-acoustics.js" />
   <link rel="modulepreload" href="./js/audio-system.js" />
   <link rel="modulepreload" href="./js/title-screen.js" />
+  <link rel="modulepreload" href="./js/nemesis-brain.js" />
+  <link rel="modulepreload" href="./js/nemesis.js" />
+  <link rel="modulepreload" href="./js/nemesis-chase.js" />
+  <link rel="modulepreload" href="./js/nemesis-audio.js" />
+  <link rel="modulepreload" href="./js/nemesis-swing.js" />
   <link rel="modulepreload" href="./js/main.js" />
   <script type="module" src="./js/main.js"></script>
   <!-- Inter (UI) & Overpass (street-name signs: modelled on Highway Gothic, the US road sign typeface), from fonts/ -->
@@ -277,6 +283,8 @@
     <div class="wheel-cues" aria-live="polite">
       <div id="hud-overspeed" class="wheel-cue overspeed-cue" data-level="none" hidden><span aria-hidden="true">⚠</span> Max speed</div>
       <div id="hud-warning" class="wheel-cue power-cue" data-level="none" role="status" hidden></div>
+      <!-- Officer Dorkins on your tail (nemesis-chase.js): his distance, or how close you are to losing him -->
+      <div id="hud-chase" class="wheel-cue chase-cue" data-state="seen" hidden><span class="chase-light" aria-hidden="true"></span><span id="hud-chase-text">Officer Dorkins</span><span class="chase-meter" aria-hidden="true"><span id="hud-chase-meter"></span></span></div>
     </div>
     <section id="hud-cluster" class="panel cluster" aria-label="Speed, rider and camera">
       <div class="gauge">
@@ -300,6 +308,8 @@
     </section>
   </div>
 
+  <!-- Officer Dorkins' ambush and escape banners (nemesis-chase.js) -->
+  <div id="hud-chase-banner" class="chase-banner" role="status" aria-live="assertive" hidden></div>
   <!-- Get-up prompt after a crash (euc-hud.js). Outside the .hud blocks, so clean view never hides it. -->
   <div id="hud-getup" class="getup-prompt" role="status" aria-live="assertive" hidden>
     <span id="hud-getup-verb">Press</span><kbd id="hud-getup-key">R</kbd><span id="hud-getup-text">to get up</span>

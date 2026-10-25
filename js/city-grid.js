@@ -44,7 +44,10 @@ import {
   WATER_RIDE,
   CENTRAL_PARK_GATE_SIZE,
   CENTRAL_PARK_GATES,
-  centralParkGateAt
+  centralParkGateAt,
+  SEAWALL_POLYGON,
+  ESPLANADE_RAIL,
+  BATTERY_RAIL
 } from './city-config.js';
 import {
   createRoadSurfaceMaterial,
@@ -1588,12 +1591,9 @@ function buildCityGrid(scene) {
     metalness: 0.08
   });
 
-  // Slightly expanded perimeter polygon for the granite seawall & waterfront esplanade coping
-  const seawallPolygon = MANHATTAN_COASTLINE.map((p) => ({
-    x: p.x + (p.x < -100 ? -6 : (p.x > 100 ? 6 : 0)),
-    z: p.z + (p.z > 1350 ? 6 : (p.z < -1550 ? -6 : 0))
-  }));
-  const seawallMesh = createExtrudedPolygonMesh(seawallPolygon, -2.35, 2.31, seawallMat, true, false);
+  // Slightly expanded perimeter polygon for the granite seawall & waterfront esplanade coping (city-config.js: the
+  // rider's shore reads the same polygon)
+  const seawallMesh = createExtrudedPolygonMesh(SEAWALL_POLYGON, -2.35, 2.31, seawallMat, true, false);
   group.add(seawallMesh);
 
   // Unified Manhattan Roadway Asphalt Deck (Y = 0.0) following true Manhattan coastline
@@ -2488,8 +2488,8 @@ function buildCityGrid(scene) {
   const castleC = { x: GPTS.castleClinton[0], z: GPTS.castleClinton[1], r: 19 }; // Castle Clinton (below)
   {
     const COPING_TOP = -0.04; // seawall coping (section 2)
-    const WH = { x: GPTS.whitehallTerminal[0], z: GPTS.whitehallTerminal[1] };
-    const inTerminal = (x, z) => Math.hypot(x - WH.x, z - WH.z) < 48;
+    const WH = BATTERY_RAIL.terminal;
+    const inTerminal = (x, z) => Math.hypot(x - WH.x, z - WH.z) < BATTERY_RAIL.terminalR;
     // Peter Minuit Plaza: honey locusts & planes in a 9 m grid of tree pits, a lamppost & bench pair in every other bay
     const PM = { x: GPTS.peterMinuitPlaza[0], z: GPTS.peterMinuitPlaza[1] };
     const pmBlock = blockAtPoint(PM.x, PM.z);
@@ -2502,18 +2502,10 @@ function buildCityGrid(scene) {
         }
       }
     }
-    // The esplanade around the tip along the deck edge (MANHATTAN_COASTLINE), from Battery Place round to Whitehall:
-    // o = outward normal (toward the harbor)
-    const tip = [];
+    // The esplanade around the tip along the deck edge (MANHATTAN_COASTLINE), from Battery Place round to Whitehall
+    // (city-config.js BATTERY_RAIL, which the rider's shore reads too): o = outward normal (toward the harbor)
+    const tip = BATTERY_RAIL.tip;
     const C = MANHATTAN_COASTLINE;
-    const iStart = C.reduce((bi, p, i) => (p.z > C[bi].z ? i : bi), 0); // southernmost point
-    const onTip = (p) => p.z > castleC.z - 260 && p.x < WH.x + 60 && p.x > castleC.x - 420;
-    // walk both ways from the southernmost point while on the tip
-    const fwd = [];
-    for (let i = iStart, k = 0; k < C.length && onTip(C[i]); i = (i + 1) % C.length, k++) fwd.push(C[i]);
-    const back = [];
-    for (let i = (iStart - 1 + C.length) % C.length, k = 0; k < C.length && onTip(C[i]); i = (i - 1 + C.length) % C.length, k++) back.push(C[i]);
-    tip.push(...back.reverse(), ...fwd);
     const nearCastle = (x, z, m) => Math.hypot(x - castleC.x, z - castleC.z) < castleC.r + m;
     let signA = 0;
     for (let i = 0, j = C.length - 1; i < C.length; j = i++) signA += C[j].x * C[i].z - C[i].x * C[j].z;
@@ -2536,14 +2528,15 @@ function buildCityGrid(scene) {
         else if (!nearCastle(px, pz, 4)) treeSites.push({ x: px - o.x * 4.0, y: COPING_TOP, z: pz - o.z * 4.0, scale: 0.85 + prand(px, pz, 7) * 0.25, species: prand(pz, px, 8) < 0.6 ? 0 : 1, tier: 1 });
       }
     }
-    // Iron railing 0.6 m in from the bulkhead on the coping, gapped at the ferry terminal
+    // Iron railing BATTERY_RAIL.inset (0.6 m) in from the bulkhead on the coping, gapped at the ferry terminal
     const railSegs = [];
+    const inset = BATTERY_RAIL.inset;
     for (let i = 0; i + 1 < tip.length; i++) {
       const a = tip[i];
       const b = tip[i + 1];
       const o = edgeO(a, b);
-      const A = { x: a.x - o.x * 0.6, z: a.z - o.z * 0.6 };
-      const B = { x: b.x - o.x * 0.6, z: b.z - o.z * 0.6 };
+      const A = { x: a.x - o.x * inset, z: a.z - o.z * inset };
+      const B = { x: b.x - o.x * inset, z: b.z - o.z * inset };
       if (inTerminal((A.x + B.x) / 2, (A.z + B.z) / 2)) continue;
       railSegs.push([A.x, A.z, B.x, B.z]);
     }
@@ -3006,9 +2999,9 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   };
   const [er0, er1] = parkZRange('John V. Lindsay East River Park', [streetZ(12), 4150]);
   const [cs0, cs1] = [streetZ(90), streetZ(84)]; // Carl Schurz Park
-  const WEST_END_Z = 6000; // Route 9A dives into the Battery Park Underpass at Battery Place
-  const westRows = sampleShore(true, CUT_Z + 40, WEST_END_Z, (z) => smooth(streetZ(66), streetZ(59) + 60, z));
-  const eastRows = sampleShore(false, CUT_Z + 40, 6150, (z) =>
+  const WEST_END_Z = ESPLANADE_RAIL.westZ1; // Route 9A dives into the Battery Park Underpass at Battery Place
+  const westRows = sampleShore(true, ESPLANADE_RAIL.z0, WEST_END_Z, (z) => smooth(streetZ(66), streetZ(59) + 60, z));
+  const eastRows = sampleShore(false, ESPLANADE_RAIL.z0, ESPLANADE_RAIL.eastZ1, (z) =>
     Math.max(smooth(er0 - 60, er0, z) * (1 - smooth(er1 - 50, er1, z)), smooth(cs0 - 40, cs0, z) * (1 - smooth(cs1, cs1 + 40, z))));
   // South of VIA_Z the FDR leaves the strip for the South Street Viaduct: no at-grade carriageway or park belts there,
   // the esplanade carries on
@@ -3021,7 +3014,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   const hwy = (r, o) => (r.via ? null : H(r, o));
   for (const rows of [westRows, eastRows]) {
     const isWest = rows[0].west;
-    railing(rows, -5.8);
+    railing(rows, ESPLANADE_RAIL.d); // the rider's shore wall stands just inside it (euc-terrain.js)
     paintLine(rows, () => -0.45, 0.1, WHITE);
     paintLine(rows, () => -3.2, 0.1, WHITE);
     paintLine(rows, () => -1.82, 0.1, YELLOW, 6, 0.5);

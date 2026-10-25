@@ -7,7 +7,10 @@ import { EucController, createPose } from '../js/euc/simulation/EucController.js
 import { NEUTRAL_ACTIONS } from '../js/euc/input/actions.js';
 import { SIMULATION } from '../js/euc/data/tuning.js';
 import { NycTerrainSampler, boxesFromCityColliders, boxesFromFootprints } from '../js/euc-terrain.js';
-import { blockAt, streetZ, ISLAND_BOUNDS, WATER_RIDE, getIslandBoundsAtZ } from '../js/city-config.js';
+import {
+  blockAt, streetZ, ISLAND_BOUNDS, WATER_RIDE, getIslandBoundsAtZ, ESPLANADE_RAIL, BATTERY_RAIL, NORTH_BARRIER, CUT_Z,
+  MANHATTAN_COASTLINE
+} from '../js/city-config.js';
 
 const DT = 1 / SIMULATION.hz;
 const SPAWN_Z = streetZ(37); // controllers.js: 5th Ave at 37th St
@@ -117,13 +120,14 @@ test('a lamp post footprint is solid to the wheel and does not occlude the camer
   assert.ok(snap.position.z < post.minZ, `z ${snap.position.z}`);
 });
 
-test('the shore is a wall: riding at the Hudson stops short of the water', () => {
+test('riding at the Hudson goes out on the esplanade and stops at its railing, short of the water', () => {
   const west = getIslandBoundsAtZ(ROAD.z).westX;
   // heading -pi/2 rides toward -x (x += sin(heading)), at the Hudson, on the road west of the last kerb
   const euc = new EucController(new NycTerrainSampler(), { spawn: { position: { x: west + 18, y: 0, z: ROAD.z }, headingY: -Math.PI / 2 } });
-  ride(euc, 6, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
-  assert.ok(euc.x < west + 12, `reached the shore, x ${(euc.x - west).toFixed(2)} m inside`);
-  assert.ok(euc.x > west + 7, `stopped at the wall, x ${(euc.x - west).toFixed(2)} m inside`);
+  ride(euc, 8, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
+  const rail = ESPLANADE_RAIL.d; // m inland of the bulkhead (out on the coping)
+  assert.ok(euc.x - west < rail + 1.2, `reached the railing, x ${(euc.x - west).toFixed(2)} m inside the bulkhead`);
+  assert.ok(euc.x - west > rail + 0.2, `stopped short of it, x ${(euc.x - west).toFixed(2)} m inside the bulkhead`);
 });
 
 // ---- Central Park: raised behind its real wall, ridden in by the gates (city-config.js CENTRAL_PARK_GATES) ----------
@@ -239,15 +243,71 @@ test('Bryant Park: the terrace is ridden at its drawn top, a ramp climbs to it f
   assert.equal(s.sampleGround(0.5, z0 + 10, probe()).height, 1.06, 'beside the ramp: the terrace face');
 });
 
-test('the shore is a wall only along a band: past it the esplanade as drawn, then the river under its surface', () => {
+test('the shore: the esplanade is ridden out to its railing, the coping past it is a wall, then the river', () => {
   const s = new NycTerrainSampler();
   const z = ROAD.z;
   const west = getIslandBoundsAtZ(z).westX;
   const at = (inland) => s.sampleGround(west + inland, z, probe()).height;
-  assert.equal(at(7.5), 3.0, 'the band (7 to 8 m inside the bulkhead) is the wall the wheel stops at');
-  assert.ok(at(4) <= ISLAND_BOUNDS.sidewalkHeight, `inside it, the drawn ground (${at(4)})`);
-  assert.ok(at(-3) <= ISLAND_BOUNDS.sidewalkHeight, 'the seawall coping');
+  const rail = ESPLANADE_RAIL.d;
+  for (const inland of [4, 0, -3]) assert.ok(at(inland) <= ISLAND_BOUNDS.sidewalkHeight, `${inland}: the ground as drawn (${at(inland)})`);
+  assert.equal(at(rail + 0.2), 3.0, 'just inside the railing: the wall the wheel stops at');
+  assert.equal(at(rail - 0.1), 3.0, 'the coping past the railing');
   assert.ok(at(-10) < ISLAND_BOUNDS.waterLevel, 'the river: just under its surface');
-  for (const inland of [7.5, 4, -10]) assert.equal(s.isOffLimits(west + inland, z), true, `${inland}: no getting up here`);
-  assert.equal(s.isOffLimits(west + 20, z), false);
+  for (const inland of [rail + 0.6, -10]) assert.equal(s.isOffLimits(west + inland, z), true, `${inland}: no getting up here`);
+  for (const inland of [-3, 4, 20]) assert.equal(s.isOffLimits(west + inland, z), false, `${inland}: a place to get up`);
+});
+
+test('round the Battery the wall follows its railing, inset from the bulkhead line, not a west or east shore x', () => {
+  const s = new NycTerrainSampler();
+  const tip = BATTERY_RAIL.tip;
+  const C = MANHATTAN_COASTLINE;
+  let area = 0;
+  for (let i = 0, j = C.length - 1; i < C.length; j = i++) area += C[j].x * C[i].z - C[i].x * C[j].z;
+  const s0 = area > 0 ? 1 : -1;
+  let checked = 0;
+  for (let i = 0; i + 1 < tip.length; i++) {
+    const a = tip[i], b = tip[i + 1];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 12) continue;
+    const m = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+    if (Math.hypot(m.x - BATTERY_RAIL.terminal.x, m.z - BATTERY_RAIL.terminal.z) < BATTERY_RAIL.terminalR + 15) continue;
+    const n = { x: (-s0 * (b.z - a.z)) / len, z: (s0 * (b.x - a.x)) / len }; // inward
+    const at = (d) => s.sampleGround(m.x + n.x * d, m.z + n.z * d, probe()).height;
+    assert.ok(at(3) < 1, `segment ${i}: ground 3 m inside the bulkhead (${at(3)})`);
+    assert.equal(at(BATTERY_RAIL.inset + 0.2), 3.0, `segment ${i}: the wall at the railing`);
+    assert.ok(at(-12) < ISLAND_BOUNDS.waterLevel, `segment ${i}: the harbor past it`);
+    checked++;
+  }
+  assert.ok(checked >= 5, `checked ${checked} stretches of the tip`);
+});
+
+test('the north end: a wall at the barricades along the cut, Upper Manhattan past them off limits', () => {
+  const s = new NycTerrainSampler();
+  const x = ROAD.x; // the 5th Ave roadway
+  assert.ok(s.sampleGround(x, CUT_Z + 3, probe()).height < 0.3, 'the avenue runs up to the cut');
+  assert.equal(s.sampleGround(x, NORTH_BARRIER.z, probe()).height, 3.0, 'the barricade line is a wall');
+  assert.equal(s.sampleGround(x, CUT_Z - 10, probe()).height, 0, 'past it, the ground as drawn');
+  assert.equal(s.isOffLimits(x, CUT_Z - 10), true);
+  assert.equal(s.isOffLimits(x, CUT_Z + 6), false);
+  // heading pi rides north (-z)
+  const euc = new EucController(s, { spawn: { position: { x, y: 0, z: CUT_Z + 25 }, headingY: Math.PI } });
+  ride(euc, 8, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
+  assert.ok(euc.z < CUT_Z + 1.5, `reached the barricades, ${(euc.z - CUT_Z).toFixed(2)} m short of the cut`);
+  assert.ok(euc.z > NORTH_BARRIER.band[1], `stopped at them, ${(euc.z - CUT_Z).toFixed(2)} m short of the cut`);
+});
+
+test('an inlet in the bulkhead line is water, not the island\'s ground', () => {
+  // On z = 3950 the coastline crosses at the outer Hudson shore and twice more round an inlet (a slip) inside it
+  const s = new NycTerrainSampler();
+  const z = 3950;
+  const xs = [];
+  const C = MANHATTAN_COASTLINE;
+  for (let i = 0, j = C.length - 1; i < C.length; j = i++) {
+    const a = C[j], b = C[i];
+    if ((a.z > z) !== (b.z > z)) xs.push(a.x + ((z - a.z) * (b.x - a.x)) / (b.z - a.z));
+  }
+  xs.sort((p, q) => p - q);
+  assert.ok(xs.length >= 4, `crossings ${xs.map(Math.round)}`);
+  const mid = (xs[1] + xs[2]) / 2;
+  assert.ok(s.sampleGround(mid, z, probe()).height < ISLAND_BOUNDS.waterLevel, 'the middle of the inlet is water');
 });
