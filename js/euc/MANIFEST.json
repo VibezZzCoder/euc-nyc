@@ -157,12 +157,12 @@
     "simulation/EucController.js": {
       "source": "src/simulation/EucController.ts",
       "sourceSha256": "da69eec9eb35bae6dbef9f068c21f7bd1e6ff35afd87feeaa200546f9f23ca81",
-      "sliced": false
+      "sliced": true
     },
     "simulation/eucStepPrimitives.js": {
       "source": "src/simulation/eucStepPrimitives.ts",
       "sourceSha256": "9d0a8bcabdce43282ba2de6ffd2911617ec59c4ff95edb5fe40a691c1510eea0",
-      "sliced": false
+      "sliced": true
     },
     "simulation/hazards.js": {
       "source": "src/simulation/hazards.ts",
@@ -187,7 +187,7 @@
     "simulation/ragdoll.js": {
       "source": "src/simulation/ragdoll.ts",
       "sourceSha256": "494188a5269e2673513ff7bc66e1d83aba047b27c568e63270b4fbe0af510d19",
-      "sliced": false
+      "sliced": true
     },
     "simulation/riderLean.js": {
       "source": "src/simulation/riderLean.ts",
@@ -207,7 +207,7 @@
     "simulation/world.js": {
       "source": "src/simulation/world.ts",
       "sourceSha256": "f204a73961edec7f6d530839e7b5ae489f866596cc4e024cb5b7d9ba478ae5ba",
-      "sliced": false
+      "sliced": true
     }
   }
 }

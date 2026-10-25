@@ -177,8 +177,8 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       if (resetHeld && !resetWasHeld && controller.crashed) {
         // Get up where you fell, unless that is in a pond or past the shore wall: then at the last safe spot, as the
         // auto-recovery does
-        if (sampler.isOffLimits?.(current.x, current.z)) this.placeAt(controller.safeX, controller.safeZ, controller.safeHeading);
-        else this.placeAt(current.x, current.z, current.headingY);
+        if (sampler.isOffLimits?.(current.x, current.z, current.y)) this.placeAt(controller.safeX, controller.safeZ, controller.safeHeading, controller.safeY);
+        else this.placeAt(current.x, current.z, current.headingY, current.y);
       }
       resetWasHeld = resetHeld;
 
@@ -252,8 +252,8 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     },
 
     /** Place the rider (teleport, respawn) and drop the interpolation history so nothing streaks across the city. */
-    placeAt(px, pz, h = this.heading) {
-      const g = sampler.sampleGround(px, pz, { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false });
+    placeAt(px, pz, h = this.heading, referenceY = 0) {
+      const g = sampler.sampleGround(px, pz, { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false }, referenceY);
       const placed = controller.reset({ position: { x: px, y: g.height, z: pz }, headingY: h });
       controller.writePose(current);
       copyPose(current, previous);

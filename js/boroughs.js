@@ -2639,6 +2639,22 @@ function createBeamSet() {
     let arr = sets.get(material);
     if (!arr) sets.set(material, (arr = []));
     arr.push(m);
+    if (material === bridgeSite.deckMaterial && bridgeSite.rideBuilder) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+      mesh.matrixAutoUpdate = false; mesh.matrix.copy(m); mesh.matrixWorldNeedsUpdate = true;
+      bridgeSite.rideBuilder.addRideMesh(mesh, 'pavement', true, true);
+      mesh.geometry.dispose();
+      const e = m.elements, dx = e[0], dy = e[1], dz = e[2], length = Math.hypot(dx, dz);
+      const width = Math.hypot(e[8], e[10]), thickness = Math.abs(e[5]);
+      const pieces = Math.max(1, Math.ceil(Math.abs(dy) / 0.15));
+      for (let i = 0; i < pieces; i++) {
+        const t = (i + 0.5) / pieces - 0.5, centreY = e[13] + dy * t;
+        const body = bridgeSite.rideBuilder.addRideSolid(e[12] + dx * t, e[14] + dz * t, width, length / pieces,
+          centreY - thickness / 2 + Math.abs(dy) / pieces / 2,
+          centreY + thickness / 2 - Math.abs(dy) / pieces / 2, Math.atan2(dx, dz), true);
+        body.support = false; // exact upward facets own support; this inscribed slab owns side / underside contact
+      }
+    }
   };
   return {
     // Member from p0 to p1; `a` = thickness along the member's up-ish axis, `b` = along its side axis
@@ -2656,6 +2672,19 @@ function createBeamSet() {
       mid.addVectors(p0, p1).multiplyScalar(0.5);
       m.setPosition(mid);
       push(material, m);
+    },
+    body(material, p0, p1, a, b, ref = null) {
+      this.beam(material, p0, p1, a, b, ref);
+      if (!bridgeSite.rideBuilder) return;
+      const dx = p1.x - p0.x, dz = p1.z - p0.z, len = Math.hypot(dx, dz);
+      // Compact yawed pieces following a sloping rail, rather than its full-height bounding rectangle.
+      const n = len < 0.01 ? 1 : Math.max(1, Math.ceil(Math.abs(p1.y - p0.y) / 0.15));
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n, y0 = p0.y + (p1.y - p0.y) * i / n, y1 = p0.y + (p1.y - p0.y) * (i + 1) / n;
+        const body = bridgeSite.rideBuilder.addRideSolid(p0.x + dx * t, p0.z + dz * t, b, Math.max(a, len / n),
+          Math.min(y0, y1) - a / 2, Math.max(y0, y1) + a / 2, Math.atan2(dx, dz));
+        body.layered = true;
+      }
     },
     // Axis-aligned-to-bridge block centred at p (size along the bridge, vertical, across)
     block(material, p, dir, along, h, across) {
@@ -2759,8 +2788,8 @@ function buildDeck(B, spec, f, profile, mats, steel, opts) {
       const b1 = at(t1, s, y1 - yb);
       const c0 = at(t0, s, y0 - yb + h);
       const c1 = at(t1, s, y1 - yb + h);
-      B.beam(steel, b0, b1, 0.9, 0.9);
-      B.beam(steel, c0, c1, suspended ? 0.8 : 0.5, suspended ? 0.8 : 0.5);
+      B.body(steel, b0, b1, 0.9, 0.9);
+      B.body(steel, c0, c1, suspended ? 0.8 : 0.5, suspended ? 0.8 : 0.5);
       if (suspended) {
         B.beam(steel, b0, c0, 0.45, 0.45);
         B.beam(steel, i % 2 ? b0 : c0, i % 2 ? c1 : b1, 0.35, 0.35);
@@ -2785,12 +2814,16 @@ function buildDeck(B, spec, f, profile, mats, steel, opts) {
     // Where the deck end is too low to drive under (~4.2 m clearance) it blocks the Manhattan street below
     if (Math.min(y0, y1) - 2.2 < 4.2) {
       const p = at((t0 + t1) * 0.5, 0, 0);
-      if (onManhattan(p)) addBridgeCollider(p, dir, L / n, W, Math.max(y0, y1));
+      if (onManhattan(p)) {
+        const before = bridgeSite.rideColliders.length;
+        addBridgeCollider(p, dir, L / n, W, Math.max(y0, y1));
+        bridgeSite.rideColliders.length = before; // traffic retains its old obstacle; the rider gets the actual ramp top
+      }
     }
     // Deck lamps every 15 m along both parapets
     if (i % 3 === 0 && y0 > 0.5) {
       for (const s of [-W * 0.5 + 0.6, W * 0.5 - 0.6]) {
-        B.beam(steel, at(t0, s, y0), at(t0, s, y0 + 6), 0.25, 0.25);
+        B.body(steel, at(t0, s, y0), at(t0, s, y0 + 6), 0.25, 0.25);
         B.block(mats.lamp, at(t0, s * 0.96, y0 + 6.1), dir, 0.9, 0.35, 0.6);
       }
     }
@@ -2927,7 +2960,17 @@ function buildAnchorage(B, parts, mats, f, ta, len, across, h, gothic) {
   B.block(mats.granite, at(ta, 0, h - 0.9), dir, len + 1.4, 1.8, across + 1.4);
   for (const sg of [-1, 1]) B.block(mats.granite, at(ta, sg * (across * 0.5 - 0.3), h + 0.75), dir, len + 1.4, 1.5, 0.8);
   const p = at(ta, 0, 0);
-  if (onManhattan(p)) addBridgeCollider(p, dir, len + 2.4, across + 2.4, h);
+  if (onManhattan(p)) {
+    const before = bridgeSite.rideColliders.length;
+    addBridgeCollider(p, dir, len + 2.4, across + 2.4, h);
+    if (bridgeSite.rideBuilder) {
+      bridgeSite.rideColliders.length = before;
+      const yaw = Math.atan2(dir.x, dir.z), add = bridgeSite.rideBuilder.addRideSolid;
+      add(p.x, p.z, across + 2.4, len + 2.4, 0, 3.2, yaw, true);
+      add(p.x, p.z, across, len, 3.2, h - 0.1, yaw, true);
+      add(p.x, p.z, across + 1.4, len + 1.4, h - 1.8, h, yaw, true);
+    }
+  }
 }
 
 /** Williamsburg (riveted lattice towers) & Manhattan (portal-arched towers) suspension bridges. */
@@ -3052,6 +3095,11 @@ function buildBrooklynBridge(group, parts, spec, mats) {
     const c = at(tt, 0, 0);
     const m = new THREE.Matrix4().makeBasis(sideV, new THREE.Vector3(0, 1, 0), dir.clone()).setPosition(c);
     parts.add(mats.granite, towerGeo, m);
+    // The two Gothic openings remain clear; compact upright masonry piers occupy their actual sides and centre.
+    if (bridgeSite.rideBuilder) for (const [s, width] of [[0, 5.4], [-14.3, 4.4], [14.3, 4.4]]) {
+      const p = at(tt, s, 0);
+      bridgeSite.rideBuilder.addRideSolid(p.x, p.z, width, 13, -2.5, H - 3, Math.atan2(dir.x, dir.z), true);
+    }
     B.block(mats.granite, at(tt, 0, H - 2), dir, 14.4, 2.2, 35.4);
     B.block(mats.granite, at(tt, 0, H - 0.4), dir, 12.6, 1.4, 31.5);
     B.block(mats.pier, at(tt, 0, -0.5), dir, 17, 3.4, 40);
@@ -3091,7 +3139,7 @@ function buildBrooklynBridge(group, parts, spec, mats) {
     const tb = anchor1 + ((anchor2 - anchor1) * (i + 1)) / n;
     if (Math.abs((ta + tb) * 0.5 - t1) * f.L < 8 || Math.abs((ta + tb) * 0.5 - t2) * f.L < 8) continue;
     B.beam(mats.deck, at(ta, 0, profile(ta) + 4), at(tb, 0, profile(tb) + 4), 0.5, 5.2);
-    for (const s of [-2.6, 2.6]) B.beam(steel, at(ta, s, profile(ta) + 5.1), at(tb, s, profile(tb) + 5.1), 0.12, 0.12);
+    for (const s of [-2.6, 2.6]) B.body(steel, at(ta, s, profile(ta) + 5.1), at(tb, s, profile(tb) + 5.1), 0.12, 0.12);
   }
   B.build(group, spec.name, new Set([mats.deck, mats.pier, mats.granite]));
 }
@@ -3362,7 +3410,7 @@ function createLandmarkMaterials() {
  * columns stand only on blocks. Returns the colliders of the bridge and tram parts standing on Manhattan (anchorages,
  * piers, columns, deck ends too low to drive under): `colliders` for traffic, `rideColliders` for the rider.
  */
-function buildBoroughs(scene, { sidewalks = [] } = {}) {
+function buildBoroughs(scene, { sidewalks = [], rideBuilder = null } = {}) {
   const t0 = performance.now();
   const group = new THREE.Group();
   group.name = 'Boroughs';
@@ -3396,6 +3444,9 @@ function buildBoroughs(scene, { sidewalks = [] } = {}) {
   // which keep out from under its cabins)
   bridgeSite = { sidewalks, colliders: [], rideColliders: [] };
   const bridgeMats = createBridgeMaterials();
+  bridgeMats.deck.name = 'BridgeRoadSurface';
+  bridgeSite.rideBuilder = rideBuilder;
+  bridgeSite.deckMaterial = bridgeMats.deck;
   const bridgeParts = createPartCollector();
   const tram = buildRooseveltTram(group, bridgeParts, lm);
   buildIslandTrees(group);
@@ -3404,6 +3455,9 @@ function buildBoroughs(scene, { sidewalks = [] } = {}) {
     else if (spec.type === 'brooklyn') buildBrooklynBridge(group, bridgeParts, spec, bridgeMats);
     else if (spec.type === 'cantilever') buildQueensboroBridge(group, spec, bridgeMats);
   }
+  // These horizon bridges are beyond the detailed playable map / north barricades. Keep their scenery out of the
+  // rider index: otherwise two distant structures triple its extent and allocate mostly empty collision cells.
+  bridgeSite.rideBuilder = null;
   for (const spec of OUTER_BRIDGES) buildOuterBridge(group, bridgeParts, spec, bridgeMats);
   bridgeParts.build(group, { castShadow: true });
 

@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/ragdoll.ts.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/ragdoll.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import { EUC, PHYSICS, RAGDOLL_BOOT_GROUND_BOX, RAGDOLL_HAND_GROUND_BOX, RAGDOLL_PARTICLE_RADII, RAGDOLL_TRUNK_WEIGHTS, RIDER_OCCUPANCY, RIDER, RIDER_BLOCKOUT, WHEEL } from '../data/tuning.js';
 import { solveRagdollLimb, ragdollLegReachMinimum, ragdollBootGroundSupport, transportRagdollLegPole } from '../shared/ragdollBoot.js';
@@ -310,9 +310,9 @@ export class CrashRagdoll {
             throw new RangeError('Non-finite native rag contact projection');
         for (let index = 0; index < RAGDOLL_PARTICLES; index += 1) {
             const base = index * 3, px = this.positions[base], py = this.positions[base + 1], pz = this.positions[base + 2];
-            sampler.sampleGround(px, pz, this.ground);
+            sampler.sampleGround(px, pz, this.ground, py);
             const beforeHeight = this.ground.height;
-            sampler.sampleGround(px + x, pz + z, this.ground);
+            sampler.sampleGround(px + x, pz + z, this.ground, py);
             if (this.ground.height > beforeHeight)
                 return false;
             if (sampler.raycastObstacle) {
@@ -545,7 +545,7 @@ export class CrashRagdoll {
             pos[bBase + 2] -= dz * correction;
         }
         this.projectHipAngles(dt);
-        sampler.sampleGround(wheelX, wheelZ, this.ground);
+        sampler.sampleGround(wheelX, wheelZ, this.ground, pos[RD_PELVIS * 3 + 1]);
         const wheelTop = this.ground.height + RIDER_BLOCKOUT.ragdollWheelTop;
         for (let index = 0; index < RAGDOLL_PARTICLES; index += 1) {
             const base = index * 3;
@@ -572,7 +572,7 @@ export class CrashRagdoll {
         this.clearWheelTrunk(wheelX, wheelZ, wheelTop);
         for (let index = 0; index <= RD_SHOULDER_R; index += 1) {
             const base = index * 3;
-            sampler.sampleGround(pos[base], pos[base + 2], this.ground);
+            sampler.sampleGround(pos[base], pos[base + 2], this.ground, pos[base + 1]);
             this.trunkGroundHeight[index] = this.ground.height;
             const floor = this.ground.height + RADIUS[index];
             if (pos[base + 1] >= floor)
@@ -637,7 +637,7 @@ export class CrashRagdoll {
         base.normal.x = NaN;
         base.normal.y = NaN;
         base.normal.z = NaN;
-        sampler.sampleGround(x, z, g);
+        sampler.sampleGround(x, z, g, this.positions[RD_PELVIS * 3 + 1]);
         const underlying = Number.isFinite(base.height) && Number.isFinite(base.normal.x) && Number.isFinite(base.normal.y) && Number.isFinite(base.normal.z) && base.normal.y > 0;
         const n = underlying ? base.normal : g.normal, height = underlying ? base.height : g.height;
         const b = limb * 8 + (joint ? 4 : 0), points = limb * 4 + (joint ? 2 : 0), p = this.limbPlanes;
@@ -802,7 +802,7 @@ export class CrashRagdoll {
                 base.normal.x = NaN;
                 base.normal.y = NaN;
                 base.normal.z = NaN;
-                sampler.sampleGround(o[0], o[2], g);
+                sampler.sampleGround(o[0], o[2], g, o[1]);
                 const fulfilled = Number.isFinite(base.height) && Number.isFinite(base.normal.x) && Number.isFinite(base.normal.y) && Number.isFinite(base.normal.z) && base.normal.y > 0, n = fulfilled ? base.normal : g.normal, height = fulfilled ? base.height : g.height;
                 const need = height + t.ragdollBootSupportSlack - o[1];
                 if (need <= t.ragdollGroundShallowDepth)
@@ -1046,7 +1046,7 @@ export class CrashRagdoll {
             let lift = 0;
             for (let index = 0; index <= RD_SHOULDER_R; index++) {
                 const b = index * 3;
-                sampler.sampleGround(p[b], p[b + 2], this.ground);
+                sampler.sampleGround(p[b], p[b + 2], this.ground, p[b + 1]);
                 this.trunkGroundHeight[index] = this.ground.height;
                 const need = this.ground.height + RADIUS[index] - p[b + 1];
                 if (need <= RIDER_BLOCKOUT.ragdollGroundShallowDepth)

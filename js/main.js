@@ -84,7 +84,7 @@ async function initApp() {
   const cityGrid = buildCityGrid(scene);
   buildNorthBarricades(scene); // where the detailed island ends (the rider's wall stands there: euc-terrain.js)
   markInit('cityGrid');
-  const boroughs = buildBoroughs(scene, { sidewalks: cityGrid.sidewalks });
+  const boroughs = buildBoroughs(scene, { sidewalks: cityGrid.sidewalks, rideBuilder: cityGrid.rideBuilder });
   markInit('boroughs');
   const landmarks = buildLandmarks(scene);
   markInit('landmarks');
@@ -120,13 +120,18 @@ async function initApp() {
   const rider = [riderParam, saved?.rider].find(isPlayableRider) ?? PLAYABLE_RIDERS[0];
   // Cars, buses and pedestrians are moving obstacles for the wheel (euc-dynamic.js): a hit at speed is a crash
   const dynamicWorld = createEucDynamicWorld(combineBodySources(trafficSystem, highwayTraffic));
+  const ride = {
+    shoreRails: true,
+    solids: [...cityGrid.ride.solids, ...streetDetails.ride.solids],
+    tops: [...cityGrid.ride.tops, ...streetDetails.ride.tops]
+  };
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders, {
-    streetFootprints: streetDetails.footprints, ride: cityGrid.ride, rider, dynamicWorld
+    ride, rider, dynamicWorld
   });
   // Reuse teleport placement so a saved rider returns at rest, close to where they were.
   const savedPose = saved?.version === 2 ? saved.euc : saved?.version === 1 ? saved.entities?.euc : null;
   if (savedPose && [savedPose.x, savedPose.z, savedPose.heading].every(Number.isFinite)) {
-    controllerManager.teleportActiveTo(savedPose.x, savedPose.z, savedPose.heading);
+    controllerManager.teleportActiveTo(savedPose.x, savedPose.z, savedPose.heading, Number.isFinite(savedPose.y) ? savedPose.y : 0);
   }
 
   function savePlayerState() {

@@ -171,6 +171,52 @@ function keepThrough(source, title) {
 }
 
 const OVERRIDES = {
+  // The city has stacked roads. Forward query height without changing the controller's tuning / contact maths.
+  // Exact counts deliberately fail when the upstream query sites change.
+  'simulation/EucController.ts': (src) => {
+    let count = 0;
+    let s = src.replace(/this\.sampler\.sampleGround\(([^;\n]+)\);/g, (all, args) => {
+      count++;
+      const y = args.startsWith('spawn.position') ? 'spawn.position.y'
+        : args.startsWith('pelvis[') ? 'pelvis[RD_PELVIS * 3 + 1]'
+        : args.startsWith('this.safeX') ? 'this.safeY' : 'this.y';
+      return `this.sampler.sampleGround(${args}, ${y});`;
+    });
+    if (count !== 20) throw new Error(`controller height query sites changed: ${count}`);
+    s = s.replace('private safeX = 0;', 'private safeX = 0;\n  private safeY = 0;');
+    s = s.replace('this.x = this.spawn.position.x;', 'this.y = this.spawn.position.y;\n    this.x = this.spawn.position.x;');
+    s = s.replace('destination.headingY, initialSpeed, placementReason)', 'destination.headingY, initialSpeed, placementReason, destination.position.y)');
+    s = s.replace("reason: EucPlacementRequest['reason']): boolean", "reason: EucPlacementRequest['reason'], referenceY = reason === 'recover' ? this.safeY : this.y): boolean");
+    s = s.replace('this.sampler.sampleGround(x, z, this.probe, this.y);', 'this.sampler.sampleGround(x, z, this.probe, referenceY);');
+    s = s.replaceAll('this.safeX = this.x;', 'this.safeX = this.x; this.safeY = this.y;');
+    s = s.replace('this.x = target.x;', 'this.y = target.y;\n    this.x = target.x;');
+    s = s.replace('new Float64Array(3 * POPULATION_CONTACT.recoveryRingPoints)', 'new Float64Array(4 * POPULATION_CONTACT.recoveryRingPoints)');
+    s = s.replaceAll('% size) * 3;', '% size) * 4;').replace('this.safeRingNext * 3;', 'this.safeRingNext * 4;');
+    s = s.replace('ring[slot + 2] = this.safeHeading;', 'ring[slot + 2] = this.safeHeading; ring[slot + 3] = this.safeY;');
+    s = s.replace('private recoveryTarget(restored: number): { x: number; z: number; headingY: number }',
+      'private recoveryTarget(restored: number): { x: number; y: number; z: number; headingY: number }');
+    s = s.replace('return { x: this.safeX, z: this.safeZ, headingY: this.safeHeading };',
+      'return { x: this.safeX, y: this.safeY, z: this.safeZ, headingY: this.safeHeading };');
+    s = s.replace("this.dynamicPlacementClear(x, z, headingY, restored, 'recover')) return { x, z, headingY };",
+      "this.dynamicPlacementClear(x, z, headingY, restored, 'recover', ring[slot + 3])) return { x, y: ring[slot + 3], z, headingY };");
+    s = s.replace('return { x, z, headingY: this.safeHeading };', 'return { x, y: this.safeY, z, headingY: this.safeHeading };');
+    s = s.replace('this.sampler.sampleGround(x, z, ground, this.y);', 'this.sampler.sampleGround(x, z, ground, this.safeY);');
+    s = s.replace('safePosition: { x: this.safeX, y: 0, z: this.safeZ }', 'safePosition: { x: this.safeX, y: this.safeY, z: this.safeZ }');
+    return s;
+  },
+  'simulation/ragdoll.ts': (src) => {
+    const ys = ['py', 'py', 'pos[RD_PELVIS * 3 + 1]', 'pos[base + 1]',
+      'this.positions[RD_PELVIS * 3 + 1]', 'o[1]', 'p[b + 1]'];
+    let count = 0;
+    const s = src.replace(/sampler\.sampleGround\(([^;\n]+)\);/g, (all, args) =>
+      `sampler.sampleGround(${args}, ${ys[count++]});`);
+    if (count !== ys.length) throw new Error(`ragdoll height query sites changed: ${count}`);
+    return s;
+  },
+  'simulation/world.ts': (src) => src.replace('sampleGround(x: number, z: number, out: GroundSample): GroundSample;',
+    'sampleGround(x: number, z: number, out: GroundSample, referenceY?: number): GroundSample;'),
+  'simulation/eucStepPrimitives.ts': (src) => src.replace("'safeX', 'safeZ'", "'safeX', 'safeY', 'safeZ'")
+    .replace('to.safeX = from.safeX;', 'to.safeX = from.safeX;\n  to.safeY = from.safeY;'),
   'render/riderLook.ts': (src) => {
     let s = keepImports(src, KEEP_IMPORTS['render/riderLook.ts']);
     s = s.replace("import { COOL_RIDER_LOOK } from './coolRiderLook.ts';",

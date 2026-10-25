@@ -33,7 +33,7 @@ function keyboardHarness(nyc = {}) {
       'three/webgpu': {},
       './city-config.js': config,
       './landmarks.js': {},
-      './euc-terrain.js': { NycTerrainSampler: class {}, boxesFromCityColliders: () => [], boxesFromFootprints: () => [] },
+      './euc-terrain.js': { NycTerrainSampler: class {}, boxesFromCityColliders: () => [] },
       './euc-rider.js': {}
     }
   });
@@ -50,6 +50,32 @@ function keyboardHarness(nyc = {}) {
     }
   };
 }
+
+test('the EUC sampler consumes drawn ride solids / tops directly, independently of traffic footprints', () => {
+  const building = { centre: { x: 0, y: 10, z: 0 }, halfExtents: { x: 4, y: 10, z: 4 }, rotationY: 0 };
+  const furniture = { centre: { x: 10, y: 0.84, z: 5 }, halfExtents: { x: 0.325, y: 0.625, z: 0.325 }, rotationY: 0, occludes: false };
+  const tops = Object.freeze([{ top: 0.315, surface: 'dirt' }]);
+  const solids = Object.freeze([furniture]);
+  const { ThirdPersonControllerManager } = loadModule(source, {
+    globals: { window: eventTarget(), document: eventTarget() },
+    imports: {
+      './city-config.js': { streetZ: () => 0 },
+      './landmarks.js': {},
+      './euc-terrain.js': {
+        NycTerrainSampler: class { constructor(options) { this.options = options; } },
+        boxesFromCityColliders: () => [building]
+      },
+      './euc-rider.js': { createEucEntity: () => ({}) }
+    }
+  });
+  const manager = new ThirdPersonControllerManager({}, [], {
+    ride: { solids, tops },
+    streetFootprints: [{ minX: 8, maxX: 12, minZ: 3, maxZ: 7 }] // a legacy option must not add a generic-height box
+  });
+  assert.deepEqual(Array.from(manager.eucSampler.options.boxes), [building, furniture]);
+  assert.equal(manager.eucSampler.options.tops, tops);
+  assert.equal(solids.length, 1, 'merging building boxes does not mutate the ride layer');
+});
 
 test('releasing a movement key after focusing search stops movement', () => {
   const { controller, key } = keyboardHarness();

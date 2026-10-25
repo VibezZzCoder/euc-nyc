@@ -773,7 +773,7 @@ function pierHullGeometry(len, beam, depth, bowFrac = 0.28, sternFrac = 0.06, do
 
 // Waterfront piers: builds every WATERFRONT_PIERS entry: concrete decks on timber piles with fenders, railings and
 // lamps, plus each pier's landmark structures. All static parts go through one batcher (~1 draw call per material).
-function buildWaterfrontPiers(group) {
+function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) {
   const M = createWaterfrontPierMaterials();
   for (const [k, m] of Object.entries(M)) if (m && m.isMaterial) m.name = 'waterfrontPier.' + k;
   const B = createPierBoxBatcher();
@@ -789,21 +789,53 @@ function buildWaterfrontPiers(group) {
     const c = Math.cos(theta), sn = Math.sin(theta);
     const wx = (u, s) => x0 + u * c + s * sn;
     const wz = (u, s) => z0 - u * sn + s * c;
+    const box = (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => B.box(mat,
+      wx((u0 + u1) / 2, (s0 + s1) / 2), (y0 + y1) / 2, wz((u0 + u1) / 2, (s0 + s1) / 2),
+      Math.abs(u1 - u0), Math.abs(y1 - y0), Math.abs(s1 - s0), theta, v, open);
+    const support = (geo, u, y, s, rot, surface) => {
+      const mesh = new THREE.Mesh(geo, GR);
+      mesh.position.set(wx(u, s), y, wz(u, s));
+      mesh.rotation.y = theta + rot;
+      addRideMesh(mesh, surface, true);
+    };
     return {
       theta, wx, wz,
-      box: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => B.box(mat, wx((u0 + u1) / 2, (s0 + s1) / 2), (y0 + y1) / 2, wz((u0 + u1) / 2, (s0 + s1) / 2),
-        Math.abs(u1 - u0), Math.abs(y1 - y0), Math.abs(s1 - s0), theta, v, open),
+      box,
+      // Suspended bodies use query elevation, so their roofs cannot lift a rider beneath them.
+      solid: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
+        box(mat, u0, u1, y0, y1, s0, s1, v, open);
+        const body = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
+          Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, mat === BL);
+        body.layered = true;
+      },
+      top: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
+        box(mat, u0, u1, y0, y1, s0, s1, v, open);
+        const poly = [[u0, s0], [u1, s0], [u1, s1], [u0, s1]].map(([u, s]) => ({ x: wx(u, s), z: wz(u, s) }));
+        const t = addRideTop(poly, Math.max(y0, y1), v === 4 || v === 5 || v === 6 ? 'grass' : v === 3 ? 'wood' : v === 7 ? 'brick' : 'pavement');
+        t.shore = true; // the actual deck opens the shore wall at its mouth, including below-zero floating docks
+        t.layered = y0 > DY + 1;
+        if (t.layered) {
+          const slab = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
+            Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, true);
+          slab.support = false;
+        }
+      },
       geo: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0) => B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v),
+      ground: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0) => {
+        B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v);
+        support(geo, u, y, s, rot, v === 4 ? 'grass' : 'pavement');
+      },
       sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot),
       // Thin beam between two local points [u, y, s] (rigging, masts, ramps); t thick, t2 wide
-      strut: (mat, a, b, t, v = 0, t2 = t) => {
+      strut: (mat, a, b, t, v = 0, t2 = t, rideSurface = null) => {
         const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
         const g = new THREE.BoxGeometry(t, d.length(), t2);
         g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(Y_AXIS, d.normalize()));
         g.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
         B.geo(mat, g, x0, 0, z0, theta, v);
+        if (rideSurface) support(g, 0, 0, 0, 0, rideSurface);
       },
-      tree: (u, s, y, r) => trees.push([wx(u, s), y, wz(u, s), r]),
+      tree: (u, s, y, r, ride = true) => trees.push([wx(u, s), y, wz(u, s), r, ride]),
       // Canvas-atlas lettering; rot = -PI/2 faces landward (-u), +PI/2 seaward (+u)
       sign: (text, u, y, s, height, rot) => {
         const r = M.signRects[text];
@@ -850,23 +882,24 @@ function buildWaterfrontPiers(group) {
 
   // Steel pipe railing with posts every 3 m along both sides (+ optional seaward end)
   const railing = (F, u0, u1, s0, s1, y, end = true) => {
+    const box = F.solid;
     for (const s of [s0 + 0.12, s1 - 0.12]) {
-      F.box(PA, u0, u1, y + 1.04, y + 1.1, s - 0.05, s + 0.05, 9);
-      F.box(PA, u0, u1, y + 0.52, y + 0.56, s - 0.02, s + 0.02, 9);
-      for (let u = u0; u <= u1 + 0.01; u += 3) F.box(PA, u - 0.04, u + 0.04, y, y + 1.06, s - 0.04, s + 0.04, 9, true);
+      box(PA, u0, u1, y + 1.04, y + 1.1, s - 0.05, s + 0.05, 9);
+      box(PA, u0, u1, y + 0.52, y + 0.56, s - 0.02, s + 0.02, 9);
+      for (let u = u0; u <= u1 + 0.01; u += 3) box(PA, u - 0.04, u + 0.04, y, y + 1.06, s - 0.04, s + 0.04, 9, true);
     }
     if (end) {
       const u = u1 - 0.12;
-      F.box(PA, u - 0.05, u + 0.05, y + 1.04, y + 1.1, s0 + 0.12, s1 - 0.12, 9);
-      F.box(PA, u - 0.02, u + 0.02, y + 0.52, y + 0.56, s0 + 0.12, s1 - 0.12, 9);
-      for (let s = s0 + 3.1; s < s1 - 1; s += 3) F.box(PA, u - 0.04, u + 0.04, y, y + 1.06, s - 0.04, s + 0.04, 9, true);
+      box(PA, u - 0.05, u + 0.05, y + 1.04, y + 1.1, s0 + 0.12, s1 - 0.12, 9);
+      box(PA, u - 0.02, u + 0.02, y + 0.52, y + 0.56, s0 + 0.12, s1 - 0.12, 9);
+      for (let s = s0 + 3.1; s < s1 - 1; s += 3) box(PA, u - 0.04, u + 0.04, y, y + 1.06, s - 0.04, s + 0.04, 9, true);
     }
   };
   // Hudson River Park lantern posts (glass heads glow at night)
   const lamps = (F, u0, u1, s0, s1, y, spacing = 16) => {
     for (let u = u0; u <= u1; u += spacing) {
       for (const s of [s0, s1]) {
-        F.box(PA, u - 0.08, u + 0.08, y, y + 4.7, s - 0.08, s + 0.08, 9, true);
+        F.solid(PA, u - 0.08, u + 0.08, y, y + 4.7, s - 0.08, s + 0.08, 9, true);
         F.box(PA, u - 0.2, u + 0.2, y + 4.25, y + 4.85, s - 0.2, s + 0.2, 10);
         F.box(PA, u - 0.27, u + 0.27, y + 4.85, y + 4.97, s - 0.27, s + 0.27, 9);
       }
@@ -875,7 +908,7 @@ function buildWaterfrontPiers(group) {
   // Pier deck on timber piles: concrete slab, shadowed under-deck, fender wales & piles, railings, lamps
   const deck = (F, u0, u1, s0, s1, o = {}) => {
     const y = o.y ?? DY;
-    F.box(GR, u0, u1, y - 0.85, y, s0, s1, o.surface ?? 0);
+    F.top(GR, u0, u1, y - 0.85, y, s0, s1, o.surface ?? 0);
     F.box(PA, u0 + 0.5, u1 - 0.5, -2.9, y - 0.85, s0 + 0.5, s1 - 0.5, 12);
     const ua = Math.max(u0, 2);
     F.box(PA, ua, u1, y - 1.3, y - 0.9, s0 - 0.32, s0 - 0.02, 8);
@@ -905,6 +938,9 @@ function buildWaterfrontPiers(group) {
     mesh.position.set(F.wx(u, s), y0 + h / 2, F.wz(u, s));
     mesh.rotation.y = F.theta + (alongU ? 0 : Math.PI / 2);
     group.add(mesh);
+    if (y0 <= DY + 0.1) {
+      addRideSolid(mesh.position.x, mesh.position.z, Math.abs(b - a), 0.04, y0, y0 + h, mesh.rotation.y);
+    }
   };
 
   // Hudson River Park lawn piers (84, 45, 66, 26): paver promenade, curbed lawn panels with trees, benches, shade sails
@@ -916,15 +952,15 @@ function buildWaterfrontPiers(group) {
     const seg = (L - 22) / n;
     for (let i = 0; i < n; i++) {
       const a = 7 + i * seg + 1.2, b = 7 + (i + 1) * seg - 1.2;
-      F.box(GR, a - 0.3, b + 0.3, DY, DY + 0.32, -lw - 0.3, lw + 0.3, 0);
-      F.box(GR, a, b, DY, DY + 0.36, -lw, lw, 4);
+      F.top(GR, a - 0.3, b + 0.3, DY, DY + 0.32, -lw - 0.3, lw + 0.3, 0);
+      F.top(GR, a, b, DY, DY + 0.36, -lw, lw, 4);
       for (let u = a + 3; u < b - 2; u += 6.5 + rnd() * 3) {
         for (const s of [-lw + 1.7, lw - 1.7]) if (rnd() < 0.8) F.tree(u, s + (rnd() - 0.5), DY + 0.36, 2.0 + rnd() * 1.4);
       }
     }
-    for (let u = 10; u < L - 16; u += 9) for (const s of [-hw + 2.1, hw - 2.1]) F.box(PA, u - 0.9, u + 0.9, DY, DY + 0.45, s - 0.3, s + 0.3, 7);
+    for (let u = 10; u < L - 16; u += 9) for (const s of [-hw + 2.1, hw - 2.1]) F.solid(PA, u - 0.9, u + 0.9, DY, DY + 0.45, s - 0.3, s + 0.3, 7);
     const su = L - 9, sw = Math.min(7, hw - 2.2);
-    for (const du of [-4, 4]) for (const s of [-sw, sw]) F.box(PA, su + du - 0.12, su + du + 0.12, DY, DY + 4.6, s - 0.12, s + 0.12, 9);
+    for (const du of [-4, 4]) for (const s of [-sw, sw]) F.solid(PA, su + du - 0.12, su + du + 0.12, DY, DY + 4.6, s - 0.12, s + 0.12, 9);
     F.strut(BL, [su - 5, DY + 4.3, 0], [su + 5, DY + 5.3, 0], 0.18, 6, sw * 2 + 1.6);
     if (p.lightship) ships.lightship?.(F.sub(L * 0.5, hw + 6.5, 0));
   };
@@ -934,17 +970,17 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: 18, surface: 7 });
     const f1 = L * 0.56;
-    F.box(GR, 6, f1, DY, DY + 0.08, -hw + 2, hw - 2, 5);
+    F.top(GR, 6, f1, DY, DY + 0.08, -hw + 2, hw - 2, 5);
     for (const s of [-hw + 1.7, hw - 1.7]) netWall(F, 5.7, f1 + 0.3, s, DY, 4.5, true);
     for (const u of [5.7, f1 + 0.3]) netWall(F, -hw + 1.7, hw - 1.7, u, DY, 4.5, false);
-    for (let u = 5.7; u <= f1 + 0.4; u += 4.6) for (const s of [-hw + 1.7, hw - 1.7]) F.box(PA, u - 0.06, u + 0.06, DY, DY + 4.6, s - 0.06, s + 0.06, 9);
+    for (let u = 5.7; u <= f1 + 0.4; u += 4.6) for (const s of [-hw + 1.7, hw - 1.7]) F.solid(PA, u - 0.06, u + 0.06, DY, DY + 4.6, s - 0.06, s + 0.06, 9);
     const v0 = f1 + 3, v1 = L * 0.77;
-    F.box(GR, v0, v1, DY, DY + 0.1, -hw + 2, hw - 2, 2);
+    F.top(GR, v0, v1, DY, DY + 0.1, -hw + 2, hw - 2, 2);
     for (const uc of [v0 + (v1 - v0) * 0.27, v0 + (v1 - v0) * 0.73]) {
-      for (const s of [-hw + 3, hw - 3]) F.box(PA, uc - 0.05, uc + 0.05, DY, DY + 2.45, s - 0.05, s + 0.05, 9);
+      for (const s of [-hw + 3, hw - 3]) F.solid(PA, uc - 0.05, uc + 0.05, DY, DY + 2.45, s - 0.05, s + 0.05, 9);
       F.box(PA, uc - 0.02, uc + 0.02, DY + 1.45, DY + 2.45, -hw + 3, hw - 3, 4);
     }
-    F.box(GR, L * 0.8, L - 4, DY, DY + 0.3, -hw + 2.5, hw - 2.5, 4);
+    F.top(GR, L * 0.8, L - 4, DY, DY + 0.3, -hw + 2.5, hw - 2.5, 4);
     for (let u = L * 0.8 + 3; u < L - 6; u += 5) F.tree(u, (rnd() - 0.5) * (hw - 4), DY + 0.3, 1.6 + rnd());
     ships.schooner?.(F.sub(L * 0.52, hw + 4.2, Math.PI));
   };
@@ -954,13 +990,13 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: false });
     const H = 15.2, s0 = -hw + 1.6, s1 = hw - 1.6, u1 = L - 6;
-    F.box(BL, 3, u1, DY, DY + H, s0, s1, 0);
-    F.box(GR, 3.3, u1 - 0.3, DY + H, DY + H + 0.06, s0 + 0.3, s1 - 0.3, 1);
+    F.solid(BL, 3, u1, DY, DY + H, s0, s1, 0);
+    F.top(GR, 3.3, u1 - 0.3, DY + H, DY + H + 0.06, s0 + 0.3, s1 - 0.3, 1);
     for (const s of [s0 + 0.15, s1 - 0.15]) F.box(BL, 3, u1, DY + H, DY + H + 1.0, s - 0.15, s + 0.15, 6);
     F.box(BL, u1 - 0.3, u1, DY + H, DY + H + 1.0, s0, s1, 6);
     F.box(BL, 8, 15, DY + H, DY + H + 4.4, s0 + 0.4, s0 + 5, 6);
     F.box(BL, u1 - 16, u1 - 9, DY + H, DY + H + 4.4, s1 - 5, s1 - 0.4, 6);
-    F.box(BL, Math.max(F.u0, -1), 3.5, DY, DY + H + 3.6, s0 + 2, s1 - 2, 7);
+    F.solid(BL, Math.max(F.u0, -1), 3.5, DY, DY + H + 3.6, s0 + 2, s1 - 2, 7);
     for (const s of [-1, 1]) for (const u of [L * 0.32, L * 0.68]) F.box(BL, u - 4, u + 4, DY + 8.2, DY + 11.4, s * (hw - 1.6), s * (hw + 1.6), 6);
     if (p.cruiseShip) ships.cruise?.(F.sub(Math.max(L * 0.5, 54), hw + 9.5, 0));
   };
@@ -970,9 +1006,9 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: false });
     const H = p.shedH || 9.0;
-    F.box(BL, 2, L - 3, DY, DY + H, -hw + 1.2, hw - 1.2, p.white ? 6 : 2);
+    F.solid(BL, 2, L - 3, DY, DY + H, -hw + 1.2, hw - 1.2, p.white ? 6 : 2);
     F.box(BL, 2, L - 3, DY + H, DY + H + 0.5, -hw + 1.0, hw - 1.0, 9);
-    if (p.roofParking) F.box(GR, 2.4, L - 3.4, DY + H + 0.5, DY + H + 0.56, -hw + 1.6, hw - 1.6, 1);
+    if (p.roofParking) F.top(GR, 2.4, L - 3.4, DY + H + 0.5, DY + H + 0.56, -hw + 1.6, hw - 1.6, 1);
     else F.box(BL, 6, L - 8, DY + H + 0.5, DY + H + 2.4, -hw * 0.3, hw * 0.3, 2);
   };
 
@@ -981,9 +1017,9 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: false });
     const a = L * 0.32;
-    F.box(BL, a, L - 3, DY, DY + 17.6, -hw + 1, hw - 1, 2);
+    F.solid(BL, a, L - 3, DY, DY + 17.6, -hw + 1, hw - 1, 2);
     F.box(BL, a + 4, L - 12, DY + 17.6, DY + 20.6, -hw * 0.4, hw * 0.4, 2);
-    F.strut(GR, [2, DY + 0.35, 0], [a, DY + 8.4, 0], 0.6, 8, 7.5);
+    F.strut(GR, [2, DY + 0.35, 0], [a, DY + 8.4, 0], 0.6, 8, 7.5, 'pavement');
     for (const s of [-3.9, 3.9]) F.strut(BL, [2, DY + 0.9, s], [a, DY + 8.9, s], 1.2, 10, 0.3);
     F.box(PA, a + 2, L - 4, -2.7, -0.9, hw + 1.2, hw + 10, 2);
     for (let u = a + 4; u < L - 8; u += 6.4) F.box(PA, u, u + 5.8, -0.9, 1.7, hw + 2.2, hw + 9, [5, 3, 0, 9][Math.floor(rnd() * 4)]);
@@ -994,9 +1030,9 @@ function buildWaterfrontPiers(group) {
     deck(F, F.u0, L, -hw, hw, { lamps: false });
     const s0 = -hw + 1.3, s1 = hw - 1.3;
     const shedEnd = p.golf ? L * 0.36 : L - 4;
-    F.box(BL, 0, 9, DY, DY + 18.5, -hw + 0.6, hw - 0.6, 1);
+    F.solid(BL, 0, 9, DY, DY + 18.5, -hw + 0.6, hw - 0.6, 1);
     F.box(BL, -0.4, 9.4, DY + 18.5, DY + 19.3, -hw + 0.2, hw - 0.2, 8);
-    F.box(BL, 9, shedEnd, DY, DY + 13.8, s0, s1, 1);
+    F.solid(BL, 9, shedEnd, DY, DY + 13.8, s0, s1, 1);
     F.box(BL, 9, shedEnd, DY + 13.8, DY + 14.4, s0 - 0.3, s1 + 0.3, 8);
     F.box(BL, 11, shedEnd - 2, DY + 14.4, DY + 16.4, -hw * 0.42, hw * 0.42, 8);
     // Arched windows: landward headhouse face and the shed's seaward gable
@@ -1010,11 +1046,11 @@ function buildWaterfrontPiers(group) {
     if (p.sign) F.sign('SPORTS PIERS', -0.8, DY + 16.8, 0, 1.7, -Math.PI / 2);
     if (p.golf) {
       const g0 = shedEnd, g1 = L - 2, H = 46;
-      F.box(GR, g0, g1, DY, DY + 0.05, s0, s1, 6);
+      F.top(GR, g0, g1, DY, DY + 0.05, s0, s1, 6);
       for (let k = 1; k <= 3; k++) F.box(BL, g0 - 0.2, g0 + 3.2, DY + k * 4.6 - 0.35, DY + k * 4.6, s0, s1, 9);
       for (let u = g0 + 2; u <= g1 + 0.1; u += (g1 - g0 - 2) / 4) {
         for (const s of [s0, s1]) {
-          F.box(PA, u - 0.3, u + 0.3, DY, DY + H, s - 0.3, s + 0.3, 9);
+          F.solid(PA, u - 0.3, u + 0.3, DY, DY + H, s - 0.3, s + 0.3, 9);
           F.box(PA, u - 0.5, u + 0.5, DY + H - 1.2, DY + H - 0.4, s - 0.5, s + 0.5, 10);
         }
       }
@@ -1028,11 +1064,11 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: false });
     const s0 = -hw + 1, s1 = hw - 1, H = 15.6;
-    F.box(BL, 0.5, 15, DY, DY + 26, s0, s1, 3);
-    F.box(BL, 15, L - 4, DY, DY + H, s0, s1, 3);
+    F.solid(BL, 0.5, 15, DY, DY + 26, s0, s1, 3);
+    F.solid(BL, 15, L - 4, DY, DY + H, s0, s1, 3);
     F.box(BL, 0.3, 15.2, DY + 26, DY + 26.6, s0 - 0.2, s1 + 0.2, 9);
-    F.box(GR, 15.2, L - 4.2, DY + H, DY + H + 0.2, s0 + 0.3, s1 - 0.3, 7);
-    F.box(GR, 19, L - 10, DY + H + 0.2, DY + H + 0.5, s0 + 3.5, s1 - 3.5, 4);
+    F.top(GR, 15.2, L - 4.2, DY + H, DY + H + 0.2, s0 + 0.3, s1 - 0.3, 7);
+    F.top(GR, 19, L - 10, DY + H + 0.2, DY + H + 0.5, s0 + 3.5, s1 - 3.5, 4);
     for (let u = 21; u < L - 12; u += 6.5) for (const s of [s0 + 4.6, s1 - 4.6]) if (rnd() < 0.75) F.tree(u, s, DY + H + 0.5, 1.8 + rnd() * 0.9);
     railing(F, 15.3, L - 4.2, s0 + 0.3, s1 - 0.3, DY + H + 0.2, true);
     F.box(BL, L - 4, L - 1.2, DY + 5, DY + 5.4, s0, s1, 9);
@@ -1043,15 +1079,15 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: false });
     const u0 = 1.5, u1 = L - 2, s0 = -hw + 1.5, s1 = hw - 1.5, H = 13.8, R = 15;
-    F.box(BL, u0, u1, DY, DY + H, s0, s0 + R, 4);
-    F.box(BL, u0, u1, DY, DY + H, s1 - R, s1, 4);
-    F.box(BL, u0, u0 + R, DY, DY + H, s0 + R, s1 - R, 4);
-    F.box(BL, u1 - R, u1, DY, DY + H, s0 + R, s1 - R, 4);
+    F.solid(BL, u0, u1, DY, DY + H, s0, s0 + R, 4);
+    F.solid(BL, u0, u1, DY, DY + H, s1 - R, s1, 4);
+    F.solid(BL, u0, u0 + R, DY, DY + H, s0 + R, s1 - R, 4);
+    F.solid(BL, u1 - R, u1, DY, DY + H, s0 + R, s1 - R, 4);
     F.box(BL, u0 - 0.2, u1 + 0.2, DY + H, DY + H + 0.7, s0 - 0.2, s0 + 0.4, 10);
     F.box(BL, u0 - 0.2, u1 + 0.2, DY + H, DY + H + 0.7, s1 - 0.4, s1 + 0.2, 10);
-    F.box(GR, u0 + R, u1 - R, DY, DY + 0.06, s0 + R, s1 - R, 5);
-    F.box(GR, u0 + 1, u1 - 1, DY + H, DY + H + 0.08, s0 + 1, s0 + R - 1, 5);
-    F.box(GR, u0 + 1, u1 - 1, DY + H, DY + H + 0.08, s1 - R + 1, s1 - 1, 5);
+    F.top(GR, u0 + R, u1 - R, DY, DY + 0.06, s0 + R, s1 - R, 5);
+    F.top(GR, u0 + 1, u1 - 1, DY + H, DY + H + 0.08, s0 + 1, s0 + R - 1, 5);
+    F.top(GR, u0 + 1, u1 - 1, DY + H, DY + H + 0.08, s1 - R + 1, s1 - 1, 5);
     for (const s of [s0 + 0.6, s0 + R - 0.6, s1 - R + 0.6, s1 - 0.6]) netWall(F, u0 + 0.6, u1 - 0.6, s, DY + H, 4.5, true);
     for (const u of [u0 + 0.8, (u0 + u1) / 2, u1 - 0.8]) {
       for (const s of [s0 + 0.5, s1 - 0.5]) {
@@ -1067,7 +1103,7 @@ function buildWaterfrontPiers(group) {
     const pl = L - 26;
     for (const s of [-hw + 1, hw - 6]) deck(F, F.u0, pl + 1, s, s + 5, { lamps: 18, railEnd: false, endFender: false });
     deck(F, pl, L, -hw, hw, { lamps: false });
-    F.box(BL, pl + 3, L - 3, DY, DY + 24.1, -hw + 3, hw - 3, 5);
+    F.solid(BL, pl + 3, L - 3, DY, DY + 24.1, -hw + 3, hw - 3, 5);
     F.box(BL, pl + 7, L - 7, DY + 24.1, DY + 30.1, -hw + 6, hw - 6, 5);
     F.box(BL, pl + 2.6, L - 2.6, DY + 24.1, DY + 24.8, -hw + 2.6, hw - 2.6, 10);
   };
@@ -1129,7 +1165,7 @@ function buildWaterfrontPiers(group) {
     S.strut(PA, [10, y + 0.65, 0], [15, y + 0.3, 0], 0.7, 4);
     S.geo(PA, flatShape([[5, 0.7], [-11, 5.8], [-11, -5.8], [5, -0.7]], 0.22), 0, y + 0.2, 0, 0, 4);
     S.strut(PA, [-6.5, y + 1.3, 0], [-11, y + 5.4, 0], 2.2, 4, 0.2);
-    for (const a of [-5, 6]) S.box(PA, a - 0.25, a + 0.25, DY, y, -0.25, 0.25, 9);
+    for (const a of [-5, 6]) S.solid(PA, a - 0.25, a + 0.25, DY, y, -0.25, 0.25, 9);
   };
 
   // USS Growler guided-missile submarine alongside the pier
@@ -1243,7 +1279,7 @@ function buildWaterfrontPiers(group) {
   kinds.intrepid = (F) => {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: 16 });
-    F.box(BL, 1, 13, DY, DY + 6.3, -hw + 2.5, hw - 2.5, 7);
+    F.solid(BL, 1, 13, DY, DY + 6.3, -hw + 2.5, hw - 2.5, 7);
     ships.carrier(F.sub(L * 0.52, hw + 9.5, 0));
     ships.concorde(F.sub(L * 0.72, -hw * 0.3, 0.22));
     ships.submarine(F.sub(L * 0.3, -hw - 3.6, 0));
@@ -1253,13 +1289,13 @@ function buildWaterfrontPiers(group) {
     const { L } = F;
     const FY = -1.5; // floating dock deck, 0.7 m above the water
     for (const s0 of [-30, 0, 30]) {
-      F.box(GR, 4, L, FY - 0.45, FY, s0 - 1.4, s0 + 1.4, 3);
+      F.top(GR, 4, L, FY - 0.45, FY, s0 - 1.4, s0 + 1.4, 3);
       F.box(PA, 4.2, L - 0.2, FY - 0.9, FY - 0.45, s0 - 1.2, s0 + 1.2, 8);
-      F.strut(GR, [-1, DY - 0.2, s0], [5, FY - 0.05, s0], 0.25, 3, 2.2);
+      F.strut(GR, [-1, DY - 0.2, s0], [5, FY - 0.05, s0], 0.25, 3, 2.2, 'wood');
       for (let u = 10; u < L - 2; u += 7) {
         F.box(PA, u - 0.2, u + 0.2, -3, FY + 1.4, s0 + 1.6, s0 + 2.0, 8);
         for (const sd of [-1, 1]) {
-          F.box(GR, u - 0.6, u + 0.6, FY - 0.4, FY, s0 + sd * 1.4, s0 + sd * 10.5, 3);
+          F.top(GR, u - 0.6, u + 0.6, FY - 0.4, FY, s0 + sd * 1.4, s0 + sd * 10.5, 3);
           if (rnd() < 0.85) {
             const len = 6 + rnd() * 5;
             ships.boat(F.sub(u + 3.5, s0 + sd * (2.0 + len * 0.5), sd > 0 ? -Math.PI / 2 : Math.PI / 2), len, rnd() < 0.6);
@@ -1293,7 +1329,7 @@ function buildWaterfrontPiers(group) {
       tp.setXYZ(i, cu + a * ru, height(a, b), b * hw);
     }
     top.computeVertexNormals();
-    F.geo(GR, top, 0, 0, 0, 0, 4);
+    F.ground(GR, top, 0, 0, 0, 0, 4);
     // Concrete rim skirt around the edge (pot rims), wound to face outward
     const ring = [];
     for (let ix = 0; ix <= NX; ix++) ring.push(ix);
@@ -1332,7 +1368,7 @@ function buildWaterfrontPiers(group) {
     // Gangways from the esplanade to the low east edge
     for (const s of [-hw + 8, hw - 8]) {
       const y1 = height(-0.95, s / hw) - 0.1;
-      F.strut(GR, [F.u0, DY - 0.15, s], [U0 + 2, y1, s], 0.5, 3, 4.2);
+      F.strut(GR, [F.u0, DY - 0.15, s], [U0 + 2, y1, s], 0.5, 3, 4.2, 'wood');
       for (const e of [-2.1, 2.1]) F.strut(PA, [F.u0, DY + 1.0, s + e], [U0 + 2, y1 + 1.1, s + e], 0.08, 9);
     }
   };
@@ -1344,20 +1380,20 @@ function buildWaterfrontPiers(group) {
     const vols = [[uA, uM, 16.8, 0], [uM, uB, 12.6, 1.5]];
     for (const [a, b, h, i] of vols) {
       const top = DY + h + 0.9;
-      F.box(BL, a, b, DY, DY + h, s0 + i, s1 - i, 7);
+      F.solid(BL, a, b, DY, DY + h, s0 + i, s1 - i, 7);
       F.box(BL, a - 0.3, b + 0.3, DY + h, top, s0 + i - 0.3, s1 - i + 0.3, 9);
       for (let u = a + 0.2; u < b; u += 8.4) for (const s of [s0 + i - 0.12, s1 - i + 0.12]) F.box(BL, u - 0.2, u + 0.2, DY, DY + h, s - 0.1, s + 0.1, 9);
-      F.box(GR, a, b, top, top + 0.1, s0 + i, s1 - i, 3);
+      F.top(GR, a, b, top, top + 0.1, s0 + i, s1 - i, 3);
       railing(F, a, b, s0 + i, s1 - i, top + 0.1, i > 0);
     }
     // Rooftop: lawn bowl and stage with a white tensile canopy on the upper roof, planters on the lower roof
     const R1 = DY + 16.8 + 1.0, R2 = DY + 12.6 + 1.0;
-    F.box(GR, uA + 3, uM - 18, R1, R1 + 0.15, s0 + 3, s1 - 3, 4);
+    F.top(GR, uA + 3, uM - 18, R1, R1 + 0.15, s0 + 3, s1 - 3, 4);
     F.box(PA, uM - 15, uM - 3, R1, R1 + 1.2, -8, 8, 2);
     F.box(BL, uM - 16, uM - 1, R1 + 7.4, R1 + 7.9, -11, 11, 6);
     for (const u of [uM - 15.5, uM - 1.5]) for (const s of [-10.5, 10.5]) F.box(PA, u - 0.2, u + 0.2, R1, R1 + 7.4, s - 0.2, s + 0.2, 9);
     for (let u = uM + 4; u < uB - 2; u += 7) for (const s of [s0 + 3.5, s1 - 3.5]) {
-      F.box(PA, u - 0.9, u + 0.9, R2, R2 + 0.6, s - 0.9, s + 0.9, 6);
+      F.solid(PA, u - 0.9, u + 0.9, R2, R2 + 0.6, s - 0.9, s + 0.9, 6);
       F.tree(u, s, R2 + 0.6, 1.3);
     }
     F.sign('PIER 17', uA - 0.06, DY + 14.2, 0, 2.6, -Math.PI / 2);
@@ -1367,7 +1403,7 @@ function buildWaterfrontPiers(group) {
   kinds.tallShip = (F) => {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: 16, surface: 3 });
-    F.box(BL, 4, 10, DY, DY + 3.2, -3, 3, 6);
+    F.solid(BL, 4, 10, DY, DY + 3.2, -3, 3, 6);
     F.box(PA, 3.6, 10.4, DY + 3.2, DY + 3.5, -3.4, 3.4, 5);
     ships.tallShip(F.sub(Math.min(L - 30, 40), hw + 6.4, Math.PI), 58, 9, [[16, 36], [1, 39], [-14, 32]], 3.6, true);
     ships.lightship(F.sub(L * 0.62, -hw - 4.4, 0));
@@ -1378,14 +1414,14 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { surface: 3 });
     const UY = DY + 6.2, ua = 4, ub = L - 20, sa = -hw + 1, sb = hw - 1;
-    F.box(GR, ua, ub, UY - 1.0, UY, sa, sb, 4);
+    F.top(GR, ua, ub, UY - 1.0, UY, sa, sb, 4);
     F.box(PA, ua - 0.12, ua, UY - 1.1, UY + 0.04, sa - 0.12, sb + 0.12, 7);
     for (const [s, t] of [[sa - 0.12, sa], [sb, sb + 0.12]]) F.box(PA, ua, ub, UY - 1.1, UY + 0.04, s, t, 7);
-    for (let u = ua + 1; u < ub; u += 6.5) for (const s of [sa + 1.2, 0, sb - 1.2]) F.box(PA, u - 0.18, u + 0.18, DY, UY - 1.0, s - 0.18, s + 0.18, 9);
-    F.box(BL, 7, 25, DY, UY - 1.0, -hw + 3.5, hw - 3.5, 7);
-    F.box(BL, ub - 13, ub - 3, DY, UY - 1.0, -4, 4, 7);
+    for (let u = ua + 1; u < ub; u += 6.5) for (const s of [sa + 1.2, 0, sb - 1.2]) F.solid(PA, u - 0.18, u + 0.18, DY, UY - 1.0, s - 0.18, s + 0.18, 9);
+    F.solid(BL, 7, 25, DY, UY - 1.0, -hw + 3.5, hw - 3.5, 7);
+    F.solid(BL, ub - 13, ub - 3, DY, UY - 1.0, -4, 4, 7);
     const n = 6, dh = (UY - DY) / n;
-    for (let i = 0; i < n; i++) F.box(PA, ub + i * 2.2, ub + (i + 1) * 2.2, DY, UY - i * dh, sa + 1, sb - 1, 7);
+    for (let i = 0; i < n; i++) F.solid(PA, ub + i * 2.2, ub + (i + 1) * 2.2, DY, UY - i * dh, sa + 1, sb - 1, 7);
     railing(F, ua, ub, sa, sb, UY, false);
     lamps(F, ub + 16, L - 3, -hw + 1, hw - 1, DY, 10);
     for (let u = ua + 4; u < ub - 6; u += 9) F.tree(u, (u % 2 ? 1 : -1) * (hw - 3.5), UY, 1.5);
@@ -1396,7 +1432,7 @@ function buildWaterfrontPiers(group) {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: 16 });
     if (p.circleLine) {
-      F.box(BL, 2.4, 23.6, DY, DY + 4.2, -hw + 1.9, hw - 1.9, 7);
+      F.solid(BL, 2.4, 23.6, DY, DY + 4.2, -hw + 1.9, hw - 1.9, 7);
       F.box(BL, 2, 24, DY + 4.2, DY + 9.2, -hw + 1.5, hw - 1.5, 6);
       F.box(PA, 1.7, 24.3, DY + 9.2, DY + 9.7, -hw + 1.2, hw - 1.2, 5);
       F.sign('SIGHTSEEING CRUISES', 1.94, DY + 6.7, 0, 2.3, -Math.PI / 2);
@@ -1404,17 +1440,17 @@ function buildWaterfrontPiers(group) {
       ships.ferry(F.sub(L * 0.66, -hw - 6, Math.PI), 34, 2);
       return;
     }
-    F.box(BL, 3, 21, DY, DY + 8.4, -hw + 2.5, hw - 2.5, 7);
+    F.solid(BL, 3, 21, DY, DY + 8.4, -hw + 2.5, hw - 2.5, 7);
     F.box(BL, 1.5, 22.5, DY + 8.4, DY + 9.0, -hw + 1, hw - 1, 6);
-    for (const u of [1.9, 22.1]) for (const s of [-hw + 1.4, hw - 1.4]) F.box(PA, u - 0.15, u + 0.15, DY, DY + 8.4, s - 0.15, s + 0.15, 9);
+    for (const u of [1.9, 22.1]) for (const s of [-hw + 1.4, hw - 1.4]) F.solid(PA, u - 0.15, u + 0.15, DY, DY + 8.4, s - 0.15, s + 0.15, 9);
     const FY = -1.2, len = p.ferryLen ?? 26;
     for (const sd of [-1, 1]) {
       const sb = sd * (hw + 4.5), a = L - 34, b = L - 4;
       F.box(PA, a, b, -2.8, FY, sb - 3.5, sb + 3.5, 9);
-      F.box(GR, a, b, FY, FY + 0.1, sb - 3.5, sb + 3.5, 0);
-      F.box(BL, a + 6, b - 8, FY + 0.1, FY + 3.2, sb - 2.2, sb + 2.2, 6);
+      F.top(GR, a, b, FY, FY + 0.1, sb - 3.5, sb + 3.5, 0);
+      F.solid(BL, a + 6, b - 8, FY + 0.1, FY + 3.2, sb - 2.2, sb + 2.2, 6);
       F.box(PA, a + 5.7, b - 7.7, FY + 3.2, FY + 3.5, sb - 2.5, sb + 2.5, 5);
-      for (const u of [a + 4, b - 4]) F.strut(PA, [u, DY + 0.05, sd * (hw - 0.3)], [u, FY + 0.15, sd * (hw + 1.2)], 2.2, 9, 0.25);
+      for (const u of [a + 4, b - 4]) F.strut(PA, [u, DY + 0.05, sd * (hw - 0.3)], [u, FY + 0.15, sd * (hw + 1.2)], 2.2, 9, 0.25, 'pavement');
       if (sd > 0 || p.ferries === 2) ships.ferry(F.sub((a + b) / 2, sb + sd * (3.9 + len * 0.15), sd > 0 ? 0 : Math.PI), len, p.ferryDecks ?? 1);
     }
   };
@@ -1425,15 +1461,15 @@ function buildWaterfrontPiers(group) {
     deck(F, F.u0, L, -hw, hw, { lamps: 16, surface: 7 });
     for (let u = 8, k = 0; u < L - 10; u += 6, k++) {
       const P = F.sub(u + 3, -hw + 2.6, k % 2 ? 0.22 : -0.22);
-      P.box(BL, -3.1, 3.1, DY, DY + 10.5, -0.35, 0.35, 8);
+      P.solid(BL, -3.1, 3.1, DY, DY + 10.5, -0.35, 0.35, 8);
       P.box(PA, -3.15, -2.95, DY, DY + 10.8, -0.45, 0.45, 9);
     }
     for (const [u, s, r] of [[14, 3, 4.5], [30, 4, 5.5], [46, 2.5, 4]]) {
-      F.box(GR, u - r, u + r, DY, DY + 0.45, s - r * 0.7, s + r * 0.7, 4);
+      F.top(GR, u - r, u + r, DY, DY + 0.45, s - r * 0.7, s + r * 0.7, 4);
       F.tree(u, s, DY + 0.45, 1.8);
     }
     for (const u of [22, 38]) {
-      for (const s of [hw - 5, hw - 1.5]) F.box(PA, u - 0.06, u + 0.06, DY, DY + 3.2, s - 0.06, s + 0.06, 9);
+      for (const s of [hw - 5, hw - 1.5]) F.solid(PA, u - 0.06, u + 0.06, DY, DY + 3.2, s - 0.06, s + 0.06, 9);
       F.box(PA, u - 0.06, u + 0.06, DY + 3.1, DY + 3.25, hw - 5, hw - 1.5, 9);
     }
   };
@@ -1442,13 +1478,13 @@ function buildWaterfrontPiers(group) {
   kinds.whitehall = () => {
     const F = frame(35, 1463, Math.atan2(-0.987, 0.158)); // u points out into the harbor, +s points west
     deck(F, 0, 16, -33, 33, { rail: false });
-    F.box(BL, -18, 14, DY, DY + 15.2, -32, 32, 0);
+    F.solid(BL, -18, 14, DY, DY + 15.2, -32, 32, 0);
     F.box(PA, -18.3, 14.3, DY + 15.2, DY + 16.0, -32.3, 32.3, 9);
-    F.box(BL, -20, -18, DY, DY + 21, -30, 30, 7);
+    F.solid(BL, -20, -18, DY, DY + 21, -30, 30, 7);
     F.box(PA, -20.2, -17.8, DY + 21, DY + 21.6, -30.2, 30.2, 9);
     F.box(BL, -16, 8, DY + 16.0, DY + 19.0, -22, 22, 6);
     F.box(BL, -29, -20, DY + 14.4, DY + 15.0, -26, 26, 6);
-    for (const s of [-24, 24]) F.box(PA, -28.2, -27.8, DY, DY + 14.4, s - 0.2, s + 0.2, 9);
+    for (const s of [-24, 24]) F.solid(PA, -28.2, -27.8, DY, DY + 14.4, s - 0.2, s + 0.2, 9);
     F.sign('STATEN ISLAND FERRY', -20.06, DY + 18.4, 0, 2.4, -Math.PI / 2);
     for (const sr of [-33, -11, 11, 33]) {
       F.box(PA, 14, 50, -3.0, DY + 1.5, sr - 0.6, sr + 0.6, 8);
@@ -1475,9 +1511,10 @@ function buildWaterfrontPiers(group) {
       cp.setXYZ(i, cp.getX(i) * k, cp.getY(i) * k, cp.getZ(i) * k);
     }
     crownGeo.computeVertexNormals();
-    for (const [x, y, z, r] of trees) {
+    for (const [x, y, z, r, ride] of trees) {
       const th = r * (0.85 + rnd() * 0.35);
       B.box(PA, x, y + th * 0.5, z, 0.3, th, 0.3, 0, 8, true);
+      if (ride) addRideSolid(x, z, 0.3, 0.3, y, y + th).layered = true;
       const g = crownGeo.clone().scale(r, r * (0.8 + rnd() * 0.3), r);
       B.geo(PA, g, x, y + th + r * 0.6, z, rnd() * 6.28, 14 + Math.floor(rnd() * 3));
     }
@@ -1550,13 +1587,15 @@ function buildCityGrid(scene) {
   }
   // An upright box, yawed like a three.js mesh with rotation.y = rotY (EUC BoxCollider convention: the same)
   function addRideSolid(x, z, w, d, bottom, top, rotY = 0, occludes = false) {
-    rideSolids.push({
+    const entry = {
       centre: { x, y: (bottom + top) / 2, z },
       halfExtents: { x: w / 2, y: (top - bottom) / 2, z: d / 2 },
       rotationY: rotY,
       surface: 'stone',
       occludes
-    });
+    };
+    rideSolids.push(entry);
+    return entry;
   }
   function addRideFence(x1, z1, x2, z2, top, thickness = 0.3) {
     const len = Math.hypot(x2 - x1, z2 - z1);
@@ -1566,6 +1605,25 @@ function buildCityGrid(scene) {
   const circlePoly = (cx, cz, r, n = 20) => Array.from({ length: n }, (_, i) => ({
     x: cx + r * Math.cos((i / n) * Math.PI * 2), z: cz + r * Math.sin((i / n) * Math.PI * 2)
   }));
+  // Register the upward faces of a ground object, after its transform is set, before static batching.
+  // Facets preserve rock slopes and tapered platform edges without an enclosing box or a flat invisible lid.
+  function addRideMesh(mesh, surface = 'stone', shore = false, layered = false) {
+    mesh.updateWorldMatrix(true, false);
+    const pos = mesh.geometry.attributes.position, index = mesh.geometry.index;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3(), n = new THREE.Vector3();
+    for (let i = 0, count = index ? index.count : pos.count; i < count; i += 3) {
+      a.fromBufferAttribute(pos, index ? index.getX(i) : i).applyMatrix4(mesh.matrixWorld);
+      b.fromBufferAttribute(pos, index ? index.getX(i + 1) : i + 1).applyMatrix4(mesh.matrixWorld);
+      c.fromBufferAttribute(pos, index ? index.getX(i + 2) : i + 2).applyMatrix4(mesh.matrixWorld);
+      n.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a));
+      if (n.y <= 1e-7) continue; // vertical walls and undersides are not support surfaces
+      const t = addRideTop([a, b, c], Math.max(a.y, b.y, c.y), surface);
+      t.plane = { x: a.x, y: a.y, z: a.z, dx: -n.x / n.y, dz: -n.z / n.y };
+      if (shore) t.shore = true;
+      if (layered) t.layered = true;
+    }
+  }
 
   // =========================================================================
   // 1. NEW YORK HARBOR, HUDSON RIVER, EAST RIVER & HARLEM RIVER WATER PLANE
@@ -1714,8 +1772,13 @@ function buildCityGrid(scene) {
     group.add(m);
     return m;
   }
+  function addSolidBox(mat, x, y, z, w, h, d, rotY = 0, cast = true) {
+    const mesh = addBox(mat, x, y, z, w, h, d, rotY, cast);
+    addRideSolid(x, z, w, d, y, y + h, rotY);
+    return mesh;
+  }
   function addPlanter(x, z, w, d, baseY = PLAZA_Y) {
-    addBox(graniteMat, x, baseY, z, w, 0.55, d);
+    addSolidBox(graniteMat, x, baseY, z, w, 0.55, d);
     addBox(medianHedgeMat, x, baseY + 0.55, z, w - 0.35, 0.3, d - 0.35, 0, false);
   }
   function addPlanterTree(x, z, species = 1, scale = 0.85) {
@@ -1796,7 +1859,7 @@ function buildCityGrid(scene) {
     for (let z = pc.zN + 6; z <= pc.zS - 6; z += 12) {
       for (const [dx, dz] of [[-0.22, 0], [0.22, -6]]) {
         const x = bx.cx + (bx.maxX - bx.minX) * dx;
-        if (insidePiece(pc, x, z + dz, 2)) addBox(graniteMat, x, PLAZA_Y, z + dz, 1.25, 0.46, 8.0);
+        if (insidePiece(pc, x, z + dz, 2)) addSolidBox(graniteMat, x, PLAZA_Y, z + dz, 1.25, 0.46, 8.0);
       }
     }
     for (const z of [pc.zN + 2.2, pc.zS - 2.2]) if (insidePiece(pc, bx.cx, z, 0.8)) addPlanter(bx.cx, z, Math.min(5.5, (bx.maxX - bx.minX) * 0.5), 1.6);
@@ -1823,10 +1886,11 @@ function buildCityGrid(scene) {
     const tkRise = tkSteps * tkRiser;
     for (let s = 0; s < tkSteps; s++) {
       addBox(tktsStepMat, tkX, PLAZA_Y, tkFrontZ - (s + 0.5) * tkTread, tkW, (s + 1) * tkRiser, tkTread);
+      addRideTop(rectPolygon(tkX - tkW / 2, tkX + tkW / 2, tkFrontZ - (s + 1) * tkTread, tkFrontZ - s * tkTread), PLAZA_Y + (s + 1) * tkRiser, 'stone');
     }
     // Glazed ticket booth face under the top of the bleachers (47th St side) & a steel canopy edge
-    addBox(tktsGlassMat, tkX, PLAZA_Y, tkFrontZ - tkRun - 0.15, tkW - 0.4, tkRise - 0.25, 0.3);
-    addBox(steelMat, tkX, PLAZA_Y + tkRise - 0.25, tkFrontZ - tkRun - 0.2, tkW + 0.2, 0.25, 0.5);
+    addSolidBox(tktsGlassMat, tkX, PLAZA_Y, tkFrontZ - tkRun - 0.15, tkW - 0.4, tkRise - 0.25, 0.3);
+    addSolidBox(steelMat, tkX, PLAZA_Y + tkRise - 0.25, tkFrontZ - tkRun - 0.2, tkW + 0.2, 0.25, 0.5);
     // Sloped steel handrails up both sides and the centre of the steps
     const tkSlope = Math.atan2(tkRise, tkRun);
     const tkRailLen = Math.hypot(tkRise, tkRun);
@@ -1841,12 +1905,12 @@ function buildCityGrid(scene) {
       }
     }
     // Father Duffy statue: bronze chaplain before a granite Celtic cross at the south end of the square
-    addBox(graniteMat, tkX, PLAZA_Y, tkFrontZ + 4.4, 1.2, 1.35, 1.2);
+    addSolidBox(graniteMat, tkX, PLAZA_Y, tkFrontZ + 4.4, 1.2, 1.35, 1.2);
     const duffyFigure = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.36, 1.85, 8), bronzeMat);
     duffyFigure.position.set(tkX, PLAZA_Y + 1.35 + 0.925, tkFrontZ + 4.6);
     duffyFigure.castShadow = true;
     group.add(duffyFigure);
-    addBox(graniteMat, tkX, PLAZA_Y + 1.35, tkFrontZ + 3.95, 0.36, 3.9, 0.3);
+    addSolidBox(graniteMat, tkX, PLAZA_Y + 1.35, tkFrontZ + 3.95, 0.36, 3.9, 0.3);
     addBox(graniteMat, tkX, PLAZA_Y + 4.1, tkFrontZ + 3.95, 1.45, 0.34, 0.3);
     addLamp(duffy.minX + 1.2, PLAZA_Y, tkFrontZ + 2.6);
     addLamp(duffy.maxX - 1.2, PLAZA_Y, tkFrontZ + 2.6);
@@ -1947,7 +2011,10 @@ function buildCityGrid(scene) {
 
   // Sunlit open meadows & lawns: Sheep Meadow, the Great Lawn, North Meadow, the Great Hill, Cedar & Pilgrim Hills...
   const cpLawnPolys = CPG.lawns.map((l) => flatPts(l.ring));
-  for (const pts of cpLawnPolys) group.add(createFlatPolygonMesh(pts, 1.21, cpMeadowMat, true));
+  for (const pts of cpLawnPolys) {
+    group.add(createFlatPolygonMesh(pts, 1.21, cpMeadowMat, true));
+    addRideTop(pts, 1.21, 'grass');
+  }
 
   // Water: the Lake, the Jacqueline Kennedy Onassis Reservoir (raised in its stone basin, ringed by the running
   // track), Harlem Meer, the Pond, Turtle Pond, the Pool & Conservatory Water
@@ -2023,6 +2090,7 @@ function buildCityGrid(scene) {
       seg.rotation.y = Math.atan2(dx, dz);
       seg.receiveShadow = true;
       group.add(seg);
+      addRideMesh(seg, 'pavement');
     }
   }
   for (const d of CPG.drives) {
@@ -2056,6 +2124,7 @@ function buildCityGrid(scene) {
   mallPromenade.position.set(mallX, 1.18, mallZ0 + MALL_LEN * 0.5);
   mallPromenade.receiveShadow = true;
   group.add(mallPromenade);
+  addRideTop(rectPolygon(mallX - 9, mallX + 9, mallZ0, mallZ0 + MALL_LEN), 1.26, 'brick');
   const bethesdaTerrace = new THREE.Mesh(new THREE.BoxGeometry(48, 2.2, 16), marbleArchMat);
   bethesdaTerrace.position.set(beth.x + 4, 1.8, beth.z + 20);
   group.add(bethesdaTerrace);
@@ -2063,13 +2132,14 @@ function buildCityGrid(scene) {
   const bethesdaBasin = new THREE.Mesh(new THREE.CylinderGeometry(9.5, 10.2, 1.1, 20), marbleArchMat);
   bethesdaBasin.position.set(beth.x, 1.5, beth.z);
   group.add(bethesdaBasin);
-  addRideSolid(beth.x, beth.z, 14.4, 14.4, 0, 2.05, Math.PI / 4); // the basin's rim, as a box inside its circle
+  addRideSolid(beth.x, beth.z, 14.4, 14.4, 0, 2.05, Math.PI / 4); // existing compact body collider for swept / ragdoll contact
   const bethesdaStatue = new THREE.Mesh(
     new THREE.CylinderGeometry(0.8, 1.6, 5.2, 10),
     new THREE.MeshStandardNodeMaterial({ color: 0x5c7a68, metalness: 0.65, roughness: 0.35 })
   );
   bethesdaStatue.position.set(beth.x, 3.8, beth.z);
   group.add(bethesdaStatue);
+  addRideMesh(bethesdaStatue);
 
   // Manhattan Schist glacial outcrops: Umpire Rock (by the Heckscher ballfields), Rat Rock (Billy Johnson Playground),
   // Vista Rock under Belvedere Castle, a couple near the Pond & the Lake
@@ -2090,6 +2160,7 @@ function buildCityGrid(scene) {
     rock.castShadow = true;
     rock.receiveShadow = true;
     group.add(rock);
+    addRideMesh(rock);
 
     // Flanking lower glacial schist bedrock shelf
     const shelf = new THREE.Mesh(rockGeo, schistRockMat);
@@ -2099,6 +2170,7 @@ function buildCityGrid(scene) {
     shelf.castShadow = true;
     shelf.receiveShadow = true;
     group.add(shelf);
+    addRideMesh(shelf);
   }
 
   // Belvedere Castle overlooking Vista Rock & Turtle Pond (79th St)
@@ -2131,7 +2203,7 @@ function buildCityGrid(scene) {
   const gapPlaza = new THREE.Mesh(new THREE.CylinderGeometry(16, 17, 0.45, 24), marbleArchMat);
   gapPlaza.position.set(gap.x, 0.25, gap.z);
   group.add(gapPlaza);
-  addRideTop(circlePoly(gap.x, gap.z, 16.5), 0.475, 'stone');
+  addRideMesh(gapPlaza);
   addFootprint(gap.x, gap.z, 34, 34);
   const shermanGold = new THREE.Mesh(
     new THREE.BoxGeometry(2.4, 4.2, 4.4),
@@ -2139,13 +2211,14 @@ function buildCityGrid(scene) {
   );
   shermanGold.position.set(gap.x, 2.6, gap.z - 28);
   group.add(shermanGold);
+  addRideSolid(gap.x, gap.z - 28, 2.4, 4.4, 0.5, 4.7);
 
   const colC = cpSite('Columbus Circle') || { x: -860, z: -1375 };
   const columbusCircle = new THREE.Mesh(new THREE.CylinderGeometry(15, 16, 0.5, 24), marbleArchMat);
   columbusCircle.position.set(colC.x, 0.25, colC.z);
   group.add(columbusCircle);
-  addRideTop(circlePoly(colC.x, colC.z, 15.5), 0.5, 'stone');
-  addRideSolid(colC.x, colC.z, 2.6, 2.6, 0, 18.5); // the column
+  addRideMesh(columbusCircle);
+  addRideSolid(colC.x, colC.z, 2.6, 2.6, 0, 18.5); // retain the column's swept / ragdoll body collider
   addFootprint(colC.x, colC.z, 32, 32);
   const columbusColumn = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.5, 18, 12), marbleArchMat);
   columbusColumn.position.set(colC.x, 9.5, colC.z);
@@ -2252,6 +2325,7 @@ function buildCityGrid(scene) {
       const hoop = offsetConvexPolygon(bed, -0.18);
       parkFenceGeos.push(buildFenceStripGeometry(hoop.map((p, k) => {
         const q = hoop[(k + 1) % hoop.length];
+        addRideFence(p.x, p.z, q.x, q.z, BED_Y - 0.01 + 0.5, 0.06);
         return [p.x, p.z, q.x, q.z];
       }), BED_Y - 0.01, 0.5));
       lineBedEdges(bed);
@@ -2263,6 +2337,7 @@ function buildCityGrid(scene) {
     hub.position.set(hx, PARK_Y + 0.005, hz);
     hub.receiveShadow = true;
     group.add(hub);
+    addRideTop(circlePoly(hx, hz, hubR + 0.6, 40), PARK_Y + 0.02, 'brick');
     if (cell.fountain) {
       const f = cell.fountain;
       const basin = [[f + 0.18, 0], [f, 0.5], [f - 0.4, 0.5], [f - 0.4, 0.26]].map(([r, y]) => new THREE.Vector2(r, y));
@@ -2270,14 +2345,19 @@ function buildCityGrid(scene) {
       rim.position.set(hx, PARK_Y, hz);
       rim.receiveShadow = true;
       group.add(rim);
+      addRideMesh(rim);
       const pool = new THREE.Mesh(new THREE.CircleGeometry(f - 0.39, 40).rotateX(-Math.PI / 2), waterMat);
       pool.position.set(hx, PARK_Y + 0.3, hz);
       group.add(pool);
+      // The low rim is the obstacle here: unlike an unfenced pond, it need not invent a higher shore wall.
+      const water = addRideTop(circlePoly(hx, hz, f - 0.4, 40), PARK_Y + 0.3, 'stone');
+      water.water = { level: PARK_Y + 0.3, floor: PARK_Y + 0.3 - WATER_RIDE.floorDepth, band: 0 };
       if (f > 6) {
-        addBox(graniteMat, hx, PARK_Y + 0.28, hz, 1.6, 0.5, 1.6, Math.PI / 4);
+        addSolidBox(graniteMat, hx, PARK_Y + 0.28, hz, 1.6, 0.5, 1.6, Math.PI / 4);
         const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 0.6, 0.35, 24), graniteMat);
         bowl.position.set(hx, PARK_Y + 0.95, hz);
         group.add(bowl);
+        addRideMesh(bowl);
       }
     }
     return { hx, hz, rays };
@@ -2396,10 +2476,11 @@ function buildCityGrid(scene) {
     addBox(archMat, wsArchX, PARK_Y + 20.85, wsArchZ, 17.6, 0.35, 4.8); // attic coping
     addBox(archMat, wsArchX, PARK_Y + 7.9, wsArchZ, 17.4, 0.6, 4.7); // impost band
     for (const sx of [-6.45, 6.45]) {
-      addBox(archMat, wsArchX + sx, PARK_Y, wsArchZ, 4.5, 1.3, 5.0); // pier plinths
+      addRideSolid(wsArchX + sx, wsArchZ, 4.1, 4.4, PARK_Y, PARK_Y + 17.4, 0, true);
+      addSolidBox(archMat, wsArchX + sx, PARK_Y, wsArchZ, 4.5, 1.3, 5.0); // pier plinths
       // "Washington at War" & "Washington at Peace": statue groups on pedestals against the piers' north faces
       const fz = wsArchZ - 2.5 - 0.95;
-      addBox(archMat, wsArchX + sx, PARK_Y, fz, 3.4, 2.4, 1.8);
+      addSolidBox(archMat, wsArchX + sx, PARK_Y, fz, 3.4, 2.4, 1.8);
       addBox(archMat, wsArchX + sx, PARK_Y + 2.4, fz, 0.9, 3.3, 0.8); // Washington
       addBox(archMat, wsArchX + sx, PARK_Y + 5.7, fz, 0.45, 0.5, 0.45);
       for (const fx of [-1.05, 1.05]) addBox(archMat, wsArchX + sx + fx, PARK_Y + 2.4, fz + 0.15, 0.75, 2.5, 0.7, fx * 0.3); // allegorical figures
@@ -2419,12 +2500,13 @@ function buildCityGrid(scene) {
     const pz0 = f.maxZ - f.inset - smallParks.union.southPlaza;
     const plaza = addBox(pavingMat, smallParks.union.x, PARK_Y - 0.03, (pz0 + f.maxZ - 0.3) * 0.5, smallParks.union.w - 0.6, 0.05, f.maxZ - 0.3 - pz0, 0, false);
     setPavingStyle(plaza.geometry, 1);
+    addRideMesh(plaza, 'brick');
     const sx = smallParks.union.x;
     const sz = pz0 + 4.0;
     const top = PARK_Y + 3.6;
-    addBox(graniteMat, sx, PARK_Y, sz, 4.0, 0.55, 6.0); // stepped granite plinth, die & cornice
-    addBox(graniteMat, sx, PARK_Y + 0.55, sz, 2.4, 2.7, 4.4);
-    addBox(graniteMat, sx, PARK_Y + 3.25, sz, 2.9, 0.35, 4.9);
+    addSolidBox(graniteMat, sx, PARK_Y, sz, 4.0, 0.55, 6.0); // stepped granite plinth, die & cornice
+    addSolidBox(graniteMat, sx, PARK_Y + 0.55, sz, 2.4, 2.7, 4.4);
+    addSolidBox(graniteMat, sx, PARK_Y + 3.25, sz, 2.9, 0.35, 4.9);
     addBox(bronzeMat, sx, top + 1.05, sz, 0.95, 1.15, 2.7); // horse body
     for (const [lx, lz] of [[-0.3, -1.0], [0.3, -1.0], [-0.3, 1.0], [0.3, 1.0]]) addBox(bronzeMat, sx + lx, top, sz + lz, 0.2, 1.1, 0.22);
     const neck = addBox(bronzeMat, sx, top + 1.6, sz + 1.45, 0.5, 1.3, 0.6);
@@ -2546,6 +2628,9 @@ function buildCityGrid(scene) {
   // One merged lawn mesh & one alpha-tested iron fence mesh for every small park
   if (parkLawnGeos.length) {
     const parkLawnMesh = new THREE.Mesh(mergeGeometries(parkLawnGeos, false), cpLawnMat);
+    // Insets of irregular shore park polygons can extend outside the original bed. Register the actual triangulated
+    // lawn too, so it cannot show through a lower waterfront belt while the wheel rides the belt underneath it.
+    addRideMesh(parkLawnMesh, 'grass');
     parkLawnMesh.receiveShadow = true;
     group.add(parkLawnMesh);
   }
@@ -2578,9 +2663,16 @@ function buildCityGrid(scene) {
     walls.castShadow = true;
     walls.receiveShadow = true;
     group.add(walls);
+    // One short yawed box per drawn wall segment, leaving the +x gate and the courtyard open.
+    const arc = Math.PI * 2 - 2 * GATE, da = arc / 56;
+    for (let i = 0; i < 56; i++) {
+      const t = Math.PI / 2 + GATE + (i + 0.5) * da;
+      const r = (R - WALL / 2) * Math.cos(da / 2);
+      addRideSolid(cx + Math.sin(t) * r, cz + Math.cos(t) * r, 2 * R * Math.sin(da / 2), WALL * Math.cos(da / 2), PARK_Y, PARK_Y + H, t, true);
+    }
     // Gate: jambs and the wall carried over it on a lintel; the parapet's granite coping
     for (const t of [Math.PI / 2 - GATE, Math.PI / 2 + GATE]) {
-      addBox(sandstone, cx + Math.sin(t) * (R - WALL / 2 - 0.15), PARK_Y, cz + Math.cos(t) * (R - WALL / 2 - 0.15), 0.06, H, WALL + 0.3, t);
+      addSolidBox(sandstone, cx + Math.sin(t) * (R - WALL / 2 - 0.15), PARK_Y, cz + Math.cos(t) * (R - WALL / 2 - 0.15), 0.06, H, WALL + 0.3, t);
     }
     addBox(sandstone, cx + R - WALL / 2 - 0.15, PARK_Y + 4.3, cz, WALL + 0.3, H - 4.3, 2 * GATE * R + 0.3);
     const coping = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.15, R - 0.15, 0.32, 56, 1, true), graniteMat);
@@ -2591,6 +2683,7 @@ function buildCityGrid(scene) {
     yard.position.set(cx, PARK_Y + 0.006, cz);
     yard.receiveShadow = true;
     group.add(yard);
+    addRideTop(circlePoly(cx, cz, R - WALL, 48), PARK_Y + 0.006, 'brick');
     for (let i = treeSites.length - 1; i >= 0; i--) {
       if (Math.hypot(treeSites[i].x - cx, treeSites[i].z - cz) < R + 3) treeSites.splice(i, 1);
     }
@@ -2617,6 +2710,17 @@ function buildCityGrid(scene) {
     benchInst.receiveShadow = true;
     benchInst.computeBoundingSphere();
     group.add(benchInst);
+    // Two compact boxes per bench: the low seat/feet, then the narrow leaning back. Do this after site filtering.
+    const back = new THREE.BoxGeometry(1.9, 0.34, 0.05).rotateX(-0.22).translate(0, 0.74, -0.22);
+    back.computeBoundingBox();
+    const bounds = back.boundingBox, centre = new THREE.Vector3();
+    for (const m of benchMatrices) {
+      const yaw = Math.atan2(m.elements[8], m.elements[10]);
+      addRideSolid(m.elements[12], m.elements[14], 1.9, 0.52, m.elements[13], m.elements[13] + 0.48, yaw);
+      bounds.getCenter(centre).applyMatrix4(m);
+      addRideSolid(centre.x, centre.z, 1.9, bounds.max.z - bounds.min.z, m.elements[13] + bounds.min.y, m.elements[13] + bounds.max.y, yaw);
+    }
+    back.dispose();
   }
   if (lampMatrices.length) {
     const poleGeo = mergeGeometries([
@@ -2638,6 +2742,11 @@ function buildCityGrid(scene) {
     poleInst.computeBoundingSphere();
     globeInst.computeBoundingSphere();
     group.add(poleInst, globeInst);
+    for (const m of lampMatrices) {
+      const x = m.elements[12], y = m.elements[13], z = m.elements[14];
+      addRideSolid(x, z, 0.4, 0.4, y, y + 0.7);
+      addRideSolid(x, z, 0.17, 0.17, y + 0.7, y + 3.8);
+    }
 
     // Warm pools of lamplight on the walks & bed copings after dusk (additive decal, black by day)
     const poolInst = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), createParkLampPoolMaterial(), lampMatrices.length);
@@ -2662,12 +2771,12 @@ function buildCityGrid(scene) {
   // Concrete decks on timber piles with fenders, railings & lanterns, plus each pier's real structures:
   // cruise terminals, the Chelsea sports piers, Pier 57, Little Island, Pier 40, the Intrepid, the 79th St Boat Basin,
   // Pier 17, the Wavertree, Pier 15, Pier 11 and the Staten Island Ferry Whitehall Terminal (see buildWaterfrontPiers)
-  buildWaterfrontPiers(group);
+  buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh });
 
   // 9 & 10. The East River bridges, harbor islands and the surrounding boroughs are built by boroughs.js
 
   // 11. Manhattan's waterfront edge: esplanades, shore highways & riverside park belts (see buildManhattanWaterfrontEdge)
-  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat: cpLawnMat, curbMat, roadMat });
+  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops });
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
   batchStaticGroupMeshes(group, new Set([waterMat, roadMat, cpLawnMat, cpMeadowMat]));
@@ -2682,7 +2791,8 @@ function buildCityGrid(scene) {
   const colliders = (fdrViaduct && fdrViaduct.colliders) || [];
   const trafficColliders = (fdrViaduct && fdrViaduct.trafficColliders) || [];
   return {
-    group, sidewalks, footprints, highwayLanes, colliders, trafficColliders, ride: { tops: rideTops, solids: rideSolids }
+    group, sidewalks, footprints, highwayLanes, colliders, trafficColliders, ride: { tops: rideTops, solids: rideSolids },
+    rideBuilder: { addRideMesh, addRideSolid }
   };
 }
 
@@ -2706,7 +2816,7 @@ function buildCityGrid(scene) {
  * South of the Williamsburg Bridge the FDR leaves the strip for the South Street Viaduct (buildSouthStreetViaduct).
  * Everything is merged into a handful of meshes and keeps clear of the bridge towers standing near the shore.
  */
-function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat, curbMat, roadMat }) {
+function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops }) {
   const STEP = 3; // shore sampling (m of z)
   const HWY_W = 15.2; // 0.4 shoulder, 2 x 3.3 m lanes, 1.2 m median, 2 x 3.3 m lanes, 0.4 shoulder
   const COPING_Y = -0.04; // seawall coping top (section 2)
@@ -2715,6 +2825,26 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   const hash = (a, b) => { const s = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return s - Math.floor(s); };
   const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
   const shoreX = (z, west) => { const b = getIslandBoundsAtZ(z); return west ? b.westX : b.eastX; };
+  // Adjacent 3 m drawing rows usually form straight runs. Merge their rider boxes while endpoints stay within 2 mm
+  // of the starting line, instead of adding tens of thousands of short pieces. Keep every drawing vertex unchanged.
+  function solidStrip(bottom, top) {
+    let run = null;
+    return (a, b, width, start = false) => {
+      if (!start && run && Math.hypot(a.x - run.end.x, a.z - run.end.z) < 1e-6 && Math.abs(width - run.width) < 1e-5
+        && Math.abs((b.x - run.a.x) * run.nz - (b.z - run.a.z) * run.nx) < 0.002) {
+        const box = run.box;
+        box.centre.x = (run.a.x + b.x) / 2; box.centre.z = (run.a.z + b.z) / 2;
+        box.halfExtents.z = Math.hypot(b.x - run.a.x, b.z - run.a.z) / 2;
+        box.rotationY = Math.atan2(b.x - run.a.x, b.z - run.a.z);
+        run.end = b;
+      } else {
+        const len = a.distanceTo(b);
+        run = { a, end: b, nx: (b.x - a.x) / len, nz: (b.z - a.z) / len, width,
+          box: addRideSolid((a.x + b.x) / 2, (a.z + b.z) / 2, width, len, bottom, top,
+            Math.atan2(b.x - a.x, b.z - a.z)) };
+      }
+    };
+  }
 
   // Keep clear: footprints (+1.5 m) of the bridge piers / caissons and Manhattan anchorages near the shore (any d), the
   // pier decks reaching up to ~4 m inland, the 79th St Boat Basin gangways and Basketball City's shed on Pier 36 (gaps
@@ -2861,6 +2991,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     }
   }
   function barrier(rows, dOf) {
+    const bodies = JERSEY.slice(1).map(([w1, h1], k) => solidStrip(JERSEY[k][1], h1));
     const pts = rows.map((r) => {
       const d = dOf(r);
       return d === null || d > r.W - 0.5 || blocked(r, d) ? null : P(r, d);
@@ -2868,6 +2999,11 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     runs(pts, (i, a, b, start, end) => {
       const dir = new THREE.Vector3().subVectors(b, a).normalize();
       const n = new THREE.Vector3(-dir.z, 0, dir.x);
+      // Compact stepped bodies inside the drawn tapered profile; never one full-width 0.82 m invisible box.
+      for (let k = 0; k + 1 < JERSEY.length; k++) {
+        const [w0, h0] = JERSEY[k], [w1, h1] = JERSEY[k + 1];
+        bodies[k](a, b, 2 * Math.min(w0, w1), start);
+      }
       for (const sd of [-1, 1]) {
         const hint = n.clone().multiplyScalar(sd).setY(0.3);
         for (let k = 0; k + 1 < JERSEY.length; k++) {
@@ -2890,24 +3026,31 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   const CURB_Y = LAWN_Y + 0.05;
   const WALL_Y = 1.05;
   function belt(rows, key, walled) {
+    const wallBody = solidStrip(0, WALL_Y);
     // Pier decks and gangways cut through the river belts
     const spans = rows.map((r) => (r[key] && !(key === 'river' && blocked(r, r[key][0])) ? r[key] : null));
     runs(spans, (i, sa, sb, start, end) => {
       const ra = rows[i];
       const rb = rows[i + 1];
       quad(lawn, P(ra, sa[0], LAWN_Y), P(rb, sb[0], LAWN_Y), P(rb, sb[1], LAWN_Y), P(ra, sa[1], LAWN_Y), UP);
+      addRideTop([P(ra, sa[0]), P(rb, sb[0]), P(rb, sb[1]), P(ra, sa[1])], LAWN_Y, 'grass').shore = true;
       for (const k of [0, 1]) {
         const out = new THREE.Vector3(k === 0 ? -ra.sgn : ra.sgn, 0, 0);
         if (k === 1 && walled) {
           const ia = sa[1] - 0.5;
           const ib = sb[1] - 0.5;
           quad(wall, P(ra, ia, WALL_Y), P(rb, ib, WALL_Y), P(rb, sb[1], WALL_Y), P(ra, sa[1], WALL_Y), UP);
+          addRideTop([P(ra, ia), P(rb, ib), P(rb, sb[1]), P(ra, sa[1])], WALL_Y, 'stone').shore = true;
+          const a = P(ra, (ia + sa[1]) / 2), b = P(rb, (ib + sb[1]) / 2);
+          const len = a.distanceTo(b);
+          wallBody(a, b, 0.5 * STEP / len, start);
           quad(wall, P(ra, sa[1], 0), P(rb, sb[1], 0), P(rb, sb[1], WALL_Y), P(ra, sa[1], WALL_Y), out);
           quad(wall, P(ra, ia, LAWN_Y), P(rb, ib, LAWN_Y), P(rb, ib, WALL_Y), P(ra, ia, WALL_Y), out.clone().negate());
           continue;
         }
         const inset = k === 0 ? 0.3 : -0.3;
         quad(curbs, P(ra, sa[k], CURB_Y), P(rb, sb[k], CURB_Y), P(rb, sb[k] + inset, CURB_Y), P(ra, sa[k] + inset, CURB_Y), UP);
+        addRideTop([P(ra, sa[k]), P(rb, sb[k]), P(rb, sb[k] + inset), P(ra, sa[k] + inset)], CURB_Y, 'stone').shore = true;
         quad(curbs, P(ra, sa[k], 0), P(rb, sb[k], 0), P(rb, sb[k], CURB_Y), P(ra, sa[k], CURB_Y), out);
       }
       for (const [r, s, cap, dz] of [[ra, sa, start, -1], [rb, sb, end, 1]]) {
@@ -2921,14 +3064,18 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
 
   // Black iron esplanade railing along the outer edge of the coping (alpha-tested pickets, uv.x = metres along)
   const fence = makeAcc();
+  const pierGround = rideTops.filter(t => t.shore && !t.layered);
+  const onPier = (p) => pierGround.some(t => p.x >= t.minX && p.x <= t.maxX && p.z >= t.minZ && p.z <= t.maxZ && pointInPolygonXZ(t.poly, p.x, p.z));
   function railing(rows, d) {
-    const pts = rows.map((r) => (blocked(r, d) ? null : P(r, d, COPING_Y)));
+    const pts = rows.map((r) => (blocked(r, d) || onPier(P(r, d)) ? null : P(r, d, COPING_Y)));
+    const body = solidStrip(COPING_Y, COPING_Y + 1.1);
     let u = 0;
     runs(pts, (i, a, b, start) => {
       if (start) u = 0;
       const len = a.distanceTo(b);
       const top = COPING_Y + 1.1;
       quad(fence, a, b, b.clone().setY(top), a.clone().setY(top), new THREE.Vector3(-rows[i].sgn, 0, 0), u, u + len);
+      body(a, b, 0.06, start);
       u += len;
     });
   }
@@ -3060,7 +3207,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     blockSidewalks.some((b) => Math.abs(x - b.cx) < b.w / 2 - 1 && Math.abs(z - b.cz) < b.d / 2 - 1);
   const viaduct = buildSouthStreetViaduct(group, {
     start: { x: join.x, z: join.z }, shoreX: (z) => shoreX(z, false), obstacles: towers.concat(pierBoxes), zEnd: 6330,
-    quad, makeAcc, roadMat, lawnMat, paint, WHITE, YELLOW, lightSpots: highwaySpots, underSpots, groundOK
+    quad, makeAcc, roadMat, lawnMat, paint, WHITE, YELLOW, lightSpots: highwaySpots, underSpots, groundOK, addRideMesh, addRideSolid
   });
   for (let i = treeSites.length - 1; i >= 0; i--) {
     if (viaduct.keepOut(treeSites[i].x, treeSites[i].z, 2.5)) treeSites.splice(i, 1);
@@ -3109,7 +3256,9 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   addMesh(curbs, curbMat);
   addMesh(wall, createParkWallMaterial(), true);
   addMesh(concrete, new THREE.MeshStandardNodeMaterial({ color: 0x7f7c76, roughness: 0.92, metalness: 0.0 }));
-  addMesh(fence, createIronFenceMaterial());
+  const esplanadeFenceMat = createIronFenceMaterial();
+  esplanadeFenceMat.name = 'EsplanadeRailing';
+  addMesh(fence, esplanadeFenceMat);
   // West St's underpass portal in the South Street Viaduct portal's materials (its lawn roof went in with the lawns)
   addMesh(wPortal.conc, viaduct.portalMats.conc, true);
   addMesh(wPortal.dark, viaduct.portalMats.dark);
@@ -3134,6 +3283,12 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   }
 
   const dummy = new THREE.Object3D();
+  // Register only retained lamp sites, after the viaduct / portal removals above.
+  for (const [x, y, z] of lampSpots) {
+    addRideSolid(x, z, 0.4, 0.4, y, y + 0.7);
+    addRideSolid(x, z, 0.17, 0.17, y + 0.7, y + 3.8);
+  }
+  for (const [x, y, z] of highwaySpots) addRideSolid(x, z, 0.32, 0.32, y, y + 10).layered = true;
   const instanced = (geo, mat, spots) => {
     if (!spots.length) return;
     const inst = new THREE.InstancedMesh(geo, mat, spots.length);
@@ -3433,6 +3588,18 @@ function buildSouthStreetViaduct(group, opts) {
   const elevated = (i) => Y[i] >= FILL_Y && Y[i + 1] >= FILL_Y;
   for (let i = 0; i < iMouth; i++) {
     seg(deck, i, [-7.38, 0], [7.38, 0], UP);
+    // Rider-only parapet / median bodies above this section's road. They never fill the roadway or the street below.
+    const a = V(i, 0, Y[i]), b = V(i + 1, 0, Y[i + 1]);
+    const yaw = Math.atan2(b.x - a.x, b.z - a.z), len = Math.hypot(b.x - a.x, b.z - a.z);
+    const slab = opts.addRideSolid((a.x + b.x) / 2, (a.z + b.z) / 2, 14.76, len,
+      Math.max(a.y, b.y) - SLAB, Math.min(a.y, b.y) - 0.02, yaw, true);
+    slab.support = false;
+    for (const w of [-7.72, 0, 7.72]) {
+      const p = V(i, w, 0), q = V(i + 1, w, 0);
+      const body = opts.addRideSolid((p.x + q.x) / 2, (p.z + q.z) / 2, w === 0 ? 0.16 : 0.2, len,
+        Math.min(a.y, b.y), Math.max(a.y, b.y) + (w === 0 ? 0.82 : 0.85), yaw);
+      body.layered = true;
+    }
     for (const sd of [-1, 1]) {
       for (let k = 0; k + 1 < PARAPET.length; k++) {
         seg(conc, i, [sd * PARAPET[k][0], PARAPET[k][1]], [sd * PARAPET[k + 1][0], PARAPET[k + 1][1]], k ? side(i, -sd, 0.3) : UP);
@@ -3581,7 +3748,10 @@ function buildSouthStreetViaduct(group, opts) {
     const last = !onFill(i + 1);
     const e = first ? i : i + 1;
     const [ux, uz] = first !== last ? [pn[e].y, -pn[e].x] : unitDir(path[i].x, path[i].y, path[i + 1].x, path[i + 1].y);
-    colliders.push(rideBoxAround([V(i, -hw, 0), V(i, hw, 0), V(i + 1, -hw, 0), V(i + 1, hw, 0)], ux, uz, top, 0.02));
+    // Fill stays below the lowest road height, with the exact sloping top supplied by the drawn deck facets.
+    const fill = rideBoxAround([V(i, -hw, 0), V(i, hw, 0), V(i + 1, -hw, 0), V(i + 1, hw, 0)], ux, uz,
+      Math.max(0.01, Math.min(Y[i], Y[i + 1]) - 0.02), 0);
+    colliders.push(fill);
   }
 
   // ---- Meshes & keep-clear boxes ----------------------------------------------------------------------------------
@@ -3604,7 +3774,7 @@ function buildSouthStreetViaduct(group, opts) {
     dark: new THREE.MeshBasicNodeMaterial({ color: 0x020203 }),
     shade: createTunnelShadeMaterial()
   };
-  addMesh(deck, roadMat, false, 'SouthStreetViaductDeck');
+  opts.addRideMesh(addMesh(deck, roadMat, false, 'SouthStreetViaductDeck'), 'pavement', true, true);
   addMesh(conc, portalMats.conc, true, 'SouthStreetViaductConcrete');
   addMesh(steel, new THREE.MeshStandardNodeMaterial({ color: 0x55625b, roughness: 0.6, metalness: 0.3 }), true, 'SouthStreetViaductSteel');
   addMesh(roof, lawnMat, false, 'BatteryUnderpassRoof');

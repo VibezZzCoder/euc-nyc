@@ -760,11 +760,38 @@ function placeCards(sp, branches, lod, tileMeters, rng, crown) {
   return cards;
 }
 
+// Two tight local boxes around only the clear lower trunk: the root flare, then the shaft up to the first scaffold
+// limb. Clip the full-detail bark triangles at the split / fork heights, so neither a crown bound nor another
+// species' radius / lean can become a wall. This runs six times at creation, never when LODs change.
+function lowerTrunkRideBounds(gb, flareY, forkY) {
+  const a = new V3(), b = new V3(), p = new V3();
+  return [[-Infinity, flareY], [flareY, forkY]].map(([bottom, top]) => {
+    const bounds = new THREE.Box3();
+    for (let i = 0; i < gb.idx.length; i += 3) {
+      for (let edge = 0; edge < 3; edge++) {
+        a.fromArray(gb.pos, gb.idx[i + edge] * 3);
+        b.fromArray(gb.pos, gb.idx[i + (edge + 1) % 3] * 3);
+        if (a.y >= bottom && a.y <= top) bounds.expandByPoint(a);
+        for (const y of [bottom, top]) {
+          if ((a.y < y && b.y > y) || (a.y > y && b.y < y)) {
+            p.copy(a).lerp(b, (y - a.y) / (b.y - a.y));
+            bounds.expandByPoint(p);
+          }
+        }
+      }
+    }
+    return bounds;
+  });
+}
+
 // One species / variant: [lod0, lod1, lod2] geometries (lod 2 only for variant 0)
 function buildTreeGeometries(speciesIndex, variant, tileMeters) {
   const sp = SPECIES[speciesIndex];
   const seed = 7919 * (speciesIndex + 1) + 104729 * (variant + 1);
   const branches = growTree(sp, seed);
+  const trunk = branches[0];
+  const forkY = Math.min(...branches.filter((b) => b.level === 1).map((b) => b.pts[0].y));
+  let rideTrunkBounds;
 
   // Crown from the full-detail foliage: card anchors pushed out by half a card
   const rngC = mulberry32(seed ^ 0x5bd1e995);
@@ -790,6 +817,8 @@ function buildTreeGeometries(speciesIndex, variant, tileMeters) {
       if (lod === 0) {
         const radial = [9, 6, 4, 3][b.level];
         addTube(gb, b, radial, 1, aoAt, swayWeight);
+        // The trunk is emitted first, before any limbs / foliage enter the geometry builder.
+        if (b === trunk) rideTrunkBounds = lowerTrunkRideBounds(gb, trunk.pts[1].y, forkY);
       } else if (lod === 1 && b.level <= 2) {
         addTube(gb, b, [6, 5, 3][b.level], 2, aoAt, swayWeight);
       } else if (lod === 2 && b.level <= 1) {
@@ -800,6 +829,7 @@ function buildTreeGeometries(speciesIndex, variant, tileMeters) {
     for (const c of cards) addCard(gb, c.at, c.up, c.face, c.size, c.tile, rng() < 0.5, rng(), crown);
     const g = gb.build();
     g.userData = { species: sp.name, variant, lod, cards: cards.length, triangles: gb.idx.length / 3 };
+    if (lod === 0) g.userData.rideTrunkBounds = rideTrunkBounds;
     geos[lod] = g;
   }
   return geos;
@@ -824,7 +854,8 @@ function hashPos(x, y, z) {
 /**
  * Builds the instanced tree field for `sites` ({ x, y, z, scale, species, yaw?, sx?, sz?, tier? }) and keeps each
  * tree's level of detail up to date from the camera of every view pass (scene.onBeforeRender). Returns
- * { group, material, atlas, update(cameraPosition) }.
+ * { group, material, atlas, rideSolids, update(cameraPosition) }. rideSolids is static (two lower-trunk boxes per
+ * retained tree), independent of the camera's LOD / distance culling.
  */
 function createTreeField(scene, sites) {
   const group = new THREE.Group();
@@ -837,6 +868,7 @@ function createTreeField(scene, sites) {
 
   // Per-tree transform & data
   const N = sites.length;
+  const rideSolids = [];
   const mats = new Float32Array(N * 16);
   const data = new Float32Array(N * 4);
   const px = new Float32Array(N);
@@ -861,6 +893,7 @@ function createTreeField(scene, sites) {
 
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
+  const rideCentre = new V3(), rideSize = new V3();
   sites.forEach((t, i) => {
     const sp = Math.min(SPECIES.length - 1, Math.max(0, t.species || 0));
     const r1 = hashPos(t.x, 1.3, t.z);
@@ -873,6 +906,17 @@ function createTreeField(scene, sites) {
     dummy.scale.set(s * (0.9 + r3 * 0.2) * (t.sx || 1), s * (0.88 + r1 * 0.24), s * (0.9 + r2 * 0.2) * (t.sz || 1));
     dummy.updateMatrix();
     dummy.matrix.toArray(mats, i * 16);
+    for (const bounds of geos[sp][variant][0].userData.rideTrunkBounds) {
+      bounds.getCenter(rideCentre).applyMatrix4(dummy.matrix);
+      bounds.getSize(rideSize).multiply(dummy.scale).multiplyScalar(0.5);
+      rideSolids.push({
+        centre: { x: rideCentre.x, y: rideCentre.y, z: rideCentre.z },
+        halfExtents: { x: rideSize.x, y: rideSize.y, z: rideSize.z },
+        rotationY: dummy.rotation.y,
+        surface: 'wood',
+        occludes: false
+      });
+    }
     tint.setHex(SPECIES[sp].tints[Math.floor(r3 * 2.999)]).multiplyScalar(0.82 + r1 * 0.36);
     data.set([tint.r, tint.g, tint.b, sp + r2 * 0.999], i * 4);
     px[i] = t.x;
@@ -982,10 +1026,11 @@ function createTreeField(scene, sites) {
 
   const stats = {
     trees: N,
+    rideSolids: rideSolids.length,
     triangles: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.triangles))),
     cards: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.cards)))
   };
-  return { group, material, atlas, update, meshes: instanced, stats };
+  return { group, material, atlas, rideSolids, update, meshes: instanced, stats };
 }
 
 export { createTreeField, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };

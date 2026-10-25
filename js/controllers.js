@@ -6,7 +6,7 @@ import {
   streetZ
 } from './city-config.js';
 import { bryantParkLawn } from './landmarks.js';
-import { NycTerrainSampler, boxesFromCityColliders, boxesFromFootprints } from './euc-terrain.js';
+import { NycTerrainSampler, boxesFromCityColliders } from './euc-terrain.js';
 import { createEucEntity } from './euc-rider.js';
 
 // js/controllers.js — the player: one electric unicycle (EUC Thrills' controller and rider, see euc-rider.js).
@@ -22,16 +22,17 @@ const RIDER_HEIGHT = 2.0;
 const ONE_SHOT_ACTIONS = new Set(['up', 'reset']);
 
 class ThirdPersonControllerManager {
-  constructor(scene, colliders = [], { streetFootprints = [], ride = null, rider = 'cool-rider', dynamicWorld } = {}) {
+  constructor(scene, colliders = [], { ride = null, rider = 'cool-rider', dynamicWorld } = {}) {
     this.scene = scene;
     this.colliders = colliders;
     this._colliderCells = null; // built on first use, see nearColliders()
     this.activeMode = 'euc'; // the only mode; kept as a field for the systems that read it
-    // The EUC rides the city's building colliders, the street furniture, and the tops and solids city-grid.js drew
-    // (euc-terrain.js)
+    // The EUC rides the building colliders and the drawn tops / solids from city-grid.js and street-details.js.
+    // Traffic's padded furniture footprints never reach the rider (euc-terrain.js).
     this.eucSampler = new NycTerrainSampler({
-      boxes: [...boxesFromCityColliders(colliders), ...boxesFromFootprints(streetFootprints), ...(ride?.solids ?? [])],
+      boxes: [...boxesFromCityColliders(colliders), ...(ride?.solids ?? [])],
       tops: ride?.tops ?? [],
+      shoreRails: ride?.shoreRails ?? false,
       lawn: bryantParkLawn
     });
 
@@ -158,21 +159,23 @@ class ThirdPersonControllerManager {
     return this.entities.euc.setRider(id);
   }
 
-  teleportActiveTo(x, z, heading = Math.PI) {
+  teleportActiveTo(x, z, heading = Math.PI, referenceY = Infinity) {
     const ent = this.entities.euc;
     this.resetInput();
     if (!Number.isFinite(heading)) heading = ent.heading;
-    const destination = this.findTeleportPosition(x, z, heading);
-    if (destination) ent.placeAt(destination.x, destination.z, heading);
+    const destination = this.findTeleportPosition(x, z, heading, referenceY);
+    if (destination) ent.placeAt(destination.x, destination.z, heading, referenceY === Infinity ? this.getGroundHeight(destination.x, destination.z, referenceY) : referenceY);
     return { x: ent.position.x, z: ent.position.z };
   }
 
   // Find a fully clear arrival before moving the player: test the whole footprint against every nearby building
   // (sequential pushes could leave a rider trapped between overlapping ones); keep the old position if none fits.
-  findTeleportPosition(x, z, heading) {
+  findTeleportPosition(x, z, heading, referenceY = Infinity) {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(heading)) return null;
     const ext = RIDER_RADIUS + 0.1;
     const clampPoint = (px, pz) => {
+      // A map click can select a bridge / upper pier surface; a saved pose supplies its own elevation instead.
+      if (this.eucSampler?.topAt?.(px, pz, true, referenceY) && !this.eucSampler.isOffLimits(px, pz, referenceY)) return { x: px, z: pz };
       pz = Math.max(ISLAND_BOUNDS.minZ + 30, Math.min(ISLAND_BOUNDS.maxZ, pz));
       px = Math.max(ISLAND_BOUNDS.minX, Math.min(ISLAND_BOUNDS.maxX, px));
       if (getIslandBoundsAtZ) {
@@ -186,7 +189,7 @@ class ThirdPersonControllerManager {
     const clear = (p) => {
       if (!p) return false;
       if (this.eucSampler?.isWater?.(p.x, p.z)) return false; // a click on a pond lands on its shore (clampPoint keeps off the river)
-      const y = this.getGroundHeight(p.x, p.z) + 1;
+      const y = this.getGroundHeight(p.x, p.z, referenceY) + 1;
       for (const c of this.nearColliders(p.x, p.z, ext)) {
         if (y > c.maxY + 1.5 || y + RIDER_HEIGHT < (c.minY ?? -Infinity)) continue;
         if (p.x + ext <= c.minX || p.x - ext >= c.maxX || p.z + ext <= c.minZ || p.z - ext >= c.maxZ) continue;
@@ -220,8 +223,8 @@ class ThirdPersonControllerManager {
   }
 
   // The ground the wheel rides (euc-terrain.js cityGround), so teleports land on what is drawn
-  getGroundHeight(x, z) {
-    return this.eucSampler.cityGround(x, z, this._groundProbe ??= { height: 0, surface: 'pavement' }).height;
+  getGroundHeight(x, z, referenceY = 0) {
+    return this.eucSampler.cityGround(x, z, this._groundProbe ??= { height: 0, surface: 'pavement' }, referenceY).height;
   }
 
   // The colliders whose bounds come within `r` of (x, z), in their original order. They never move, so they are

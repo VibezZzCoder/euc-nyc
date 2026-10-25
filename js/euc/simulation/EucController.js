@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/EucController.ts.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/EucController.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import { proposeRiderPhaseSideProjection, proposeWheelClearOfBodies, proposeWheelSideProjection } from '../shared/riderSideContact.js';
 import { EUC, PHYSICS, SIMULATION, TERRAIN, WHEEL, POPULATION, POPULATION_CONTACT, RIDER_CONTACT, RIDER_BLOCKOUT, LAUNCH_PAD } from '../data/tuning.js';
@@ -654,10 +654,11 @@ export class EucController {
     wheelCrashPop = 0;
     wheelCrashPopVelocity = 0;
     safeX = 0;
+    safeY = 0;
     safeZ = 0;
     safeHeading = 0;
     safeHold = 0;
-    safeRing = new Float64Array(3 * POPULATION_CONTACT.recoveryRingPoints);
+    safeRing = new Float64Array(4 * POPULATION_CONTACT.recoveryRingPoints);
     safeRingCount = 0;
     safeRingNext = 0;
     recoveryRefusedSeconds = 0;
@@ -981,7 +982,7 @@ export class EucController {
     get discontinuitySerial() { return this.placementSerial; }
     placementOccupancyPose(spawn) {
         const ground = createGroundSample();
-        this.sampler.sampleGround(spawn.position.x, spawn.position.z, ground);
+        this.sampler.sampleGround(spawn.position.x, spawn.position.z, ground, spawn.position.y);
         return this.proposedPlacementOccupancyPose(spawn.position.x, spawn.position.z, spawn.headingY, ground);
     }
     get placementBlocked() { return this.dynamicPlacementBlocked; }
@@ -1022,10 +1023,11 @@ export class EucController {
         this.invalidatePreparedStep();
         const destination = spawn ?? this.spawn;
         const placementReason = this.placementSerial === 0 ? 'construct' : 'reset';
-        if (!this.dynamicPlacementClear(destination.position.x, destination.position.z, destination.headingY, initialSpeed, placementReason))
+        if (!this.dynamicPlacementClear(destination.position.x, destination.position.z, destination.headingY, initialSpeed, placementReason, destination.position.y))
             return false;
         if (spawn)
             this.spawn = spawn;
+        this.y = this.spawn.position.y;
         this.x = this.spawn.position.x;
         this.z = this.spawn.position.z;
         this.headingY = this.spawn.headingY;
@@ -1108,13 +1110,14 @@ export class EucController {
         this.crashCause = 'none';
         this.crashMotion = 'none';
         this.safeX = this.x;
+        this.safeY = this.y;
         this.safeZ = this.z;
         this.safeHeading = this.headingY;
         this.safeHold = 0;
         this.safeRingCount = 0;
         this.safeRingNext = 0;
         this.clearContactRecovery();
-        this.sampler.sampleGround(this.x, this.z, this.ground);
+        this.sampler.sampleGround(this.x, this.z, this.ground, this.y);
         this.settleGroundY();
         this.y = this.groundY;
         this.surface = this.ground.surface;
@@ -1510,6 +1513,7 @@ export class EucController {
         if (this.safeHold < t.crashSafeDelaySeconds)
             return;
         this.safeX = this.x;
+        this.safeY = this.y;
         this.safeZ = this.z;
         this.safeHeading = this.headingY;
         this.rememberSafePoint();
@@ -1517,15 +1521,16 @@ export class EucController {
     rememberSafePoint() {
         const ring = this.safeRing, size = POPULATION_CONTACT.recoveryRingPoints;
         if (this.safeRingCount > 0) {
-            const newest = ((this.safeRingNext + size - 1) % size) * 3;
+            const newest = ((this.safeRingNext + size - 1) % size) * 4;
             if (Math.hypot(this.safeX - ring[newest], this.safeZ - ring[newest + 1])
                 < POPULATION_CONTACT.recoveryRingSpacingMetres)
                 return;
         }
-        const slot = this.safeRingNext * 3;
+        const slot = this.safeRingNext * 4;
         ring[slot] = this.safeX;
         ring[slot + 1] = this.safeZ;
         ring[slot + 2] = this.safeHeading;
+        ring[slot + 3] = this.safeY;
         this.safeRingNext = (this.safeRingNext + 1) % size;
         this.safeRingCount = Math.min(this.safeRingCount + 1, size);
     }
@@ -1854,7 +1859,7 @@ export class EucController {
             if (this.crashFalling || this.crashFallSeconds > 0) {
                 const pelvis = this.ragdoll.positions, under = createGroundSample();
                 const pelvisY = pelvis[RD_PELVIS * 3 + 1];
-                this.sampler.sampleGround(pelvis[RD_PELVIS * 3], pelvis[RD_PELVIS * 3 + 2], under);
+                this.sampler.sampleGround(pelvis[RD_PELVIS * 3], pelvis[RD_PELVIS * 3 + 2], under, pelvis[RD_PELVIS * 3 + 1]);
                 const floor = under.height <= pelvisY ? under.height : this.groundY;
                 if (pelvisY - floor > t.crashHighFallMetres) {
                     this.crashFallSeconds += dt;
@@ -1953,7 +1958,7 @@ export class EucController {
     }
     projectCrashWheelSideContact(before, projection, followGround = false) {
         const { x: dx, z: dz } = projection;
-        this.sampler.sampleGround(this.x + dx, this.z + dz, this.probe);
+        this.sampler.sampleGround(this.x + dx, this.z + dz, this.probe, this.y);
         const lying = followGround && this.crashing && !this.airborne;
         if ((lying ? Math.abs(this.probe.height - this.ground.height) > this.tuning.maxStepUp
             : this.probe.height !== this.ground.height || this.probe.normal.x !== this.ground.normal.x
@@ -1997,6 +2002,7 @@ export class EucController {
         const target = this.recoveryTarget(restored);
         if (!target)
             return false;
+        this.y = target.y;
         this.x = target.x;
         this.z = target.z;
         this.headingY = target.headingY;
@@ -2060,7 +2066,7 @@ export class EucController {
         this.recoverTimer = t.crashRecoverBlendSeconds;
         this.safeHold = 0;
         this.state = 'recovering';
-        this.sampler.sampleGround(this.x, this.z, this.ground);
+        this.sampler.sampleGround(this.x, this.z, this.ground, this.y);
         this.settleGroundY();
         this.y = this.groundY;
         this.surface = this.ground.surface;
@@ -2089,33 +2095,33 @@ export class EucController {
     }
     recoveryTarget(restored) {
         if (this.dynamicPlacementClear(this.safeX, this.safeZ, this.safeHeading, restored, 'recover')) {
-            return { x: this.safeX, z: this.safeZ, headingY: this.safeHeading };
+            return { x: this.safeX, y: this.safeY, z: this.safeZ, headingY: this.safeHeading };
         }
         if (this.recoveryRefusedSeconds < POPULATION_CONTACT.recoveryFallbackSeconds)
             return null;
         const ring = this.safeRing, size = POPULATION_CONTACT.recoveryRingPoints;
         for (let age = 0; age < this.safeRingCount; age += 1) {
-            const slot = ((this.safeRingNext + size - 1 - age) % size) * 3;
+            const slot = ((this.safeRingNext + size - 1 - age) % size) * 4;
             const x = ring[slot], z = ring[slot + 1], headingY = ring[slot + 2];
             if (x === this.safeX && z === this.safeZ)
                 continue;
-            if (this.dynamicPlacementClear(x, z, headingY, restored, 'recover'))
-                return { x, z, headingY };
+            if (this.dynamicPlacementClear(x, z, headingY, restored, 'recover', ring[slot + 3]))
+                return { x, y: ring[slot + 3], z, headingY };
         }
         const lateralX = Math.cos(this.safeHeading), lateralZ = -Math.sin(this.safeHeading);
         for (const offset of POPULATION_CONTACT.recoveryLateralMetres) {
             const x = this.safeX + lateralX * offset, z = this.safeZ + lateralZ * offset;
             if (this.recoveryOffsetStaticallyClear(x, z)
                 && this.dynamicPlacementClear(x, z, this.safeHeading, restored, 'recover'))
-                return { x, z, headingY: this.safeHeading };
+                return { x, y: this.safeY, z, headingY: this.safeHeading };
         }
         return null;
     }
     recoveryOffsetStaticallyClear(x, z) {
         const t = this.tuning, ground = createGroundSample();
-        this.sampler.sampleGround(this.safeX, this.safeZ, ground);
+        this.sampler.sampleGround(this.safeX, this.safeZ, ground, this.safeY);
         const height = ground.height;
-        this.sampler.sampleGround(x, z, ground);
+        this.sampler.sampleGround(x, z, ground, this.safeY);
         if (ground.offCourse || ground.surface === 'spill' || Math.abs(ground.height - height) > t.maxStepUp)
             return false;
         const raycastObstacle = this.sampler.raycastObstacle;
@@ -2182,11 +2188,11 @@ export class EucController {
         pose.suspensionOffset = roughnessAt(x, z, response.roughnessAmplitude, response.roughnessWavelength);
         return detachedOccupancyPose(pose);
     }
-    dynamicPlacementClear(x, z, headingY, speed, reason) {
+    dynamicPlacementClear(x, z, headingY, speed, reason, referenceY = reason === 'recover' ? this.safeY : this.y) {
         const canPlace = this.dynamicWorld?.canPlace;
         if (!canPlace)
             return true;
-        this.sampler.sampleGround(x, z, this.probe);
+        this.sampler.sampleGround(x, z, this.probe, referenceY);
         const clear = canPlace({ reason, initialSpeedMetresPerSecond: speed,
             discontinuitySerial: this.placementSerial + 1,
             occupancyPose: this.proposedPlacementOccupancyPose(x, z, headingY, this.probe),
@@ -2233,7 +2239,7 @@ export class EucController {
             if (clippedExcess > ceiling
                 || (kind === 'standoff' && Math.abs(this.probe.height - this.ground.height) > this.tuning.maxStepUp)
                 || this.obstacleWithinWheelRadius(keptX, keptZ, deltaX, deltaZ)) {
-                this.sampler.sampleGround(this.x, this.z, this.probe);
+                this.sampler.sampleGround(this.x, this.z, this.probe, this.y);
                 if (kind === 'move')
                     this.dynamicIntent = null;
                 this.clipDynamicHeading(kind, 0);
@@ -2272,7 +2278,7 @@ export class EucController {
         this.dynamicImpactNormalZ = 0;
         const ceiling = airborne ? 0 : t.maxStepUp;
         if (deltaX === 0 && deltaZ === 0) {
-            this.sampler.sampleGround(this.x, this.z, this.ground);
+            this.sampler.sampleGround(this.x, this.z, this.ground, this.y);
             if (this.dynamicWorld?.resolveMotion) {
                 copyGroundSample(this.ground, this.probe);
                 const dynamic = this.resolveDynamicCandidate(0, 0, dt, airborne, 0);
@@ -2336,7 +2342,7 @@ export class EucController {
         }
         if (this.dynamicWorld?.resolveMotion) {
             if (slideX === 0 && slideZ === 0)
-                this.sampler.sampleGround(this.x, this.z, this.probe);
+                this.sampler.sampleGround(this.x, this.z, this.probe, this.y);
             else
                 slideExcess = this.excessAt(slideX, slideZ, airborne);
             const dynamic = this.resolveDynamicCandidate(slideX, slideZ, dt, airborne, slideExcess);
@@ -2345,7 +2351,7 @@ export class EucController {
             slideExcess = dynamic.excess;
         }
         if (slideX === 0 && slideZ === 0) {
-            this.sampler.sampleGround(this.x, this.z, this.ground);
+            this.sampler.sampleGround(this.x, this.z, this.ground, this.y);
         }
         else {
             this.commit(slideX, slideZ, false);
@@ -2399,7 +2405,7 @@ export class EucController {
             return;
         const nextX = this.x + leftX * push;
         const nextZ = this.z + leftZ * push;
-        this.sampler.sampleGround(nextX, nextZ, this.probe);
+        this.sampler.sampleGround(nextX, nextZ, this.probe, this.y);
         if (Math.abs(this.probe.height - this.ground.height) > t.maxStepUp)
             return;
         if (this.dynamicWorld?.resolveMotion) {
@@ -2442,7 +2448,7 @@ export class EucController {
         return hit !== null && hit <= distance;
     }
     excessAt(deltaX, deltaZ, airborne = false) {
-        this.sampler.sampleGround(this.x + deltaX, this.z + deltaZ, this.probe);
+        this.sampler.sampleGround(this.x + deltaX, this.z + deltaZ, this.probe, this.y);
         if (airborne)
             return this.probe.height - this.y;
         const normal = this.ground.normal;
@@ -2457,7 +2463,7 @@ export class EucController {
         if (fromProbe)
             copyGroundSample(this.probe, this.ground);
         else
-            this.sampler.sampleGround(this.x, this.z, this.ground);
+            this.sampler.sampleGround(this.x, this.z, this.ground, this.y);
     }
     writeGroundTilt(dt) {
         const t = this.tuning;
@@ -2792,7 +2798,7 @@ export class EucController {
         this.invalidatePreparedStep();
         const nextX = this.x + deltaX;
         const nextZ = this.z + deltaZ;
-        this.sampler.sampleGround(nextX, nextZ, this.probe);
+        this.sampler.sampleGround(nextX, nextZ, this.probe, this.y);
         if (Math.abs(this.probe.height - this.ground.height) > this.tuning.maxStepUp)
             return;
         this.x = nextX;
@@ -2885,7 +2891,7 @@ export class EucController {
         const t = this.tuning, deltaX = (move.proposed.x - move.previous.x) * fraction, deltaZ = (move.proposed.z - move.previous.z) * fraction;
         const ground = createGroundSample(), length = Math.hypot(deltaX, deltaZ);
         for (let i = 1, samples = Math.min(64, Math.ceil(length / 0.05)); i <= samples; i += 1) {
-            this.sampler.sampleGround(this.x + deltaX * i / samples, this.z + deltaZ * i / samples, ground);
+            this.sampler.sampleGround(this.x + deltaX * i / samples, this.z + deltaZ * i / samples, ground, this.y);
             if (ground.height - this.ground.height > t.maxStepUp)
                 return false;
         }
@@ -2898,7 +2904,7 @@ export class EucController {
         if (this.crashing || this.airborne)
             return false;
         this.invalidatePreparedStep();
-        this.sampler.sampleGround(this.x + deltaX, this.z + deltaZ, this.probe);
+        this.sampler.sampleGround(this.x + deltaX, this.z + deltaZ, this.probe, this.y);
         if (Math.abs(this.probe.height - this.ground.height) > this.tuning.maxStepUp || this.probe.offCourse
             || this.obstacleWithinWheelRadius(deltaX, deltaZ))
             return false;
@@ -2956,7 +2962,7 @@ export class EucController {
             return false;
         const height = this.ground.height;
         const blockedOut = (deltaX, deltaZ) => {
-            this.sampler.sampleGround(this.x + deltaX, this.z + deltaZ, this.probe);
+            this.sampler.sampleGround(this.x + deltaX, this.z + deltaZ, this.probe, this.y);
             return Math.abs(this.probe.height - height) > this.tuning.maxStepUp || this.probe.offCourse !== this.ground.offCourse
                 || this.obstacleWithinWheelRadius(deltaX, deltaZ);
         };
@@ -2967,7 +2973,7 @@ export class EucController {
                 return false;
         }
         const backX = out * normalX, backZ = out * normalZ;
-        this.sampler.sampleGround(this.x + backX, this.z + backZ, this.probe);
+        this.sampler.sampleGround(this.x + backX, this.z + backZ, this.probe, this.y);
         this.commit(backX, backZ, true);
         this.y += this.ground.height - height;
         this.groundY = this.ground.height;
@@ -3395,7 +3401,7 @@ export class EucController {
             crashes: this.crashes,
             recoveryReady: this.crashing && !this.crashFalling && this.crashTime >= t.crashRecoverEarliestSeconds,
             invulnerable: this.invulnerableTimer,
-            safePosition: { x: this.safeX, y: 0, z: this.safeZ },
+            safePosition: { x: this.safeX, y: this.safeY, z: this.safeZ },
             safeHeading: this.safeHeading,
         };
     }

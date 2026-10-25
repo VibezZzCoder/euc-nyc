@@ -116,6 +116,45 @@ function buildStreetDetails(scene) {
   const footprints = [];
   const addFootprint = (x, z, w, d) => footprints.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
 
+  // The wheel gets the drawn dimensions, independently of traffic's frozen, padded footprints above. All these
+  // transforms are upright / yaw-only. Round parts use their tight local bounding rectangle, not a clearance pad.
+  const ride = { solids: [], tops: [] };
+  const rideCentre = new THREE.Vector3();
+  const rideSize = new THREE.Vector3();
+  function rideBox(geo, matrix, surface) {
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const e = matrix.elements;
+    geo.boundingBox.getCenter(rideCentre).applyMatrix4(matrix);
+    geo.boundingBox.getSize(rideSize);
+    return {
+      centre: { x: rideCentre.x, y: rideCentre.y, z: rideCentre.z },
+      halfExtents: {
+        x: rideSize.x * Math.hypot(e[0], e[2]) / 2,
+        y: rideSize.y * e[5] / 2,
+        z: rideSize.z * Math.hypot(e[8], e[10]) / 2
+      },
+      rotationY: Math.atan2(-e[2], e[0]),
+      surface,
+      occludes: false // small furniture must not pump the follow camera
+    };
+  }
+  function addRideSolid(geo, matrix = dummy.matrix, surface = 'pavement') {
+    ride.solids.push(rideBox(geo, matrix, surface));
+  }
+  function addRideTop(geo, matrix = dummy.matrix, surface = 'pavement') {
+    const b = rideBox(geo, matrix, surface);
+    const cs = Math.cos(b.rotationY), sn = Math.sin(b.rotationY);
+    const poly = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sz]) => {
+      const x = sx * b.halfExtents.x, z = sz * b.halfExtents.z;
+      return { x: b.centre.x + x * cs + z * sn, z: b.centre.z - x * sn + z * cs };
+    });
+    ride.tops.push({
+      poly, top: b.centre.y + b.halfExtents.y, surface,
+      minX: Math.min(...poly.map((p) => p.x)), maxX: Math.max(...poly.map((p) => p.x)),
+      minZ: Math.min(...poly.map((p) => p.z)), maxZ: Math.max(...poly.map((p) => p.z))
+    });
+  }
+
   // Signal clock (seconds), set every frame by main.js
   const signalClock = uniform(0);
 
@@ -169,9 +208,11 @@ function buildStreetDetails(scene) {
   const lampHousingGeo = new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.7, 0.2, 0.3);
   const lampLensGeo = new THREE.CircleGeometry(1, 16).rotateX(Math.PI / 2).scale(0.6, 1, 0.24).translate(0, -0.005, 0);
   // Classic NYC cast-iron pedestrian post-top globe lightpole (fluted base + shaft + decorative capital + opal globe)
+  const pedLampBaseGeo = new THREE.CylinderGeometry(0.11, 0.16, 0.85, 10).translate(0, 0.425, 0);
+  const pedLampShaftGeo = new THREE.CylinderGeometry(0.065, 0.085, 2.75, 10).translate(0, 2.22, 0);
   const pedLampPostGeo = mergeGeometries([
-    new THREE.CylinderGeometry(0.11, 0.16, 0.85, 10).translate(0, 0.425, 0),
-    new THREE.CylinderGeometry(0.065, 0.085, 2.75, 10).translate(0, 2.22, 0),
+    pedLampBaseGeo,
+    pedLampShaftGeo,
     new THREE.CylinderGeometry(0.14, 0.07, 0.16, 10).translate(0, 3.62, 0)
   ].map((g) => g.toNonIndexed()));
   const pedGlobeGeo = new THREE.SphereGeometry(0.23, 12, 10).translate(0, 3.84, 0);
@@ -264,6 +305,7 @@ function buildStreetDetails(scene) {
         dummy.scale.set(0.14, 6.4, 0.14);
         dummy.updateMatrix();
         poleMatrices.push(dummy.matrix.clone());
+        addRideSolid(unitCyl);
 
         // NYC DOT Green Street Name Sign Blade mounted on pole (y = 4.65m)
         dummy.position.set(px + c.armDir * 0.68, 4.65, pz);
@@ -383,6 +425,7 @@ function buildStreetDetails(scene) {
           dummy.scale.set(0.12, 8.4, 0.12);
           dummy.updateMatrix();
           poleMatrices.push(dummy.matrix.clone());
+          addRideSolid(unitCyl);
 
           // Upper luminaire bracket arm overhanging the street
           dummy.position.set(lx + outX * 1.15, 8.2, lz + outZ * 1.15);
@@ -430,6 +473,8 @@ function buildStreetDetails(scene) {
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
           pedPostMatrices.push(dummy.matrix.clone());
+          addRideSolid(pedLampBaseGeo);
+          addRideSolid(pedLampShaftGeo);
           streetPointSites.push({
             x: px,
             y: 4.02,
@@ -462,6 +507,8 @@ function buildStreetDetails(scene) {
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
           pedPostMatrices.push(dummy.matrix.clone());
+          addRideSolid(pedLampBaseGeo);
+          addRideSolid(pedLampShaftGeo);
           streetPointSites.push({
             x: px,
             y: 4.02,
@@ -576,11 +623,11 @@ function buildStreetDetails(scene) {
     const { x: sx, z: sz, windX, windZ } = steamLocations[sIdx];
     addFootprint(sx, sz, 2, 2); // stack + sawhorse barricades
 
-    // 5-Band Alternating Orange & White Candy-Cane Utility Steam Stack (height = 2.85m)
-    for (let b = 0; b < 5; b++) {
-      const bandH = 0.56;
-      const by = 0.28 + b * bandH;
-      const rScale = 0.36 - b * 0.025;
+    // 5-Band Alternating Orange & White Candy-Cane Utility Steam Stack (height = 2.8m)
+    const bands = 5, bandH = 0.56, baseR = 0.36;
+    for (let b = 0; b < bands; b++) {
+      const by = bandH / 2 + b * bandH;
+      const rScale = baseR - b * 0.025;
       dummy.position.set(sx, by, sz);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(rScale, bandH, rScale);
@@ -591,6 +638,11 @@ function buildStreetDetails(scene) {
         whiteMatrices.push(dummy.matrix.clone());
       }
     }
+    // One compact box round the tapered stack; the surrounding 2 x 2 traffic footprint is not a solid lid.
+    dummy.position.set(sx, bands * bandH / 2, sz);
+    dummy.scale.set(baseR, bands * bandH, baseR);
+    dummy.updateMatrix();
+    addRideSolid(unitCyl);
 
     // 4-Sided NYCDOT Orange-and-White Striped Wooden Sawhorse Barricades around base of stack
     const bHalf = 0.92;
@@ -600,26 +652,27 @@ function buildStreetDetails(scene) {
       { ox: bHalf, oz: 0, rotY: Math.PI * 0.5 },
       { ox: -bHalf, oz: 0, rotY: Math.PI * 0.5 }
     ];
+    const legW = 0.08, legH = 0.96, railSegmentW = 0.34, railSegments = 5;
     for (const side of sides) {
       // Barricade vertical legs
       for (const legOff of [-0.72, 0.72]) {
         const lx = sx + side.ox + (side.rotY === 0 ? legOff : 0);
         const lz = sz + side.oz + (side.rotY !== 0 ? legOff : 0);
-        dummy.position.set(lx, 0.48, lz);
+        dummy.position.set(lx, legH / 2, lz);
         dummy.rotation.set(0, side.rotY, 0);
-        dummy.scale.set(0.08, 0.96, 0.08);
+        dummy.scale.set(legW, legH, legW);
         dummy.updateMatrix();
         barricadeWhiteMatrices.push(dummy.matrix.clone());
       }
       // Top & middle striped horizontal rails
       for (const railY of [0.82, 0.46]) {
-        for (let seg = -2; seg <= 2; seg++) {
-          const segOff = seg * 0.34;
+        for (let seg = -(railSegments - 1) / 2; seg <= (railSegments - 1) / 2; seg++) {
+          const segOff = seg * railSegmentW;
           const rx = sx + side.ox + (side.rotY === 0 ? segOff : 0);
           const rz = sz + side.oz + (side.rotY !== 0 ? segOff : 0);
           dummy.position.set(rx, railY, rz);
           dummy.rotation.set(0, side.rotY, 0);
-          dummy.scale.set(0.34, 0.16, 0.06);
+          dummy.scale.set(railSegmentW, 0.16, 0.06);
           dummy.updateMatrix();
           if (Math.abs(seg) % 2 === 0) {
             barricadeOrangeMatrices.push(dummy.matrix.clone());
@@ -628,6 +681,11 @@ function buildStreetDetails(scene) {
           }
         }
       }
+      // Merge each low sawhorse side (rails + legs) into one thin edge, leaving the enclosure's centre open.
+      dummy.position.set(sx + side.ox, legH / 2, sz + side.oz);
+      dummy.scale.set(railSegments * railSegmentW, legH, legW);
+      dummy.updateMatrix();
+      addRideSolid(unitBox);
     }
 
     // 36 Camera-Facing Volumetric Smoke Sprites per Utility Steam Stack (SpriteNodeMaterial)
@@ -721,6 +779,7 @@ function buildStreetDetails(scene) {
     dummy.scale.set(2.1, 1.15, 6.2);
     dummy.updateMatrix();
     subwayRailMatrices.push(dummy.matrix.clone());
+    addRideSolid(unitBox); // drawn enclosure top 1.375 m, not 2.5 m
     addFootprint(subX, subZ, 2.1, 6.2);
 
     // Twin Green Globe Post Lamps at stair entrance
@@ -729,6 +788,7 @@ function buildStreetDetails(scene) {
       dummy.scale.set(0.09, 1.4, 0.09);
       dummy.updateMatrix();
       subwayPostMatrices.push(dummy.matrix.clone());
+      addRideSolid(unitCyl); // narrow posts above the enclosure; the globes are decorative
 
       dummy.position.set(subX + ox, 2.7, subZ + 2.9);
       dummy.scale.set(0.26, 0.26, 0.26);
@@ -777,6 +837,7 @@ function buildStreetDetails(scene) {
     dummy.scale.set(1.5, 1.25, 2.2);
     dummy.updateMatrix();
     cartBoxMatrices.push(dummy.matrix.clone());
+    addRideSolid(unitBox); // body top 1.475 m; the umbrella must not become a canopy-sized solid lid
 
     dummy.position.set(cx, 2.55, cz);
     dummy.scale.set(1.7, 0.75, 1.7);
@@ -812,6 +873,7 @@ function buildStreetDetails(scene) {
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     hydrantInst.setMatrixAt(i, dummy.matrix);
+    addRideSolid(hydrantInst.geometry); // radius 0.26 m at the base, top 1.065 m
   });
   hydrantInst.instanceMatrix.needsUpdate = true;
   group.add(hydrantInst);
@@ -823,6 +885,7 @@ function buildStreetDetails(scene) {
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     mailboxInst.setMatrixAt(i, dummy.matrix);
+    addRideSolid(mailboxInst.geometry); // 0.65 x 0.65 m, top 1.465 m
   });
   mailboxInst.instanceMatrix.needsUpdate = true;
   group.add(mailboxInst);
@@ -1046,10 +1109,12 @@ function buildStreetDetails(scene) {
     dummy.position.set(t.x, 0.19, t.z);
     dummy.updateMatrix();
     pitCurbInst.setMatrixAt(i, dummy.matrix);
+    addRideTop(pitCurbGeo); // 0.30 m: a low top, not another obstacle box
 
     dummy.position.set(t.x, 0.20, t.z);
     dummy.updateMatrix();
     pitSoilInst.setMatrixAt(i, dummy.matrix);
+    addRideTop(pitSoilGeo, dummy.matrix, 'dirt'); // 0.315 m; the inner bed wins over its surround
   });
   gratedTrees.forEach((t, i) => {
     dummy.rotation.set(0, 0, 0);
@@ -1072,6 +1137,8 @@ function buildStreetDetails(scene) {
   // level of detail, each tree's level following the camera
   const treeField = createTreeField(scene, treePositions);
   group.add(treeField.group);
+  // All gate / park / waterfront removals have happened before the field is created: no colliders for removed trees.
+  for (const solid of treeField.rideSolids) ride.solids.push(solid);
 
   // =========================================================================
   // 8. CLUSTERED STREETLIGHTS & STREET FURNITURE LIGHT POOLS
@@ -1213,7 +1280,7 @@ function buildStreetDetails(scene) {
   }
 
   scene.add(group);
-  return { group, footprints, signalClock, audioSignals, update };
+  return { group, footprints, ride, signalClock, audioSignals, update };
 }
 
 export { buildStreetDetails };

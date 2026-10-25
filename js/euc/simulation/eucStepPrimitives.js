@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/eucStepPrimitives.ts.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/eucStepPrimitives.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 /*! EUC Thrills — (c) 2026 VibezZzCoder — MIT — https://github.com/VibezZzCoder/EUC-thrills */
 export const EUC_STEP_PRIMITIVE_FIELDS = Object.freeze([
@@ -27,7 +27,7 @@ export const EUC_STEP_PRIMITIVE_FIELDS = Object.freeze([
     'tiltBackLatched', 'overspeedFactor', 'overspeedHold', 'crashing', 'crashCause', 'crashMotion',
     'crashTime', 'crashes', 'crashSpeed', 'crashSide', 'crashBlend', 'wheelCrashLean',
     'recoverTimer', 'invulnerableTimer', 'crashFalling', 'crashFallSeconds', 'ragdolling', 'wheelCrashSpin',
-    'wheelCrashSpinRate', 'wheelCrashPop', 'wheelCrashPopVelocity', 'safeX', 'safeZ', 'safeHeading',
+    'wheelCrashSpinRate', 'wheelCrashPop', 'wheelCrashPopVelocity', 'safeX', 'safeY', 'safeZ', 'safeHeading',
     'safeHold', 'safeRingCount', 'safeRingNext', 'recoveryRefusedSeconds', 'contactHoldMask', 'contactHoldMaskOlder',
     'airPhaseContactUpdate', 'nativePhaseRetryReserveMetres',
 ]);
@@ -186,6 +186,7 @@ export function copyEucStepPrimitives(to, from) {
     to.wheelCrashPop = from.wheelCrashPop;
     to.wheelCrashPopVelocity = from.wheelCrashPopVelocity;
     to.safeX = from.safeX;
+    to.safeY = from.safeY;
     to.safeZ = from.safeZ;
     to.safeHeading = from.safeHeading;
     to.safeHold = from.safeHold;

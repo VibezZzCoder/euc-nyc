@@ -54,15 +54,29 @@ Slower knocks only stop you or scrub your speed.
 - **Bryant Park** stands on a raised terrace. Ride up by the two ramps on its 6th Ave side, either side of the
   fountain; the lawn is a kerb higher again.
 - **The squares** (Madison, Union, Washington and Tompkins Square Parks) have iron fences: ride in by their gates.
-  Park walks, lawn beds and the Times Square and Herald Square plazas are a little above the road, like kerbs.
+  Park walks, lawn beds and the Times Square and Herald Square plazas are a little above the road, like kerbs. The
+  low fences round lawn beds are solid too. Fountain rims and monument bases are obstacles; fountain water is not
+  a place to get back on the wheel. Washington Square Arch's centre passage stays open.
+- **Duffy Square's red steps** are ridden at each tread's height, rising above the plaza. Take them slowly: closely
+  spaced risers can stop a fast approach. Central Park's rock outcrops follow their visible slopes, and Castle Clinton
+  has solid walls with an open entrance.
+- **Street furniture is solid:** hydrants, mailboxes, food-cart bodies, benches, planters, lamp posts and tree trunks.
+  Low objects stop at their visible heights, rather than having tall invisible walls over them.
 - **Buildings are solid exactly where they stand.** Plazas, the lawns round housing towers, gaps between buildings and
   the open ground under raised buildings (601 Lexington Avenue's stilts, the tram station) can be ridden.
 - **The waterfront** can be ridden out to the river: along the Hudson and the East River you go all the way to the
   esplanade's iron railing, round the Battery to its railing, and where there is no railing to the edge of the quay.
-  The piers are not rideable yet.
+  Ride through open pier entrances onto their promenades. Pier decks, raised lawns, benches, posts, railings and
+  terminal buildings have physical surfaces and bodies. Little Island's park follows its hills and gangways. The
+  riverside grass belts, their raised curbs and their stone walls are physical too; hop the higher edges.
+  Open pier mouths have matching gaps in the shoreline fence.
 - **The north end:** the city stops just past 129th St, at a line of blue police barricades ("Police line · do not
   cross") across the island. Cars drive on past them and out of sight.
-- Bridges and the highway decks are not rideable yet.
+- **Elevated routes:** the Queensboro, Williamsburg, Manhattan and Brooklyn bridge decks, the elevated FDR and upper
+  pier terraces now support riding at their own heights. You can still ride underneath where the ground route is
+  open. Bridge approaches can cross existing park curbs / furniture, and a raised anchorage lip may need a hop.
+  Use the map to reach an upper pier terrace whose drawn steps are too tall to climb. The surrounding boroughs and
+  distant outer bridges remain scenery rather than a fully rideable second city.
 
 ## Officer Dorkins
 
@@ -126,7 +140,9 @@ East River, and an aerial auto-director. Pick one from the camera menu (bottom r
 
 - **Map** (`M`, Start, the map button, or tap the minimap): the whole of Manhattan with street and landmark search.
   **Click or tap any spot on the map and you are there,** exactly where you pointed: a street corner, a lawn, a
-  plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
+   plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
+  A click on a registered bridge deck or pier terrace selects its highest surface; reloading restores the saved
+  elevation, including a lower walkway beneath an upper one.
 - **Teleport** menu (top right): eight landmarks, from Times Square to One World Trade Center.
 - **Time of day** (top right): golden hour, midday, blue hour and night. At blue hour and night the wheel's headlight
   comes on with the cars' and lights the road ahead.

@@ -6,10 +6,11 @@ import assert from 'node:assert/strict';
 import { EucController, createPose } from '../js/euc/simulation/EucController.js';
 import { NEUTRAL_ACTIONS } from '../js/euc/input/actions.js';
 import { SIMULATION } from '../js/euc/data/tuning.js';
-import { NycTerrainSampler, boxesFromCityColliders, boxesFromFootprints } from '../js/euc-terrain.js';
+import { PlanTerrainSampler } from '../js/euc/simulation/planSampler.js';
+import { NycTerrainSampler, boxesFromCityColliders } from '../js/euc-terrain.js';
 import {
   blockAt, streetZ, ISLAND_BOUNDS, WATER_RIDE, getIslandBoundsAtZ, ESPLANADE_RAIL, BATTERY_RAIL, NORTH_BARRIER, CUT_Z,
-  MANHATTAN_COASTLINE
+  MANHATTAN_COASTLINE, SEAWALL_POLYGON, pointInPoly
 } from '../js/city-config.js';
 
 const DT = 1 / SIMULATION.hz;
@@ -108,16 +109,111 @@ test('a building collider (OBB) is a wall: the wheel does not pass through it', 
   assert.ok(snap.position.z < z, `z ${snap.position.z}`);
 });
 
-test('a lamp post footprint is solid to the wheel and does not occlude the camera ray', () => {
+test('a drawn lamp post is solid to the wheel and does not occlude the camera ray', () => {
   const z = ROAD.z + 15;
-  const post = { minX: ROAD.x - 0.2, maxX: ROAD.x + 0.2, minZ: z - 0.2, maxZ: z + 0.2 };
-  const sampler = new NycTerrainSampler({ boxes: boxesFromFootprints([post]) });
+  const post = { centre: { x: ROAD.x, y: 3.3, z }, halfExtents: { x: 0.14, y: 3.2, z: 0.14 }, rotationY: 0, surface: 'pavement', occludes: false };
+  const sampler = new NycTerrainSampler({ boxes: [post] });
   const origin = { x: ROAD.x, y: 0.5, z: ROAD.z };
   assert.ok(sampler.raycastObstacle(origin, { x: 0, y: 0, z: 1 }, 30) !== null);
   assert.equal(sampler.raycast({ ...origin, y: 1.5 }, { x: 0, y: 0, z: 1 }, 30), null);
   const euc = new EucController(sampler, { spawn: { position: { x: ROAD.x, y: 0, z: ROAD.z }, headingY: 0 } });
   const snap = ride(euc, 5, { ...NEUTRAL_ACTIONS, throttle: 1 });
-  assert.ok(snap.position.z < post.minZ, `z ${snap.position.z}`);
+  assert.ok(snap.position.z < z - post.halfExtents.z, `z ${snap.position.z}`);
+});
+
+test('mesh facets select the highest actual height, carry their slope normal, and leave their bounding corners open', () => {
+  const z = ROAD.z;
+  const poly = [{ x: 0, z }, { x: 10, z }, { x: 0, z: z + 10 }];
+  const ramp = { poly, top: 2, surface: 'stone', minX: 0, maxX: 10, minZ: z, maxZ: z + 10,
+    plane: { x: 0, y: 0, z, dx: 0.2, dz: 0 } };
+  const flat = { poly, top: 0.6, surface: 'brick', minX: 0, maxX: 10, minZ: z, maxZ: z + 10 };
+  for (const tops of [[ramp, flat], [flat, ramp]]) {
+    const s = new NycTerrainSampler({ tops });
+    assert.equal(s.sampleGround(1, z + 1, probe()).height, 0.6, 'flat is above the low end, regardless of registration order');
+    const g = s.sampleGround(6, z + 1, probe());
+    assert.ok(Math.abs(g.height - 1.2) < 1e-9);
+    assert.ok(Math.abs(g.normal.x / g.normal.y + 0.2) < 1e-9);
+    assert.ok(Math.abs(Math.hypot(g.normal.x, g.normal.y, g.normal.z) - 1) < 1e-9);
+    assert.equal(s.sampleGround(8, z + 8, probe()).height, 0, 'the triangle does not fill its rectangular bounds');
+    const withBase = { ...probe(), base: { height: NaN, normal: { x: 0, y: 1, z: 0 } } };
+    s.sampleGround(6, z + 1, withBase);
+    assert.equal(withBase.base.height, g.height, 'ragdoll limbs get the same slope height');
+    assert.deepEqual(withBase.base.normal, g.normal);
+  }
+});
+
+test('the controller climbs a mesh-derived slope, rather than meeting its maximum height as a wall', () => {
+  const z = ROAD.z;
+  const slope = { poly: [{ x: 0, z: z - 3 }, { x: 20, z: z - 3 }, { x: 20, z: z + 3 }, { x: 0, z: z + 3 }],
+    top: 2, surface: 'stone', minX: 0, maxX: 20, minZ: z - 3, maxZ: z + 3,
+    plane: { x: 0, y: 0, z, dx: 0.1, dz: 0 } };
+  const euc = new EucController(new NycTerrainSampler({ tops: [slope] }), {
+    spawn: { position: { x: 0.1, y: 0.01, z }, headingY: Math.PI / 2 }
+  });
+  const snap = ride(euc, 2, { ...NEUTRAL_ACTIONS, throttle: 0.5 });
+  assert.equal(euc.crashed, false);
+  assert.ok(snap.position.x > 2, `climbed to x ${snap.position.x}`);
+  assert.ok(Math.abs(snap.position.y - snap.position.x * 0.1) < 0.05);
+});
+
+test('a low fountain rim can protect water without an invisible high pond band', () => {
+  const z = ROAD.z;
+  const water = { poly: [{ x: 0, z }, { x: 10, z }, { x: 10, z: z + 10 }, { x: 0, z: z + 10 }],
+    top: 0.56, surface: 'stone', minX: 0, maxX: 10, minZ: z, maxZ: z + 10,
+    water: { level: 0.56, floor: 0.44, band: 0 } };
+  const s = new NycTerrainSampler({ tops: [water] });
+  assert.equal(s.sampleGround(0.05, z + 5, probe()).height, 0.44, 'floor even just inside the rim');
+  assert.equal(s.isWater(0.05, z + 5), true, 'not a get-up site');
+  assert.equal(s.sampleGround(5, z + 5, probe()).height, 0.44);
+});
+
+test('water cuts the underlying lawn but does not swallow exposed rock facets or allow get-up on submerged ones', () => {
+  const z = ROAD.z;
+  const poly = [{ x: 0, z }, { x: 10, z }, { x: 10, z: z + 10 }, { x: 0, z: z + 10 }];
+  const bounds = { poly, minX: 0, maxX: 10, minZ: z, maxZ: z + 10 };
+  const lawn = { ...bounds, top: 1.19, surface: 'grass' };
+  const pond = { ...bounds, top: 2.24, surface: 'stone', water: { level: 1.24, floor: 1.12 } };
+  const rock = { ...bounds, top: 2, surface: 'stone', plane: { x: 0, y: 1, z, dx: 0.1, dz: 0 } };
+  for (const tops of [[lawn, pond, rock], [rock, pond, lawn]]) {
+    const s = new NycTerrainSampler({ tops });
+    assert.equal(s.sampleGround(2, z + 5, probe()).height, 1.12, 'submerged rock remains below water');
+    assert.equal(s.isWater(2, z + 5), true);
+    assert.equal(s.sampleGround(6, z + 5, probe()).height, 1.6, 'exposed rock remains above water');
+    assert.equal(s.isWater(6, z + 5), false);
+    assert.equal(s.sampleGround(0.1, z + 5, probe()).height, 2.24, 'the protective pond shore band remains');
+  }
+});
+
+test('the finer city index preserves native casts, swept/inside hits and ragdoll records across cell boundaries', () => {
+  const boxes = [
+    { centre: { x: 8, y: 1, z: ROAD.z }, halfExtents: { x: 0.2, y: 1, z: 0.3 }, rotationY: 0.4, surface: 'wood', occludes: false },
+    { centre: { x: 25, y: 4, z: ROAD.z + 1 }, halfExtents: { x: 10, y: 4, z: 2 }, rotationY: 0.2, surface: 'stone' },
+    { centre: { x: 10000, y: 1, z: ROAD.z + 10000 }, halfExtents: { x: 1, y: 1, z: 1 }, rotationY: 0, surface: 'stone' }
+  ];
+  const s = new NycTerrainSampler({ boxes });
+  const city = s.boxes, native = new PlanTerrainSampler(s.plan);
+  assert.equal(city.gridCell, 8);
+  assert.ok(native.gridCell > 30, 'fixture covers city-scale bounds');
+  for (const x of [0, 7.7, 8, 8.3, 14, 20, 36, 10000]) {
+    const z = x === 10000 ? ROAD.z + 10000 : ROAD.z;
+    assert.deepEqual(city.sampleGround(x, z, probe()), native.sampleGround(x, z, probe()));
+    for (const direction of [{ x: 1, y: 0, z: 0 }, { x: -1, y: 0.03, z: 0.01 }, { x: 0, y: -1, z: 0 }]) {
+      const origin = { x, y: 0.5, z };
+      const hit = () => ({ distance: 0, halfExtentX: 0, halfExtentZ: 0, inside: false, colliderIndex: -1, normal: { x: 0, y: 0, z: 0 } });
+      const limb = () => ({ minX: x - 10, maxX: x + 10, minY: 0, maxY: 5, minZ: z - 5, maxZ: z + 5,
+        records: new Float64Array(8 * 9), recordOffset: 0, capacity: 8, count: 0 });
+      const ch = hit(), nh = hit(), cl = limb(), nl = limb();
+      assert.equal(city.raycastObstacle(origin, direction, 50, 0.3, undefined, ch, undefined, cl), native.raycastObstacle(origin, direction, 50, 0.3, undefined, nh, undefined, nl));
+      assert.deepEqual(ch, nh);
+      const records = (l) => Array.from({ length: l.count }, (_, i) => Array.from(l.records.slice(i * 9, i * 9 + 9))).sort((a, b) => a[0] - b[0]);
+      assert.deepEqual(records(cl), records(nl));
+      assert.equal(cl.overflow, nl.overflow);
+      assert.equal(city.raycast(origin, direction, 50), native.raycast(origin, direction, 50));
+      if (ch.inside) {
+        assert.equal(city.raycastObstacle(origin, direction, 50, 0.3, undefined, hit(), ch), native.raycastObstacle(origin, direction, 50, 0.3, undefined, hit(), nh));
+      }
+    }
+  }
 });
 
 test('riding at the Hudson goes out on the esplanade and stops at its railing, short of the water', () => {
@@ -128,6 +224,160 @@ test('riding at the Hudson goes out on the esplanade and stops at its railing, s
   const rail = ESPLANADE_RAIL.d; // m inland of the bulkhead (out on the coping)
   assert.ok(euc.x - west < rail + 1.2, `reached the railing, x ${(euc.x - west).toFixed(2)} m inside the bulkhead`);
   assert.ok(euc.x - west > rail + 0.2, `stopped short of it, x ${(euc.x - west).toFixed(2)} m inside the bulkhead`);
+});
+
+function pierTop(z, top = 0.12, offset = 0, length = 28, width = 8) {
+  const west = getIslandBoundsAtZ(z).westX;
+  const minX = west - offset - length, maxX = west - offset + 1;
+  return { poly: [{ x: minX, z: z - width / 2 }, { x: maxX, z: z - width / 2 },
+    { x: maxX, z: z + width / 2 }, { x: minX, z: z + width / 2 }],
+  minX, maxX, minZ: z - width / 2, maxZ: z + width / 2, top, surface: 'wood', shore: true };
+}
+
+test('stacked decks select support by rider height, including ragdoll underlying terrain and reset', () => {
+  const z = ROAD.z;
+  const deck = {poly:[{x:-4,z:z-50},{x:8,z:z-50},{x:8,z:z+100},{x:-4,z:z+100}],
+    minX:-4,maxX:8,minZ:z-50,maxZ:z+100,top:6,surface:'wood',layered:true};
+  const s = new NycTerrainSampler({tops:[deck]});
+  assert.equal(s.sampleGround(2,z,probe(),0).height,0);
+  const g={...probe(),base:{height:NaN,normal:{x:0,y:1,z:0}}};
+  assert.equal(s.sampleGround(2,z,g,6).height,6);
+  assert.equal(g.base.height,6);
+  for(const y of [0,6]) {
+    const rider=new EucController(s,{spawn:{position:{x:2,y,z},headingY:0}});
+    const snap=ride(rider,3,{...NEUTRAL_ACTIONS,throttle:.4});
+    assert.ok(Math.abs(snap.position.y-y)<.04);
+    assert.ok(snap.position.z>z+8);
+    assert.equal(rider.crashed,false);
+    assert.ok(Math.abs(rider.safeY-y)<.04,'safe point retains elevation');
+    rider.reset({position:{x:2,y:6-y,z},headingY:0});
+    assert.ok(Math.abs(rider.snapshot().position.y-(6-y))<.04,'reset chooses destination level');
+  }
+});
+
+test('suspended rail and body-only slab stay solid to rays but do not lift the lower rider', () => {
+  const z=ROAD.z;
+  const rail={centre:{x:2,y:7,z},halfExtents:{x:2,y:.1,z:.1},rotationY:0,surface:'stone',layered:true};
+  const slab={centre:{x:2,y:5.5,z},halfExtents:{x:3,y:.5,z:3},rotationY:0,surface:'stone',support:false};
+  const s=new NycTerrainSampler({boxes:[rail,slab]});
+  assert.equal(s.sampleGround(2,z,probe(),0).height,0);
+  assert.equal(s.sampleGround(2,z,probe(),6.5).height,7.1);
+  assert.equal(s.raycastObstacle({x:2,y:1,z:z-5},{x:0,y:0,z:1},10),null);
+  assert.notEqual(s.raycastObstacle({x:2,y:7,z:z-5},{x:0,y:0,z:1},10),null);
+  assert.notEqual(s.raycast({x:2,y:4,z},{x:0,y:1,z:0},4),null);
+});
+
+test('a crash and automatic recovery preserve the upper deck instead of selecting the street below', () => {
+  const z=ROAD.z,deck={poly:[{x:-8,z:z-100},{x:8,z:z-100},{x:8,z:z+100},{x:-8,z:z+100}],
+    minX:-8,maxX:8,minZ:z-100,maxZ:z+100,top:6,surface:'pavement',layered:true};
+  const s=new NycTerrainSampler({tops:[deck]});
+  const rider=new EucController(s,{spawn:{position:{x:2,y:6,z},headingY:0}});
+  ride(rider,2,{...NEUTRAL_ACTIONS,throttle:.2});
+  rider.hardKnock(0,1);
+  assert.equal(rider.crashed,true);
+  const pose=createPose();
+  for(let i=0;i<120*9;i++){
+    rider.step(DT,NEUTRAL_ACTIONS);rider.writePose(pose);
+    assert.ok(pose.y>5.8,`wheel stayed on upper floor (${pose.y})`);
+    if(pose.ragdollBlend>0)for(let j=1;j<33;j+=3)assert.ok(pose.ragdoll[j]>5.3,`ragdoll particle ${j} below upper deck`);
+  }
+  assert.equal(rider.crashed,false,'automatic recovery finished');
+  assert.ok(Math.abs(rider.snapshot().position.y-6)<.05);
+});
+
+test('drawn river rail mode removes the phantom wall over coping but preserves the unrailed drop', () => {
+  const z=ROAD.z,west=getIslandBoundsAtZ(z).westX;
+  const s=new NycTerrainSampler({shoreRails:true});
+  assert.ok(s.sampleGround(west-5.5,z,probe()).height<.3,'no continuous 3m wall over the drawn coping');
+  assert.ok(s.sampleGround(west-10,z,probe()).height<ISLAND_BOUNDS.waterLevel,'river remains river');
+  assert.equal(s.isOffLimits(west-10,z),true);
+  assert.equal(s.sampleGround(NORTH_BARRIER.x0+10,NORTH_BARRIER.z,probe()).height,3,'north barricade still closed');
+});
+
+test('shore classification is exact between cached rows at steep cove vertices', () => {
+  const s=new NycTerrainSampler({shoreRails:true});let checked=0;
+  for(const p of SEAWALL_POLYGON){
+    if(p.z<NORTH_BARRIER.band[1]+2||p.z>5900)continue;
+    for(const dx of [-.2,.2])for(const dz of [-.21,.21]){
+      const x=p.x+dx,z=p.z+dz;
+      if(!pointInPoly(SEAWALL_POLYGON,x,z)&&!pointInPoly(MANHATTAN_COASTLINE,x,z))continue;
+      assert.ok(s.cityGround(x,z,{}).height<3,`drawn land was walled at ${x},${z}`);checked++;
+    }
+  }
+  assert.ok(checked>100);
+});
+
+test('stock riding climbs a layered ramp from street level and descends back to the street', () => {
+  const z=ROAD.z;
+  const ramp={poly:[{x:-4,z},{x:8,z},{x:8,z:z+50},{x:-4,z:z+50}],minX:-4,maxX:8,minZ:z,maxZ:z+50,
+    top:5,surface:'pavement',layered:true,plane:{x:2,y:0,z,dx:0,dz:.1}};
+  const s=new NycTerrainSampler({tops:[ramp]});
+  for(const descending of [false,true]) {
+    const start=descending?{x:2,y:4.5,z:z+45}:{x:2,y:0,z:z-1};
+    const rider=new EucController(s,{spawn:{position:start,headingY:descending?Math.PI:0}});
+    const snap=ride(rider,4,{...NEUTRAL_ACTIONS,throttle:.5});
+    assert.equal(rider.crashed,false);
+    assert.ok(descending?snap.position.y<3.5:snap.position.y>1);
+    assert.ok(Math.abs(snap.position.y-(snap.position.z-z)*.1)<.08);
+  }
+});
+
+test('a drawn pier opens only its footprint through the shore wall and permits safe get-up on the deck', () => {
+  const z = ROAD.z, west = getIslandBoundsAtZ(z).westX;
+  const s = new NycTerrainSampler({ tops: [pierTop(z)] });
+  for (const d of [3, 5.5, 7, 15, 25]) {
+    assert.equal(s.sampleGround(west - d, z, probe()).height, 0.12, `pier ${d}m out`);
+    assert.equal(s.isOffLimits(west - d, z), false, `safe deck ${d}m out`);
+  }
+  assert.equal(s.sampleGround(west - 5.5, z + 6, probe()).height, 3, 'the railing beside the mouth remains a wall');
+  assert.equal(s.isOffLimits(west - 15, z + 6), true, 'water beside the deck remains off limits');
+  assert.ok(s.sampleGround(west - 32, z, probe()).height < ISLAND_BOUNDS.waterLevel, 'past the deck is river');
+  assert.equal(s.isOffLimits(west - 27.5, z), true, 'no get-up against the deck edge');
+  const overlay = { ...pierTop(z, 0.3), shore: false, surface: 'brick' };
+  const raised = new NycTerrainSampler({ tops: [pierTop(z), overlay] });
+  assert.equal(raised.sampleGround(west - 5.5, z, probe()).height, 0.3, 'a higher overlay does not close the deck mouth');
+  assert.equal(raised.isOffLimits(west - 15, z), false, 'higher overlay remains a safe pier surface');
+});
+
+test('the stock controller crosses a pier mouth without hitting the former invisible shore band', () => {
+  const z = ROAD.z, west = getIslandBoundsAtZ(z).westX;
+  const s = new NycTerrainSampler({ tops: [pierTop(z)] });
+  const euc = new EucController(s, { spawn: { position: { x: west - 2, y: 0.12, z }, headingY: -Math.PI / 2 } });
+  const snap = ride(euc, 3, { ...NEUTRAL_ACTIONS, throttle: 0.3 });
+  assert.equal(euc.crashed, false);
+  assert.ok(snap.position.x < west - 9, `crossed the old wall to ${snap.position.x - west}m`);
+  assert.ok(Math.abs(snap.position.y - 0.12) < 0.03);
+});
+
+test('floating decks and sloping gangways retain negative support heights, normals and ragdoll terrain', () => {
+  const z = ROAD.z, west = getIslandBoundsAtZ(z).westX;
+  const dock = pierTop(z, -1.5, 12);
+  const ramp = pierTop(z, 0.12, 0, 13);
+  ramp.plane = { x: west - 2, y: 0.12, z, dx: 1.62 / 10, dz: 0 };
+  const s = new NycTerrainSampler({ tops: [dock, ramp] });
+  const out = { ...probe(), base: { height: NaN, normal: { x: 0, y: 1, z: 0 } } };
+  assert.equal(s.sampleGround(west - 18, z, out).height, -1.5);
+  assert.equal(out.base.height, -1.5);
+  assert.equal(s.isOffLimits(west - 18, z), false);
+  assert.ok(Math.abs(s.sampleGround(west - 10, z, out).height + 1.176) < 1e-9);
+  assert.ok(Math.abs(out.normal.x / out.normal.y + 1.62 / 10) < 1e-9);
+  assert.deepEqual(out.base.normal, out.normal);
+  const euc = new EucController(s, { spawn: { position: { x: west - 6, y: -0.528, z }, headingY: -Math.PI / 2 } });
+  const snap = ride(euc, 3, { ...NEUTRAL_ACTIONS, throttle: 0.3 });
+  assert.equal(euc.crashed, false);
+  assert.ok(snap.position.x < west - 14, 'rode down the gangway onto the floating deck');
+  assert.ok(Math.abs(snap.position.y + 1.5) < 0.03);
+});
+
+test('an ordinary raised top cannot open the shoreline, and a pier cannot open the north barricades', () => {
+  const z = ROAD.z, west = getIslandBoundsAtZ(z).westX;
+  const top = pierTop(z); delete top.shore;
+  assert.equal(new NycTerrainSampler({ tops: [top] }).sampleGround(west - 5.5, z, probe()).height, 3);
+  const barrierZ = NORTH_BARRIER.z;
+  const northTop = pierTop(barrierZ, 0.12, -200, 400, 12);
+  const s = new NycTerrainSampler({ tops: [northTop] });
+  assert.equal(s.sampleGround(northTop.maxX - 10, barrierZ, probe()).height, 3);
+  assert.equal(s.isOffLimits(northTop.maxX - 10, barrierZ), true);
 });
 
 // ---- Central Park: raised behind its real wall, ridden in by the gates (city-config.js CENTRAL_PARK_GATES) ----------

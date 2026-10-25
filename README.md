@@ -9,6 +9,10 @@ Status: early. Riders: Cool Rider (`1`) and Trollina (`2`). Cars, buses and pede
 speed is a crash. Real-world brands are replaced with fictional ones. Street, park and landmark names are kept as
 place names.
 
+![Cool Rider on an electric unicycle at Broadway and W 60th St during Blue Hour, with Manhattan buildings, traffic and pedestrians.](screenshots/blue-hour-broadway.png)
+
+*Blue Hour at Broadway and W 60th St — screenshot from an in-game playtest.*
+
 ## Run it
 
 No build step. Serve the folder and open it in a browser with WebGPU (current Chrome or Edge):
