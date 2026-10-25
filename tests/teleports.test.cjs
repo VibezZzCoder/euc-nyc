@@ -5,21 +5,36 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const read = (path) => readFileSync(join(__dirname, '..', path), 'utf8');
-let TELEPORT_LOCATIONS, LANDMARK_SITES, blockAt, nearestRoads, getIslandBoundsAtZ;
+let TELEPORT_LOCATIONS, LANDMARK_SITES, EAST_RIVER_BRIDGES, blockAt, nearestRoads, getIslandBoundsAtZ;
 test.before(async () => {
-  ({ TELEPORT_LOCATIONS, LANDMARK_SITES, blockAt, nearestRoads, getIslandBoundsAtZ } = await import('../js/city-config.js'));
+  ({ TELEPORT_LOCATIONS, LANDMARK_SITES, EAST_RIVER_BRIDGES, blockAt, nearestRoads, getIslandBoundsAtZ } = await import('../js/city-config.js'));
 });
 
-test('every teleport button has a destination on a real roadway inside Manhattan', () => {
+test('every teleport button has a finite arrival; landmark stops remain on real Manhattan roadways', () => {
   const buttons = [...read('index.html').matchAll(/data-teleport="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(Object.keys(TELEPORT_LOCATIONS).sort(), buttons.sort());
   for (const [name, point] of Object.entries(TELEPORT_LOCATIONS)) {
+    assert.ok(Number.isFinite(point.x) && Number.isFinite(point.z), `${name} has coordinates`);
     assert.ok(Number.isFinite(point.heading), `${name} has a heading`);
+    assert.ok(point.y === undefined || Number.isFinite(point.y), `${name} has a valid optional floor`);
+  }
+  // New pier/bridge stops deliberately use registered riding surfaces outside the old street-only arrival model.
+  for (const name of ['empire', 'timessq', 'chrysler', 'grandcentral', 'bryant', 'flatiron', 'centralpark', 'owtc']) {
+    const point = TELEPORT_LOCATIONS[name];
     assert.equal(blockAt(point.x, point.z), null, `${name} lands outside building blocks`);
     const shore = getIslandBoundsAtZ(point.z);
     assert.ok(point.x > shore.westX + 8 && point.x < shore.eastX - 8, `${name} stays on the island`);
     const nearby = nearestRoads(point.x, point.z, 20);
     assert.ok(nearby.some(({ road, dist }) => dist < road.w / 2), `${name} lands within a street's width`);
+  }
+});
+
+test('bridge arrivals are at the Manhattan approach, facing along their own crossing', () => {
+  for (const bridge of EAST_RIVER_BRIDGES) {
+    const point = TELEPORT_LOCATIONS[bridge.id];
+    const dx = bridge.b.x - bridge.a.x, dz = bridge.b.z - bridge.a.z, length = Math.hypot(dx, dz);
+    assert.ok(Math.hypot(point.x - bridge.a.x, point.z - bridge.a.z) < 35);
+    assert.ok((dx * Math.sin(point.heading) + dz * Math.cos(point.heading)) / length > 0.999);
   }
 });
 
@@ -67,7 +82,7 @@ test('preset and map teleports share arrival resets and mark the resolved landin
     calls.length = 0;
     handlers.get(name)();
     assert.deepEqual(calls, [
-      ['teleport', point.x, point.z, point.heading], ['touch'], ['gamepad'], ['camera'], ['selectCamera', 'chase', true]
+      ['teleport', point.x, point.z, point.heading, point.y ?? Infinity], ['touch'], ['gamepad'], ['camera'], ['selectCamera', 'chase', true, false]
     ]);
     assert.equal(map.waypoint.x, landed.x);
     assert.equal(map.waypoint.z, landed.z);

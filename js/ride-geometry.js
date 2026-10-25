@@ -30,6 +30,23 @@ export function subtractConvex(poly, cut) {
   return pieces;
 }
 
+/** Convex envelope of XZ points. Useful for bounded swept clearance without acute-corner mitre spikes. */
+export function convexHullXZ(points) {
+  const sorted = points.slice().sort((a, b) => a.x - b.x || a.z - b.z)
+    .filter((p, i, a) => !i || p.x !== a[i - 1].x || p.z !== a[i - 1].z);
+  if (sorted.length <= 2) return sorted;
+  const cross = (a, b, c) => (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+  const half = list => {
+    const out = [];
+    for (const p of list) {
+      while (out.length > 1 && cross(out.at(-2), out.at(-1), p) <= 1e-9) out.pop();
+      out.push(p);
+    }
+    return out.slice(0, -1);
+  };
+  return half(sorted).concat(half(sorted.slice().reverse()));
+}
+
 /** Inscribed horizontal rectangles in a convex prism: no box corner sticks outside its drawn outline.
  * Adaptive slices keep taper error small without dividing a straight hull into hundreds of boxes. */
 export function prismSlices(poly, tolerance = 0.1) {

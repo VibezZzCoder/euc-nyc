@@ -67,7 +67,7 @@ import {
   createTunnelShadeMaterial
 } from './tsl-materials.js';
 import { GEO } from './nyc-geodata.js';
-import { subtractConvex, prismSlices, railBodies } from './ride-geometry.js';
+import { subtractConvex, convexHullXZ, prismSlices, railBodies } from './ride-geometry.js';
 
 // Live construction data consumed by the building and street-detail builders after buildCityGrid().
 let centralParkClearings;
@@ -789,7 +789,7 @@ function pierHullGeometry(len, beam, depth, bowFrac = 0.28, sternFrac = 0.06, do
 
 // Waterfront piers: builds every WATERFRONT_PIERS entry: concrete decks on timber piles with fenders, railings and
 // lamps, plus each pier's landmark structures. All static parts go through one batcher (~1 draw call per material).
-function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) {
+function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, inPier57Road }) {
   const M = createWaterfrontPierMaterials();
   for (const [k, m] of Object.entries(M)) if (m && m.isMaterial) m.name = 'waterfrontPier.' + k;
   const B = createPierBoxBatcher();
@@ -847,9 +847,9 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
         }
       },
       geo: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0) => B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v),
-      ground: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0) => {
+      ground: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0, surface = v === 4 ? 'grass' : 'pavement') => {
         B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v);
-        support(geo, u, y, s, rot, v === 4 ? 'grass' : 'pavement');
+        support(geo, u, y, s, rot, surface);
       },
       prism: (mat, geo, y, v) => {
         B.geo(mat, geo, x0, y, z0, theta, v);
@@ -1377,6 +1377,24 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     top.computeVertexNormals();
     F.ground(GR, top, 0, 0, 0, 0, 4);
     // Concrete rim skirt around the edge (pot rims), wound to face outward
+    const gangways = [-hw + 8, hw - 8];
+    // The squircle's edge retreats from U0 near the corners. Land inside the actual triangulated park, not at U0+2.
+    const topRay = new THREE.Raycaster();
+    const topProbe = new THREE.Mesh(top, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    const parkHit = (u, s) => {
+      topRay.set(new THREE.Vector3(u, 50, s), new THREE.Vector3(0, -1, 0));
+      return topRay.intersectObject(topProbe)[0];
+    };
+    const landing = (s) => {
+      let lo = U0, hi = cu;
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2;
+        if (parkHit(mid, s)) hi = mid;
+        else lo = mid;
+      }
+      const u = hi + 0.05; // join just inside the mesh, without floating-point cracks
+      return [u, parkHit(u, s).point.y, s];
+    };
     const ring = [];
     for (let ix = 0; ix <= NX; ix++) ring.push(ix);
     for (let iz = 1; iz <= NZ; iz++) ring.push(iz * (NX + 1) + NX);
@@ -1386,11 +1404,22 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     for (let k = 0; k < ring.length; k++) {
       const i = ring[k], j = ring[(k + 1) % ring.length];
       const P = [tp.getX(i), tp.getY(i), tp.getZ(i)], Q = [tp.getX(j), tp.getY(j), tp.getZ(j)];
-      const out = (P[0] + Q[0]) / 2 - cu, outS = (P[2] + Q[2]) / 2;
-      const flip = (Q[2] - P[2]) * out - (Q[0] - P[0]) * outS < 0;
-      const t0 = [P[0], P[1] + 0.25, P[2]], t1 = [Q[0], Q[1] + 0.25, Q[2]], b0 = [P[0], P[1] - 2.3, P[2]], b1 = [Q[0], Q[1] - 2.3, Q[2]];
-      const quad = flip ? [t0, t1, b1, t0, b1, b0] : [t0, b1, t1, t0, b0, b1];
-      quad.forEach((v) => sk.push(...v));
+      const cuts = [0, 1];
+      if (Q[2] !== P[2]) for (const s of gangways) for (const edge of [s - 2.15, s + 2.15]) {
+        const t = (edge - P[2]) / (Q[2] - P[2]);
+        if (t > 0 && t < 1) cuts.push(t);
+      }
+      cuts.sort((a, b) => a - b);
+      const at = (t) => P.map((v, i) => v + (Q[i] - v) * t);
+      for (let j = 0; j + 1 < cuts.length; j++) {
+        const A = at(cuts[j]), B = at(cuts[j + 1]), middle = at((cuts[j] + cuts[j + 1]) / 2);
+        if (middle[0] < cu && gangways.some((s) => Math.abs(middle[2] - s) < 2.15)) continue;
+        const out = (A[0] + B[0]) / 2 - cu, outS = (A[2] + B[2]) / 2;
+        const flip = (B[2] - A[2]) * out - (B[0] - A[0]) * outS < 0;
+        const t0 = [A[0], A[1] + 0.25, A[2]], t1 = [B[0], B[1] + 0.25, B[2]], b0 = [A[0], A[1] - 2.3, A[2]], b1 = [B[0], B[1] - 2.3, B[2]];
+        const quad = flip ? [t0, t1, b1, t0, b1, b0] : [t0, b1, t1, t0, b0, b1];
+        quad.forEach((v) => sk.push(...v));
+      }
     }
     const skirt = new THREE.BufferGeometry();
     skirt.setAttribute('position', new THREE.Float32BufferAttribute(sk, 3));
@@ -1412,11 +1441,33 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
       F.tree(cu + a * ru, b * hw, height(a, b) - 0.1, 1.6 + rnd() * 1.2);
     }
     // Gangways from the esplanade to the low east edge
-    for (const s of [-hw + 8, hw - 8]) {
-      const y1 = height(-0.95, s / hw) - 0.1;
-      F.strut(GR, [F.u0, DY - 0.15, s], [U0 + 2, y1, s], 0.5, 3, 4.2, 'wood');
-      for (const e of [-2.1, 2.1]) F.strut(PA, [F.u0, DY + 1.0, s + e], [U0 + 2, y1 + 1.1, s + e], 0.08, 9, 0.08, null, true);
+    for (const s of gangways) {
+      // Each edge meets its actual lawn triangle: a flat end across this curved, uneven rim leaves a step or a gap.
+      const left = landing(s - 2.1), right = landing(s + 2.1);
+      // The north gangway used to start across the ambient carriageway at car-roof height. Start on its river-side
+      // verge instead; the fitted island landing and the other gangway keep their established endpoints.
+      let foot = F.u0, footY = DY + 0.1;
+      for (let u = F.u0; u <= 0; u += 0.5) {
+        if ([-2.2, 0, 2.2].some(ds => inPier57Road(F.wx(u, s + ds), F.wz(u, s + ds)))) {
+          foot = u - 1; footY = 0; // start at grade inside the cleared verge, rather than behind a new kerb lip
+        }
+      }
+      const upper = [[foot, footY, s - 2.1], [foot, footY, s + 2.1], right, left];
+      const vertices = [...upper, ...upper.map(([u, y, s]) => [u, y - 0.5, s])];
+      const indices = [0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6];
+      for (let i = 0; i < 4; i++) {
+        const j = (i + 1) % 4;
+        indices.push(i, i + 4, j + 4, i, j + 4, j);
+      }
+      const deckGeo = new THREE.BufferGeometry();
+      deckGeo.setAttribute('position', new THREE.Float32BufferAttribute(indices.flatMap((i) => vertices[i]), 3));
+      deckGeo.computeVertexNormals();
+      F.ground(GR, deckGeo, 0, 0, 0, 0, 3, 'wood');
+      for (const edge of [left, right]) F.strut(PA,
+        [foot, footY + 1, edge[2]], [edge[0], edge[1] + 1, edge[2]], 0.08, 9, 0.08, null, true);
+      deckGeo.dispose();
     }
+    topProbe.material.dispose();
   };
   // Pier 17 (SHoP, 2018): glass-and-steel box over a garage-door ground floor, rooftop lawn and concert stage
   kinds.pier17 = (F) => {
@@ -1624,6 +1675,52 @@ function notchCentralParkWall(ring) {
   return out;
 }
 
+// Shared construction data for park clearance, the drawn waterfront and its ambient lanes. Keep the original
+// sampling / filtering arithmetic: Pier 57's local dressing is cut; traffic still receives identical points.
+function sampleWaterfrontShore(blockSidewalks, west, z0, z1, landF) {
+  const STEP = 3, HWY_W = 15.2;
+  const shoreX = z => { const b = getIslandBoundsAtZ(z); return west ? b.westX : b.eastX; };
+  const H = (r, o) => r.d0 + o * r.k;
+  const sgn = west ? 1 : -1;
+  const edgeD = (b, s) => (west ? b.cx - b.w / 2 - s : s - b.cx - b.w / 2);
+  const near = blockSidewalks.filter((b) => edgeD(b, shoreX(b.cz)) < 80);
+  const rows = [];
+  for (let z = z0; z <= z1 + 1e-6; z += STEP) {
+    const s = shoreX(z);
+    let W = 40;
+    for (const b of near) if (Math.abs(z - b.cz) < b.d / 2 + 9) W = Math.min(W, edgeD(b, s));
+    rows.push({ z, s, sgn, west, raw: W });
+  }
+  const n = rows.length;
+  const at = (i) => rows[Math.min(n - 1, Math.max(0, i))];
+  rows.forEach((r, i) => { let m = Infinity; for (let k = -8; k <= 8; k++) m = Math.min(m, at(i + k).raw); r.min = m; });
+  rows.forEach((r, i) => {
+    let sum = 0;
+    for (let k = -5; k <= 5; k++) sum += at(i + k).min;
+    r.W = sum / 11;
+    r.d0 = 0.6 + Math.max(0, r.W - 0.4 - HWY_W - 0.6) * landF(r.z);
+    r.k = Math.min(1, Math.max(0.85, (r.W - r.d0 - 0.05) / HWY_W));
+    r.river = r.d0 - 0.5 - 0.4 >= 3.4 ? [0.4, r.d0 - 0.5] : null;
+    r.land = r.W - 0.3 - (r.d0 + HWY_W + 0.5) >= 3.4 ? [r.d0 + HWY_W + 0.5, r.W - 0.3] : null;
+  });
+  // Short pinches carry on at the narrowest lane width, past the block corner.
+  for (let i = 0; i < n;) {
+    if (H(rows[i], HWY_W) <= rows[i].W + 0.1) { i++; continue; }
+    let j = i, rawMin = Infinity;
+    for (; j < n && H(rows[j], HWY_W) > rows[j].W + 0.1; j++) rawMin = Math.min(rawMin, rows[j].raw);
+    if (i > 0 && j < n && j - i <= 20 && rawMin >= 9.5) for (let k = i; k < j; k++) rows[k].W = H(rows[k], HWY_W) + 0.4;
+    i = j;
+  }
+  // Extend a belt toward a receding block front, without bridging the cross streets.
+  for (const r of rows) {
+    let front = Infinity;
+    for (const b of near) if (Math.abs(r.z - b.cz) < b.d / 2 - 1) front = Math.min(front, edgeD(b, r.s));
+    const a = r.land ? r.land[0] : r.d0 + HWY_W + 0.5;
+    if (front < Infinity && front - 1.2 - (r.land ? r.land[1] : a) >= (west && r.z < -350 ? 14 : 8)) r.land = [a, front - 1.2];
+  }
+  return rows;
+}
+
 function buildCityGrid(scene) {
   const group = new THREE.Group();
   group.name = 'ManhattanCityGrid';
@@ -1769,6 +1866,7 @@ function buildCityGrid(scene) {
   const slabGeos = [];
   const curbGeos = [];
   const hedgeGeos = [];
+  const irregularSidewalks = [];
   const SW_TOP = 0.22;
   for (const b of BLOCKS) {
     if (b.park > 0.6 && !b.median && b.parkName !== 'Bryant Park') continue; // parks build their own perimeter sidewalk (sections 7, 7B)
@@ -1778,11 +1876,7 @@ function buildCityGrid(scene) {
       if (b.median) addFootprint(slab.cx, slab.cz, slab.w, slab.d);
       else roadSidewalks.push({ minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ });
     } else {
-      // curb (granite) ring under a sidewalk slab inset by 0.25 m, like the instanced pair below
-      const curb = createExtrudedPolygonMesh(b.poly, 0.0, 0.18, curbMat).geometry;
-      curbGeos.push(curb);
-      const inner = offsetPolygonInward(b.poly, 0.25);
-      if (inner) slabGeos.push(createExtrudedPolygonMesh(inner, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
+      irregularSidewalks.push(b); // draw after reserving Pier 57's road; traffic keeps these historical covers
       // rect cover for the consumers that work on rectangles: the lot rects grown back out to the curb
       for (const [x0, x1, z0, z1] of b.rects) {
         const r = { minX: x0 - 4.4, maxX: x1 + 4.4, minZ: z0 - 4.4, maxZ: z1 + 4.4 };
@@ -1805,9 +1899,6 @@ function buildCityGrid(scene) {
       group.add(m);
     }
   };
-  mergeInto(curbGeos, curbMat, true);
-  mergeInto(slabGeos, sidewalkMat);
-  mergeInto(hedgeGeos, medianHedgeMat, true);
 
   const rectSlabs = blockSidewalks.filter((s) => !s.cover);
   const swInstanced = new THREE.InstancedMesh(unitBox, sidewalkMat, rectSlabs.length);
@@ -1842,6 +1933,61 @@ function buildCityGrid(scene) {
   const treeSites = []; // { x, y, z, scale, species } park & plaza trees planted by street-details.js (section 7)
   const PLAZA_Y = 0.24;
   const pavedRects = []; // plaza & park slab bounds, exported so street trees (street-details.js) stay off them
+
+  // Compute the same west highway rows once, before the parks: Pier 57's shoreline jog otherwise sends ambient
+  // cars through raised park paving / planting. Reserve their existing corridor, not a new traffic route.
+  const westRows = sampleWaterfrontShore(blockSidewalks, true, ESPLANADE_RAIL.z0, ESPLANADE_RAIL.westZ1, z => {
+    const t = Math.min(1, Math.max(0, (z - streetZ(66)) / (streetZ(59) + 60 - streetZ(66))));
+    return t * t * (3 - 2 * t);
+  });
+  const pier57Rows = westRows.filter(r => r.z >= 2244 && r.z <= 2340);
+  const pier57RoadCuts = pier57Rows.slice(1).map((b, i) => {
+    const a = pier57Rows[i], corners = [a, b].flatMap(r => [0, 15.2].map(o => ({ x: r.s + r.d0 + o * r.k, z: r.z })));
+    // A car body swings beyond a centre-line vertex at a bend. Bound that clearance in both axes instead of
+    // mitre-offsetting these very oblique 3 m quads (which would spike far into the remaining park).
+    const poly = convexHullXZ(corners.flatMap(p => [-2.8, 2.8].flatMap(dx => [-2.8, 2.8].map(dz => ({ x: p.x + dx, z: p.z + dz })))));
+    return { poly, lawnPoly: offsetConvexPolygon(poly, 0.3), minX: Math.min(...poly.map(p => p.x)) - 0.4, maxX: Math.max(...poly.map(p => p.x)) + 0.4, minZ: a.z - 3.2, maxZ: b.z + 3.2 };
+  });
+  const inPier57Road = (x, z) => pier57RoadCuts.some(c => x >= c.minX && x <= c.maxX && z >= c.minZ && z <= c.maxZ && pointInPolygonXZ(c.poly, x, z));
+  function clearPier57Road(poly, lawn = false) {
+    if (poly.every(p => p.z < 2240.8) || poly.every(p => p.z > 2343.2)
+      || poly.every(p => p.x < -1580) || poly.every(p => p.x > -1400)) return [poly];
+    let pieces = [poly];
+    for (const c of pier57RoadCuts) pieces = pieces.flatMap(p => {
+      if (p.every(v => v.x < c.minX) || p.every(v => v.x > c.maxX)
+        || p.every(v => v.z < c.minZ) || p.every(v => v.z > c.maxZ)) return [p];
+      return subtractConvex(p, lawn ? c.lawnPoly : c.poly).filter(part => Math.abs(part.reduce((s, a, i) => {
+        const b = part[(i + 1) % part.length]; return s + a.x * b.z - a.z * b.x;
+      }, 0)) > 1e-5);
+    });
+    return pieces;
+  }
+  // Give the river / block-side belts the same road edge. Do not alter W, d0 or k: those define the traffic paths.
+  for (const r of pier57Rows) {
+    const xs = [];
+    for (const c of pier57RoadCuts) {
+      if (r.z < c.minZ || r.z > c.maxZ) continue;
+      for (let i = 0; i < c.poly.length; i++) {
+        const a = c.poly[i], b = c.poly[(i + 1) % c.poly.length];
+        if ((a.z <= r.z && b.z > r.z) || (b.z <= r.z && a.z > r.z)) xs.push(a.x + (b.x - a.x) * (r.z - a.z) / (b.z - a.z));
+      }
+    }
+    if (!xs.length) continue;
+    if (r.river) { r.river[1] = Math.min(r.river[1], Math.min(...xs) - r.s - 0.4); if (r.river[1] - r.river[0] < 1) r.river = null; }
+    if (r.land) { r.land[0] = Math.max(r.land[0], Math.max(...xs) - r.s + 0.4); if (r.land[1] - r.land[0] < 1) r.land = null; }
+  }
+
+  for (const c of pier57RoadCuts) addRideTop(c.poly, 0, 'pavement').replacesBlock = true;
+  // Also notch the narrow ordinary curb island at the north entry. Only its drawing / rider floor changes;
+  // roadSidewalks and blockSidewalks retain the exact original bounds for the street traffic network.
+  for (const b of irregularSidewalks) {
+    for (const piece of clearPier57Road(b.poly)) curbGeos.push(createExtrudedPolygonMesh(piece, 0.0, 0.18, curbMat).geometry);
+    const inner = offsetPolygonInward(b.poly, 0.25);
+    if (inner) for (const piece of clearPier57Road(inner)) slabGeos.push(createExtrudedPolygonMesh(piece, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
+  }
+  mergeInto(curbGeos, curbMat, true);
+  mergeInto(slabGeos, sidewalkMat);
+  mergeInto(hedgeGeos, medianHedgeMat, true);
 
   function addPavedPlaza(pts, style, topY = PLAZA_Y) {
     addRideTop(pts, topY, 'brick');
@@ -2616,11 +2762,15 @@ function buildCityGrid(scene) {
   const genericParks = BLOCKS.filter((b) => b.park > 0.6 && !b.median && !SPECIAL_PARKS.has(b.parkName) && b.area > 250);
   for (const b of genericParks) {
     const slab = offsetPolygonInward(b.poly, 0.1) || b.poly;
-    addRideTop(b.poly, PARK_Y, 'brick');
-    group.add(createExtrudedPolygonMesh(b.poly, 0.0, PARK_Y - 0.04, curbMat, true, false));
-    const top = createExtrudedPolygonMesh(slab, 0.0, PARK_Y, pavingMat, true, false);
-    setPavingStyle(top.geometry, 0);
-    group.add(top);
+    for (const piece of clearPier57Road(b.poly)) {
+      addRideTop(piece, PARK_Y, 'brick');
+      group.add(createExtrudedPolygonMesh(piece, 0.0, PARK_Y - 0.04, curbMat, true, false));
+    }
+    for (const piece of clearPier57Road(slab)) {
+      const top = createExtrudedPolygonMesh(piece, 0.0, PARK_Y, pavingMat, true, false);
+      setPavingStyle(top.geometry, 0);
+      group.add(top);
+    }
     pavedRects.push({ minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ });
     addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
     const fullBed = offsetPolygonInward(b.poly, Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2));
@@ -2631,10 +2781,13 @@ function buildCityGrid(scene) {
       beds = beds.flatMap(bed => subtractConvex(bed, a.poly));
     }
     for (const bed of beds) {
-      addRideTop(bed, BED_Y, 'grass');
-      group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
+      for (const piece of clearPier57Road(bed)) {
+        addRideTop(piece, BED_Y, 'grass');
+        group.add(createExtrudedPolygonMesh(piece, 0.2, BED_Y - 0.21, graniteMat, true, false));
+      }
       const lawnTop = offsetPolygonInward(bed, 0.3);
-      if (lawnTop) parkLawnGeos.push(createExtrudedPolygonMesh(lawnTop, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
+      // Inset before cutting: insetting every subtraction fragment leaves false granite stripes across one lawn.
+      if (lawnTop) for (const piece of clearPier57Road(lawnTop, true)) parkLawnGeos.push(createExtrudedPolygonMesh(piece, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
       // trees on a jittered grid inside the bed
       const SP = 11;
       for (let gx = b.minX + SP * 0.5; gx < b.maxX; gx += SP) {
@@ -2643,7 +2796,7 @@ function buildCityGrid(scene) {
           const tz = gz + (prand(gz, gx, 1) - 0.5) * SP * 0.7;
           if (prand(tx, tz, 9) < 0.3) continue; // glades
           const inner = lawnTop || bed;
-          if (!inPolygon(tx, tz, inner) || inBridgeApproach(tx, tz, 1.5)) continue;
+          if (!inPolygon(tx, tz, inner) || inBridgeApproach(tx, tz, 1.5) || inPier57Road(tx, tz)) continue;
           const r = prand(tx, tz, 2);
           treeSites.push({ x: tx, y: BED_Y, z: tz, scale: 0.9 + prand(tx, tz, 3) * 0.4, species: r < 0.55 ? 0 : (r < 0.75 ? 1 : 2) });
         }
@@ -2657,7 +2810,7 @@ function buildCityGrid(scene) {
       for (let t = 17; t < len - 8; t += 34) {
         const px = a.x + ((c.x - a.x) * t) / len;
         const pz = a.z + ((c.z - a.z) * t) / len;
-        if (!inBridgeApproach(px, pz, 1)) addLamp(px, PARK_Y, pz);
+        if (!inBridgeApproach(px, pz, 1) && !inPier57Road(px, pz)) addLamp(px, PARK_Y, pz);
       }
     }
   }
@@ -2870,12 +3023,12 @@ function buildCityGrid(scene) {
   // Concrete decks on timber piles with fenders, railings & lanterns, plus each pier's real structures:
   // cruise terminals, the Chelsea sports piers, Pier 57, Little Island, Pier 40, the Intrepid, the 79th St Boat Basin,
   // Pier 17, the Wavertree, Pier 15, Pier 11 and the Staten Island Ferry Whitehall Terminal (see buildWaterfrontPiers)
-  buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh });
+  buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, inPier57Road });
 
   // 9 & 10. The East River bridges, harbor islands and the surrounding boroughs are built by boroughs.js
 
   // 11. Manhattan's waterfront edge: esplanades, shore highways & riverside park belts (see buildManhattanWaterfrontEdge)
-  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops });
+  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops });
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
   batchStaticGroupMeshes(group, new Set([waterMat, roadMat, cpLawnMat, cpMeadowMat]));
@@ -2915,7 +3068,7 @@ function buildCityGrid(scene) {
  * South of the Williamsburg Bridge the FDR leaves the strip for the South Street Viaduct (buildSouthStreetViaduct).
  * Everything is merged into a handful of meshes and keeps clear of the bridge towers standing near the shore.
  */
-function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops }) {
+function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road, treeSites, lawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops }) {
   const STEP = 3; // shore sampling (m of z)
   const HWY_W = 15.2; // 0.4 shoulder, 2 x 3.3 m lanes, 1.2 m median, 2 x 3.3 m lanes, 0.4 shoulder
   const COPING_Y = -0.04; // seawall coping top (section 2)
@@ -2974,54 +3127,6 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   };
   const blocked = (r, d) => towers.some((t) => inBox(t, X(r, d), r.z)) ||
     gaps.some((g) => g.west === r.west && r.z > g.z0 && r.z < g.z1 && d < g.dMax);
-
-  // Rows every STEP m of z: shore x `s`, inland sign `sgn` (x = s + sgn * d) and the strip width W to the nearest raised
-  // sidewalk block (cross-street gaps take their neighbours'), min-filtered then smoothed so lanes and belts flow along
-  // the shore. landF(z) slides the highway from the river side (0) to the block side (1); the park belts take the rest.
-  function sampleShore(west, z0, z1, landF) {
-    const sgn = west ? 1 : -1;
-    const edgeD = (b, s) => (west ? b.cx - b.w / 2 - s : s - b.cx - b.w / 2);
-    const near = blockSidewalks.filter((b) => edgeD(b, shoreX(b.cz, west)) < 80);
-    const rows = [];
-    for (let z = z0; z <= z1 + 1e-6; z += STEP) {
-      const s = shoreX(z, west);
-      let W = 40;
-      for (const b of near) if (Math.abs(z - b.cz) < b.d / 2 + 9) W = Math.min(W, edgeD(b, s));
-      rows.push({ z, s, sgn, west, raw: W });
-    }
-    const n = rows.length;
-    const at = (i) => rows[Math.min(n - 1, Math.max(0, i))];
-    rows.forEach((r, i) => { let m = Infinity; for (let k = -8; k <= 8; k++) m = Math.min(m, at(i + k).raw); r.min = m; });
-    rows.forEach((r, i) => {
-      let sum = 0;
-      for (let k = -5; k <= 5; k++) sum += at(i + k).min;
-      r.W = sum / 11;
-      r.d0 = 0.6 + Math.max(0, r.W - 0.4 - HWY_W - 0.6) * landF(r.z); // river-side edge of the highway
-      r.k = Math.min(1, Math.max(0.85, (r.W - r.d0 - 0.05) / HWY_W)); // narrower lanes where the strip is short
-      r.river = r.d0 - 0.5 - 0.4 >= 3.4 ? [0.4, r.d0 - 0.5] : null; // belt between the greenway and the highway
-      r.land = r.W - 0.3 - (r.d0 + HWY_W + 0.5) >= 3.4 ? [r.d0 + HWY_W + 0.5, r.W - 0.3] : null; // belt by the blocks
-    });
-    // Short pinches (a block corner within ~10 m of the shore for less than ~60 m of the smoothed W) don't break the
-    // highway: its markings, barrier and traffic lanes carry on there at the narrowest lane width, past the corner
-    for (let i = 0; i < n;) {
-      if (H(rows[i], HWY_W) <= rows[i].W + 0.1) { i++; continue; }
-      let j = i;
-      let rawMin = Infinity;
-      for (; j < n && H(rows[j], HWY_W) > rows[j].W + 0.1; j++) rawMin = Math.min(rawMin, rows[j].raw);
-      if (i > 0 && j < n && j - i <= 20 && rawMin >= 9.5) for (let k = i; k < j; k++) rows[k].W = H(rows[k], HWY_W) + 0.4;
-      i = j;
-    }
-    // Where a block front stands well back from the smoothed strip (a receding front, the wider shore of a cove), the
-    // belt by the blocks reaches out to its curb instead of leaving bare asphalt; not across the cross streets, and
-    // not for small set-backs along Riverside Park's wall
-    for (const r of rows) {
-      let front = Infinity;
-      for (const b of near) if (Math.abs(r.z - b.cz) < b.d / 2 - 1) front = Math.min(front, edgeD(b, r.s));
-      const a = r.land ? r.land[0] : r.d0 + HWY_W + 0.5;
-      if (front < Infinity && front - 1.2 - (r.land ? r.land[1] : a) >= (west && r.z < -350 ? 14 : 8)) r.land = [a, front - 1.2];
-    }
-    return rows;
-  }
 
   // ---- Merged geometry accumulators -------------------------------------------------------------------------------
   const makeAcc = () => ({ pos: [], nor: [], uv: [] });
@@ -3193,7 +3298,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
         const [a, b] = r[key];
         const d = a + 1.9 + k * rowGap + (hash(k, zt) - 0.5) * 1.0;
         if (d > b - 1.6) break;
-        if (blocked(r, d) || (key === 'river' && blocked(r, a)) || hash(z, d) < 0.1) continue;
+        if (blocked(r, d) || (key === 'river' && blocked(r, a)) || inPier57Road(X(r, d), z) || hash(z, d) < 0.1) continue;
         treeSites.push({ x: X(r, d), y: LAWN_Y, z, scale: s0 + hash(d, z) * (s1 - s0), species: pickSpecies(hash(z * 0.37, d), mix), tier });
       }
     }
@@ -3210,7 +3315,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     }
     for (let z = z0 + 12; z <= z1; z += 26) {
       const r = rows[Math.round((z - z0) / STEP)];
-      if (r && !blocked(r, -3.55)) lampSpots.push([X(r, -3.55), COPING_Y, r.z, 0]);
+      if (r && !blocked(r, -3.55) && !inPier57Road(X(r, -3.55), r.z)) lampSpots.push([X(r, -3.55), COPING_Y, r.z, 0]);
     }
   }
 
@@ -3221,7 +3326,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     for (let zt = z0 + offset; zt <= rows[rows.length - 1].z; zt += 39) {
       const i = Math.round((zt - z0) / STEP);
       const r = rows[i];
-      if (!r || !rows[i - 1] || !rows[i + 1] || r.via) continue;
+      if (!r || !rows[i - 1] || !rows[i + 1] || r.via || pier57Bend(r)) continue;
       const d = H(r, 7.6);
       if (d > r.W - 0.5 || blocked(r, d)) continue;
       const a = P(rows[i - 1], H(rows[i - 1], 7.6));
@@ -3245,9 +3350,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   };
   const [er0, er1] = parkZRange('John V. Lindsay East River Park', [streetZ(12), 4150]);
   const [cs0, cs1] = [streetZ(90), streetZ(84)]; // Carl Schurz Park
-  const WEST_END_Z = ESPLANADE_RAIL.westZ1; // Route 9A dives into the Battery Park Underpass at Battery Place
-  const westRows = sampleShore(true, ESPLANADE_RAIL.z0, WEST_END_Z, (z) => smooth(streetZ(66), streetZ(59) + 60, z));
-  const eastRows = sampleShore(false, ESPLANADE_RAIL.z0, ESPLANADE_RAIL.eastZ1, (z) =>
+  const eastRows = sampleWaterfrontShore(blockSidewalks, false, ESPLANADE_RAIL.z0, ESPLANADE_RAIL.eastZ1, (z) =>
     Math.max(smooth(er0 - 60, er0, z) * (1 - smooth(er1 - 50, er1, z)), smooth(cs0 - 40, cs0, z) * (1 - smooth(cs1, cs1 + 40, z))));
   // South of VIA_Z the FDR leaves the strip for the South Street Viaduct: no at-grade carriageway or park belts there,
   // the esplanade carries on
@@ -3258,6 +3361,8 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     r.river = r.land = null;
   }
   const hwy = (r, o) => (r.via ? null : H(r, o));
+  const pier57Bend = r => r.west && r.z >= 2247 && r.z <= 2286;
+  const divided = (r, o) => pier57Bend(r) ? null : hwy(r, o);
   for (const rows of [westRows, eastRows]) {
     const isWest = rows[0].west;
     railing(rows, ESPLANADE_RAIL.d); // the rider's shore wall stands just inside it (euc-terrain.js)
@@ -3266,13 +3371,13 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     paintLine(rows, () => -1.82, 0.1, YELLOW, 6, 0.5);
     esplanade(rows);
     paintLine(rows, (r) => hwy(r, 0.3), 0.15, WHITE);
-    paintLine(rows, (r) => hwy(r, 3.7), 0.13, WHITE, 12, 0.25);
-    paintLine(rows, (r) => hwy(r, 7.05), 0.12, YELLOW);
-    paintLine(rows, (r) => hwy(r, 8.15), 0.12, YELLOW);
-    paintLine(rows, (r) => hwy(r, 11.5), 0.13, WHITE, 12, 0.25);
+    paintLine(rows, (r) => divided(r, 3.7), 0.13, WHITE, 12, 0.25);
+    paintLine(rows, (r) => divided(r, 7.05), 0.12, YELLOW);
+    paintLine(rows, (r) => divided(r, 8.15), 0.12, YELLOW);
+    paintLine(rows, (r) => divided(r, 11.5), 0.13, WHITE, 12, 0.25);
     paintLine(rows, (r) => hwy(r, HWY_W - 0.3), 0.15, WHITE);
-    barrier(rows, (r) => hwy(r, 7.6));
-    barrier(rows, (r) => (r.river || r.via ? null : r.d0 - 0.3));
+    barrier(rows, (r) => divided(r, 7.6));
+    barrier(rows, (r) => (r.river || r.via || pier57Bend(r) ? null : r.d0 - 0.3));
     highwayLights(rows, isWest ? 10 : 25);
     belt(rows, 'river', false);
     belt(rows, 'land', isWest);

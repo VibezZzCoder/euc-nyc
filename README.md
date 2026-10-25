@@ -22,7 +22,7 @@ python3 -m http.server 8000 --bind 127.0.0.1
 # then open http://127.0.0.1:8000
 ```
 
-Controls:
+### Keyboard and gamepad
 
 | | Keyboard | Gamepad (Xbox layout) |
 |---|---|---|
@@ -38,14 +38,26 @@ Controls:
 The on-screen hints switch to gamepad buttons as soon as a pad is used. `?rider=trollina` in the URL picks a rider.
 The [player guide](PLAYER_GUIDE.md) has everything else: how the wheel rides, crashes, the city and every control.
 
-On a phone or tablet the controls are *EUC Thrills*' own. Put your left thumb down anywhere in the bottom-left and a
-stick appears under it: push up to lean forward, down to brake, sideways to carve. HOP and CHARGE (crouch for a bigger
-hop) sit under the right thumb, and GET UP appears there after a crash. Drag anywhere else to look around and pinch
-to zoom. Portrait and landscape both work.
+### Mobile controls — portrait and landscape
+
+Phones and tablets use *EUC Thrills*' touch controls in **both portrait and landscape**. The layout adjusts when you
+rotate the device.
+
+- **Ride and steer:** put your left thumb down in the bottom-left to bring up the floating stick. Push up to lean
+  forward, down to brake or reverse, and sideways to carve.
+- **Hop:** tap **HOP** under your right thumb to jump over kerbs.
+- **Charge a bigger hop:** hold **CHARGE** to crouch and charge the jump, then use **HOP**.
+- **Recover:** **GET UP** appears on the right after a crash.
+- **Look around:** drag outside the controls to orbit the camera; pinch to zoom.
+
+### Riding and exploring
 
 The speed shows in mph and km/h. When the wheel works hard, tilts back or nears its top speed, a warning appears
 above the gauge. Central Park sits behind its wall: ride in by one of its gates (the real entrances, such as 6th Ave
 or 7th Ave at 59th St, or 5th Ave at 72nd or 90th St).
+
+The Teleport menu has sixteen stops, including the four East River bridge approaches, the FDR climb, Pier 15,
+Little Island and the Hudson River Greenway. Your camera and time-of-day choices are remembered between visits.
 
 ## Developing
 

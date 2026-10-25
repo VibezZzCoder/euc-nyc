@@ -263,7 +263,8 @@ export class NycTerrainSampler {
    *   maxZ }] }
    * @param {number} [options.sidewalkHeight] curb-island top, m (city-config.js ISLAND_BOUNDS.sidewalkHeight)
    * @param {object[]} [options.tops] raised tops from the builders: { poly, top, surface, minX, maxX, minZ, maxZ,
-   *   plane?: { x, y, z, dx, dz }, shore?: boolean, layered?: boolean }. `shore` marks actual ground over the shoreline;
+   *   plane?: { x, y, z, dx, dz }, shore?: boolean, layered?: boolean, replacesBlock?: boolean }.
+   *   `replacesBlock` replaces synthetic block ground with a drawn cut; `shore` marks ground over the shoreline;
    *   `layered` makes support conditional on referenceY. Boxes may also be layered, or `support: false` (body rays only).
    * @param {boolean} [options.shoreRails] true when the builder supplied the actual gapped esplanade railing bodies
    */
@@ -380,6 +381,7 @@ export class NycTerrainSampler {
       return out;
     }
     const lawn = this.lawn;
+    let blockBase = false;
     if (inCentralPark(x, z)) {
       // Inside the wall: the lawn, except in a gate's cut, where a ramp climbs from the sidewalk to the lawn
       const gate = centralParkGateAt(x, z);
@@ -406,16 +408,20 @@ export class NycTerrainSampler {
         // A park block: at road level unless city-grid.js drew a raised walk on it (most parks: see topAt)
         out.height = 0;
         out.surface = 'grass';
+        blockBase = true;
       } else if (b) {
         out.height = this.sidewalkHeight;
         out.surface = 'pavement';
+        blockBase = true;
       } else {
         out.height = 0;
         out.surface = 'pavement';
       }
     }
     const top = this.topAt(x, z, false, referenceY);
-    if (top && topHeight(top, x, z) > out.height) {
+    // A drawn road cut can replace a block's synthetic kerb / grass base. Higher registered geometry and native
+    // solid bodies still win normally; this is not an override of the shore, a terrace or Central Park's terrain.
+    if (top && ((top.replacesBlock && blockBase) || topHeight(top, x, z) > out.height)) {
       out.height = topHeight(top, x, z);
       out.surface = top.surface;
       out.plane = top.plane ?? null;

@@ -1150,9 +1150,7 @@ function buildStreetDetails(scene) {
   const STREETLIGHT_SPOT_POOL = 36;
   const STREET_POINT_POOL = 48;
   const STREETLIGHT_DIST = 115;
-  const STREETLIGHT_DIST_SQ = STREETLIGHT_DIST * STREETLIGHT_DIST;
   const STREET_POINT_DIST = 110;
-  const STREET_POINT_DIST_SQ = STREET_POINT_DIST * STREET_POINT_DIST;
 
   const streetLightsGroup = new THREE.Group();
   streetLightsGroup.name = 'StreetClusteredLights';
@@ -1174,6 +1172,50 @@ function buildStreetDetails(scene) {
     pt.position.set(0, -1000, 0);
     streetLightsGroup.add(pt);
     streetPointPool.push(pt);
+  }
+
+  // Lookup only, adapted from mrdoob/slop-newyork@09361be1fe6a2efaee6ef62420a664c677e577b9.
+  // Placements, traffic footprints, collision bodies and light-pool sizes remain independent of this index.
+  const LIGHT_CELL = 128;
+  function indexLights(sites) {
+    const cells = new Map();
+    for (let i = 0; i < sites.length; i++) {
+      const s = sites[i];
+      s._lightOrder = i; // preserve the original stable order when distances tie across cells
+      const key = Math.floor(s.x / LIGHT_CELL) + ',' + Math.floor(s.z / LIGHT_CELL);
+      let cell = cells.get(key);
+      if (!cell) cells.set(key, cell = []);
+      cell.push(s);
+    }
+    return cells;
+  }
+  const cobraCells = indexLights(cobraLampSites);
+  const pointCells = indexLights(streetPointSites);
+
+  function nearbyLights(cells, camera, range, active) {
+    const { x: cx, y: cy, z: cz } = camera.position;
+    const me = camera.matrixWorld.elements;
+    const fwdX = -me[8], fwdZ = -me[10];
+    let count = 0;
+    for (let ix = Math.floor((cx - range) / LIGHT_CELL); ix <= Math.floor((cx + range) / LIGHT_CELL); ix++) {
+      for (let iz = Math.floor((cz - range) / LIGHT_CELL); iz <= Math.floor((cz + range) / LIGHT_CELL); iz++) {
+        for (const s of cells.get(ix + ',' + iz) || []) {
+          const dx = s.x - cx, dz = s.z - cz;
+          const d2 = dx * dx + dz * dz + cy * cy;
+          if (d2 > range * range) continue;
+          // Keep the original arithmetic grouping too: identical selected lights, cutoffs and fade values.
+          const d = Math.sqrt(d2);
+          const forwardDot = dx * fwdX + dz * fwdZ;
+          const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
+          if (effDist >= range) continue;
+          s._effDist = effDist;
+          active[count++] = s;
+        }
+      }
+    }
+    active.length = count;
+    if (count > 1) active.sort((a, b) => a._effDist - b._effDist || a._lightOrder - b._lightOrder);
+    return count;
   }
 
   const activeCobras = [];
@@ -1201,29 +1243,7 @@ function buildStreetDetails(scene) {
       return;
     }
 
-    const cx = camera.position.x;
-    const cy = camera.position.y;
-    const cz = camera.position.z;
-    const me = camera.matrixWorld.elements;
-    const fwdX = -me[8];
-    const fwdZ = -me[10];
-
-    let cobraCount = 0;
-    for (let i = 0; i < cobraLampSites.length; i++) {
-      const s = cobraLampSites[i];
-      const dx = s.x - cx;
-      const dz = s.z - cz;
-      const d2 = dx * dx + dz * dz + cy * cy;
-      if (d2 > STREETLIGHT_DIST_SQ) continue;
-      const d = Math.sqrt(d2);
-      const forwardDot = dx * fwdX + dz * fwdZ;
-      const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
-      if (effDist >= STREETLIGHT_DIST) continue;
-      s._effDist = effDist;
-      activeCobras[cobraCount++] = s;
-    }
-    activeCobras.length = cobraCount;
-    if (cobraCount > 1) activeCobras.sort((a, b) => a._effDist - b._effDist);
+    const cobraCount = nearbyLights(cobraCells, camera, STREETLIGHT_DIST, activeCobras);
 
     const cobraCutoff = cobraCount > STREETLIGHT_SPOT_POOL
       ? Math.min(STREETLIGHT_DIST, activeCobras[STREETLIGHT_SPOT_POOL]._effDist)
@@ -1243,22 +1263,7 @@ function buildStreetDetails(scene) {
       streetlightSpotPool[i].position.set(0, -1000, 0);
     }
 
-    let ptCount = 0;
-    for (let i = 0; i < streetPointSites.length; i++) {
-      const s = streetPointSites[i];
-      const dx = s.x - cx;
-      const dz = s.z - cz;
-      const d2 = dx * dx + dz * dz + cy * cy;
-      if (d2 > STREET_POINT_DIST_SQ) continue;
-      const d = Math.sqrt(d2);
-      const forwardDot = dx * fwdX + dz * fwdZ;
-      const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
-      if (effDist >= STREET_POINT_DIST) continue;
-      s._effDist = effDist;
-      activePoints[ptCount++] = s;
-    }
-    activePoints.length = ptCount;
-    if (ptCount > 1) activePoints.sort((a, b) => a._effDist - b._effDist);
+    const ptCount = nearbyLights(pointCells, camera, STREET_POINT_DIST, activePoints);
 
     const ptCutoff = ptCount > STREET_POINT_POOL
       ? Math.min(STREET_POINT_DIST, activePoints[STREET_POINT_POOL]._effDist)

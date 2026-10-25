@@ -26,6 +26,7 @@ import { EucHud, formatSpeed } from './euc-hud.js';
 import { TitleScreen } from './title-screen.js';
 import { createNemesis } from './nemesis.js';
 import { NemesisHud } from './nemesis-chase.js';
+import { createViewPreferences } from './view-preferences.js';
 
 // js/main.js
 // Main entry point for New York City (Midtown Manhattan) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
@@ -245,6 +246,10 @@ async function initApp() {
   let titleScreen = null; // TitleScreen, created with the rest of the UI below
   const cameraButtons = document.querySelectorAll('[data-camera]');
   const timeButtons = document.querySelectorAll('[data-time]');
+  const viewPreferences = createViewPreferences({
+    cameraIds: CAMERA_PRESETS.map((preset) => preset.id),
+    timeIds: [...timeButtons].map((btn) => btn.getAttribute('data-time'))
+  });
   const teleportButtons = document.querySelectorAll('[data-teleport]');
   const hudToggleBtn = document.getElementById('btn-toggle-hud');
   const riderSwitch = document.getElementById('rider-switch');
@@ -338,16 +343,17 @@ async function initApp() {
     savePlayerState();
 
     // If currently on a static scenic camera, switch to 3rd-Person Chase so the new rider is in view
-    if (cameraSystem.getActivePreset().category !== 'follow') selectCamera('chase', false);
+    if (cameraSystem.getActivePreset().category !== 'follow') selectCamera('chase', false, false);
   }
 
-  function selectCamera(camId, snap = false) {
+  function selectCamera(camId, snap = false, remember = true) {
     cameraSystem.setCameraPreset(camId, snap);
     cameraButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-camera') === camId);
     });
     const preset = cameraSystem.getActivePreset();
     if (elCamera) elCamera.textContent = preset.name;
+    if (remember) viewPreferences.setCamera(preset.id);
   }
 
   // Steps through CAMERA_PRESETS (V / Shift+V, and the arrows either side of the camera name)
@@ -363,6 +369,7 @@ async function initApp() {
     timeButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-time') === timeId);
     });
+    viewPreferences.setTime(lightingSystem.activePresetId);
   }
 
   // Popovers (native [popover]: light dismiss & Esc for free) open against the control that toggles them: data-anchor
@@ -390,7 +397,12 @@ async function initApp() {
       let above = pop.dataset.side === 'above';
       // The camera control moves to the top on touch screens; open toward the available space.
       if ((above ? spaceAbove : spaceBelow) < 160) above = spaceAbove > spaceBelow;
-      pop.style.right = `${Math.max(8, window.innerWidth - align.getBoundingClientRect().right)}px`;
+      const desiredRight = Math.max(8, window.innerWidth - align.getBoundingClientRect().right);
+      // Measure while hidden in this task: a long destination list must not hang off a phone's left edge.
+      pop.style.display = 'block';
+      const width = pop.getBoundingClientRect().width;
+      pop.style.removeProperty('display');
+      pop.style.right = `${Math.max(8, Math.min(desiredRight, window.innerWidth - width - 8))}px`;
       if (above) {
         pop.style.top = 'auto';
         pop.style.bottom = `${window.innerHeight - r.top + 8}px`;
@@ -478,12 +490,12 @@ async function initApp() {
     elLocation.replaceChildren(...nodes);
   }
 
-  function teleportTo(x, z, heading = Math.PI) {
-    const destination = controllerManager.teleportActiveTo(x, z, heading);
+  function teleportTo(x, z, heading = Math.PI, referenceY = Infinity) {
+    const destination = controllerManager.teleportActiveTo(x, z, heading, referenceY);
     touchControls.reset();
     gamepadControls.reset();
     cameraSystem.resetForTeleport();
-    selectCamera('chase', true);
+    selectCamera('chase', true, false);
     mapSystem.waypoint = {
       x: destination.x,
       z: destination.z,
@@ -514,7 +526,7 @@ async function initApp() {
       const key = btn.getAttribute('data-teleport');
       const loc = TELEPORT_LOCATIONS[key];
       if (loc) {
-        teleportTo(loc.x, loc.z, loc.heading);
+        teleportTo(loc.x, loc.z, loc.heading, loc.y ?? Infinity);
       }
       closePopovers();
     });
@@ -596,22 +608,23 @@ async function initApp() {
       gamepadControls.reset();
       touchControls.setEnabled(true);
       cameraSystem.setTitleOrbit(false);
+      selectCamera(viewPreferences.camera, true, false);
       if (audioSystem.enabled) audioSystem.unlock(); // inside the Ride gesture: iOS starts sound only from one
     },
   });
 
-  // Initialize the UI and chase camera around the restored (or first-visit) rider.
+  // Restore explicit view choices; the title orbit stays temporary until Ride.
   document.body.dataset.mode = 'euc';
   document.body.dataset.input = promptDevice;
   touchControls.setMode('euc');
   renderControlHints();
   selectRider(controllerManager.getActiveEntity().riderId);
-  selectCamera('chase', true);
+  selectCamera(titleScreen.root ? 'chase' : viewPreferences.camera, true, false);
   if (titleScreen.root) {
     cameraSystem.setTitleOrbit(true);
     touchControls.setEnabled(false);
   }
-  selectTime('golden');
+  selectTime(viewPreferences.time);
   // the web fonts change the buttons' widths once they arrive
   if (document.fonts) document.fonts.ready.then(placeRiderIndicator);
   markInit('ui');

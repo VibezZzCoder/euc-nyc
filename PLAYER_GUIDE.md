@@ -14,6 +14,9 @@ screen both work. Sound starts after your first click, key or tap.
 After loading, the title screen shows the city with your rider in it. Pick **Cool Rider** or **Trollina**, then
 press **Ride** (or Enter, or A on a gamepad). You can still change rider at any time while riding.
 
+The title screen links to the [EUC Thrills website](https://euc.erodmen.com/). While riding, **Website ↗** sits beside
+**GitHub ↗** in the top-left header. Both open in a new tab, keeping the game open.
+
 ## Riding
 
 You ride an electric unicycle through Manhattan, from the Battery to Harlem. A few things are specific to a real
@@ -71,6 +74,9 @@ Slower knocks only stop you or scrub your speed.
   riverside grass belts, their raised curbs and their stone walls are physical too; hop the higher edges.
   Open pier mouths have matching gaps in the shoreline fence. Moored vessels have solid hulls, cabins and major deck
   equipment. Little Island's gangway handrails and the rails on Duffy Square's steps are solid too.
+  Both Little Island gangways join the park's curved lawn edge, with clear openings through its rim.
+  Beside Pier 57, the waterfront road has a clear turning area; Little Island's north gangway starts on its
+  river-side verge, so the raised deck no longer crosses the car lanes.
 - **The north end:** the city stops just past 129th St, at a line of blue police barricades ("Police line · do not
   cross") across the island. Cars drive on past them and out of sight.
 - **Elevated routes:** the Queensboro, Williamsburg, Manhattan and Brooklyn bridge decks, the elevated FDR and upper
@@ -137,6 +143,8 @@ Three follow cameras (*3rd-Person Chase*, *Low-Angle Action*, *First-Person*); t
 wall rather than into it. And scenic views around the city: Central
 Park, 5th Ave and the Empire State Building, Times Square, 42nd St, the Empire State observatory deck, Bryant Park, the
 East River, and an aerial auto-director. Pick one from the camera menu (bottom right; top right on touch screens).
+Your chosen camera returns when you press **Ride** on your next visit. The title screen still circles the rider;
+teleporting or changing rider from a scenic view temporarily selects Chase without replacing your saved choice.
 
 ## Getting around
 
@@ -145,14 +153,18 @@ East River, and an aerial auto-director. Pick one from the camera menu (bottom r
    plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
   A click on a registered bridge deck or pier terrace selects its highest surface; reloading restores the saved
   elevation, including a lower walkway beneath an upper one.
-- **Teleport** menu (top right): eight landmarks, from Times Square to One World Trade Center.
+- **Teleport** menu (top right): sixteen stops. Alongside the eight landmarks are the Manhattan approaches to all
+  four East River bridges, the FDR climb, Pier 15's lower ramp entrance, Little Island's gangway and the Hudson River
+  Greenway at Pier 84. Pier 15 deliberately arrives downstairs; ride shoreward up the ramp to reach the lawn.
 - **Time of day** (top right): golden hour, midday, blue hour and night. At blue hour and night the wheel's headlight
-  comes on with the cars' and lights the road ahead.
+  comes on with the cars' and lights the road ahead. Your selected time of day is remembered for the next visit.
 
 ## What the game saves
 
-In your browser only: the rider you chose and where you were (every few seconds and when you leave), and whether
-sound is on. Nothing is sent anywhere.
+In your browser only: the rider you chose and where you were (every few seconds and when you leave), whether
+sound is on, and your manually selected camera and time of day (saved when changed). View preferences are separate
+from the rider's position save. If browser storage is unavailable, the game still works with preferences kept for
+the current visit. Nothing is sent anywhere.
 
 ## Credits
 

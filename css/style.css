@@ -384,6 +384,16 @@ body[data-input='gamepad'] .title-hint--gamepad { display: block; }
   color: var(--text-3);
 }
 
+.title-website {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 44px;
+  margin-top: 4px;
+}
+.title-website + .title-credits { margin-top: 0; }
+
 /* While the title is up, the game's HUD and touch controls are out of the way */
 body.title-open .hud,
 body.title-open #touch-controls,
@@ -399,6 +409,7 @@ body.title-open .getup-prompt { visibility: hidden; }
   .title-foot { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px 12px; }
   .title-ride { margin-top: 0; min-width: 170px; min-height: 48px; }
   .title-hint { display: none; }
+  .title-website { margin-top: 0; }
   .title-credits { flex-basis: 100%; margin-top: 0; font-size: 10.5px; }
 }
 
@@ -522,7 +533,8 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
   line-height: 1.2;
 }
 
-.repo-link {
+.repo-link,
+.website-link {
   flex: none;
   padding: 3px 0;
   color: var(--text-2);
@@ -533,7 +545,9 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 }
 
 .repo-link:hover,
-.repo-link:focus-visible {
+.repo-link:focus-visible,
+.website-link:hover,
+.website-link:focus-visible {
   color: var(--text);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -685,6 +699,7 @@ body.hud-minimized .icon-show {
   margin: 0;
   padding: 6px;
   min-width: 264px;
+  max-width: calc(100vw - 16px);
   max-height: calc(100vh - 2 * var(--edge) - 64px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1715,7 +1730,8 @@ body.title-open .chase-banner { visibility: hidden; }
   .brand-heading h1,
   .brand-subtitle { display: none; }
   .brand { height: 44px; padding: 0 12px; }
-  .repo-link { display: flex; align-items: center; gap: 4px; min-height: 44px; font-size: 12px; }
+  .repo-link,
+  .website-link { display: flex; align-items: center; gap: 4px; min-height: 44px; font-size: 12px; }
   .radar { width: 220px; height: 148px; }
   .cluster { width: 220px; }
   #hud-speed { font-size: 34px; }

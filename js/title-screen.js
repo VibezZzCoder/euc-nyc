@@ -35,6 +35,11 @@ export class TitleScreen {
     this.onKey = (e) => {
       if (!this.isOpen) return;
       if (e.code === 'Tab') return; // keyboard focus still moves between the buttons
+      // Enter on a title link keeps native new-tab navigation; never reaches the riding listeners.
+      if (e.target?.closest?.('a[href]') && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+        e.stopImmediatePropagation();
+        return;
+      }
       e.preventDefault();
       e.stopImmediatePropagation();
       if (e.type !== 'keydown' || e.repeat) return;

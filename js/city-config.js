@@ -633,8 +633,25 @@ for (const b of BLOCKS) b.district = districtAt(b.cx, b.cz);
 // Landmarks (real footprints from OpenStreetMap: centre, grid-aligned width x depth, height)
 // ---------------------------------------------------------------------------------------------------------------------
 const LANDMARK_SITES = GEO.landmarks;
-// Street-level arrivals shared by every travel mode. Heading 0 faces south (+z), PI north.
+// EUC arrivals. Heading 0 faces south (+z), PI north; optional y selects a lower stacked route.
 const owtc = LANDMARK_SITES['One World Trade Center'];
+function bridgeArrival(id) {
+  const b = EAST_RIVER_BRIDGES.find((bridge) => bridge.id === id);
+  const dx = b.b.x - b.a.x, dz = b.b.z - b.a.z, length = Math.hypot(dx, dz);
+  const ux = dx / length, uz = dz / length;
+  const along = id === 'brooklyn' ? -25 : 5, side = b.width * 0.18;
+  return { x: b.a.x + ux * along - uz * side, z: b.a.z + uz * along + ux * side, heading: Math.atan2(ux, uz) };
+}
+function pierArrival(kind, along, across) {
+  const p = WATERFRONT_PIERS.find((pier) => pier.kind === kind);
+  let ux = Math.cos(p.angle), uz = Math.sin(p.angle);
+  const distance = (x, z) => p.side === 'west' ? getIslandBoundsAtZ(z).westX - x : x - getIslandBoundsAtZ(z).eastX;
+  if (distance(p.cx + ux * p.length / 2, p.cz + uz * p.length / 2) < distance(p.cx - ux * p.length / 2, p.cz - uz * p.length / 2)) {
+    ux = -ux; uz = -uz;
+  }
+  const u = along(p), s = across(p);
+  return { x: p.cx + ux * (u - p.length / 2) - uz * s, z: p.cz + uz * (u - p.length / 2) + ux * s, heading: Math.atan2(ux, uz) };
+}
 const TELEPORT_LOCATIONS = {
   empire: { x: avenueX('5') + 3.6, z: streetZ(36), heading: 0 },
   timessq: { x: avenueX('7') + 3.6, z: streetZ(46), heading: 0 },
@@ -644,8 +661,19 @@ const TELEPORT_LOCATIONS = {
   flatiron: { x: avenueX('5') + 3.6, z: streetZ(25), heading: 0 },
   centralpark: { x: avenueX('6') + 3.6, z: streetZ(57), heading: Math.PI },
   // West St & Vesey St: a clear view of the tower with room for every mode's chase camera.
-  owtc: { x: -305.7, z: 5210, heading: Math.atan2(owtc.x + 305.7, owtc.z - 5210) }
+  owtc: { x: -305.7, z: 5210, heading: Math.atan2(owtc.x + 305.7, owtc.z - 5210) },
+  brooklyn: bridgeArrival('brooklyn'),
+  manhattan: bridgeArrival('manhattan'),
+  williamsburg: bridgeArrival('williamsburg'),
+  queensboro: bridgeArrival('queensboro'),
+  // Cleared first section of the corrected FDR approach, before the elevated climb.
+  fdr: { x: 2294.41, z: 4246.63, y: 0.27, heading: 1.045 },
+  // Lower promenade, just beyond the ramp foot; turn shoreward to climb.
+  pier15: { ...pierArrival('pier15', (p) => p.length - 4, (p) => p.width / 2 - 3.1), y: 0.12 },
+  littleisland: pierArrival('littleIsland', () => 3, (p) => p.width / 2 - 8),
+  hudson: { ...pierArrival('park', () => -6, () => 0), heading: 0 }
 };
+TELEPORT_LOCATIONS.pier15.heading += Math.PI;
 const site = (name, fallback) => LANDMARK_SITES[name] || fallback;
 const NYC_LANDMARKS = [
   ['esb', 'Empire State Building', 'Empire State', 'Empire State Building', 'Midtown South'],

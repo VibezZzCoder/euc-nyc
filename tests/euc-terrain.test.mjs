@@ -37,6 +37,21 @@ test('the spawn is on the roadway, and the curb beside it is the city\'s sidewal
   assert.equal(s.sampleGround(curb + 0.5, ROAD.z, g).height, ISLAND_BOUNDS.sidewalkHeight);
 });
 
+test('a drawn road cut replaces only the block base, retaining higher supports and bodies', () => {
+  const x = -1455, z = 2250;
+  const poly = [{ x: x - 2, z: z - 2 }, { x: x + 2, z: z - 2 }, { x: x + 2, z: z + 2 }, { x: x - 2, z: z + 2 }];
+  const road = { poly, minX: x - 2, maxX: x + 2, minZ: z - 2, maxZ: z + 2, top: 0, surface: 'pavement', replacesBlock: true };
+  assert.equal(new NycTerrainSampler().sampleGround(x, z, probe()).height, .22);
+  const s = new NycTerrainSampler({ tops: [road] });
+  assert.equal(s.sampleGround(x, z, probe()).height, 0);
+  assert.equal(s.sampleGround(x, z, probe()).surface, 'pavement');
+  assert.equal(s.sampleGround(x + 3, z, probe()).height, .22, 'the rest of the kerb stays raised');
+  const raised = { ...road, replacesBlock: false, top: .4, surface: 'brick' };
+  assert.equal(new NycTerrainSampler({ tops: [road, raised] }).sampleGround(x, z, probe()).height, .4);
+  const box = { centre: { x, y: .4, z }, halfExtents: { x: .5, y: .4, z: .5 }, rotationY: 0, surface: 'stone' };
+  assert.equal(new NycTerrainSampler({ tops: [road], boxes: [box] }).sampleGround(x, z, probe()).height, .8);
+});
+
 test('throttle rides south down 5th Ave (+Z) on the road without crashing', () => {
   const euc = new EucController(new NycTerrainSampler(), { spawn: { position: { x: ROAD.x, y: 0, z: ROAD.z }, headingY: 0 } });
   const snap = ride(euc, 4, { ...NEUTRAL_ACTIONS, throttle: 1 });

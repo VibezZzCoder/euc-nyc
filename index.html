@@ -48,6 +48,7 @@
   <link rel="modulepreload" href="./js/lighting.js" />
   <link rel="modulepreload" href="./js/city-grid.js" />
   <link rel="modulepreload" href="./js/ride-geometry.js" />
+  <link rel="modulepreload" href="./js/view-preferences.js" />
   <link rel="modulepreload" href="./js/boroughs.js" />
   <link rel="modulepreload" href="./js/buildings.js" />
   <link rel="modulepreload" href="./js/solid-rects.js" />
@@ -185,6 +186,7 @@
       <button id="title-ride" class="title-ride" type="button">Ride</button>
       <p class="title-hint title-hint--keyboard"><kbd>Enter</kbd> to ride</p>
       <p class="title-hint title-hint--gamepad"><kbd>A</kbd> to ride · <kbd>LB</kbd> <kbd>RB</kbd> rider</p>
+      <a class="website-link title-website" href="https://euc.erodmen.com/" target="_blank" rel="noopener noreferrer" aria-label="EUC Thrills website (opens in a new tab)">EUC Thrills website <span aria-hidden="true">↗</span></a>
       <p class="title-credits">Riding and riders from <em>EUC Thrills</em> by VibezZzCoder · The city by Mr.doob · Map data
         © OpenStreetMap contributors</p>
     </div>
@@ -201,6 +203,7 @@
         <div class="brand-heading">
           <h1>NYC Spin-off: EUC Thrills</h1>
           <a class="repo-link" href="https://github.com/VibezZzCoder/euc-nyc" target="_blank" rel="noopener noreferrer" aria-label="NYC Spin-off: EUC Thrills on GitHub (opens in a new tab)">GitHub <span aria-hidden="true">↗</span></a>
+          <a class="website-link" href="https://euc.erodmen.com/" target="_blank" rel="noopener noreferrer" aria-label="EUC Thrills website (opens in a new tab)">Website <span aria-hidden="true">↗</span></a>
         </div>
         <div class="brand-subtitle">three.js · WebGPU · TSL · <span id="hud-fps" class="fps-ok">60</span> fps</div>
       </div>
@@ -252,6 +255,15 @@
     <button id="tp-flatiron" class="pop-item tp-btn" data-teleport="flatiron" type="button"><span class="pop-name">Flatiron Building</span><span class="pop-sub">5th Ave · Flatiron District</span></button>
     <button id="tp-centralpark" class="pop-item tp-btn" data-teleport="centralpark" type="button"><span class="pop-name">Central Park</span><span class="pop-sub">6th Ave · Central Park South</span></button>
     <button id="tp-owtc" class="pop-item tp-btn" data-teleport="owtc" type="button"><span class="pop-name">One World Trade Center</span><span class="pop-sub">Vesey St · Financial District</span></button>
+    <div class="pop-title">Bridges &amp; waterfront</div>
+    <button id="tp-brooklyn" class="pop-item tp-btn" data-teleport="brooklyn" type="button"><span class="pop-name">Brooklyn Bridge approach</span><span class="pop-sub">Manhattan · Ride onto the bridge</span></button>
+    <button id="tp-manhattan" class="pop-item tp-btn" data-teleport="manhattan" type="button"><span class="pop-name">Manhattan Bridge approach</span><span class="pop-sub">Manhattan · Ride onto the bridge</span></button>
+    <button id="tp-williamsburg" class="pop-item tp-btn" data-teleport="williamsburg" type="button"><span class="pop-name">Williamsburg Bridge approach</span><span class="pop-sub">Manhattan · Ride onto the bridge</span></button>
+    <button id="tp-queensboro" class="pop-item tp-btn" data-teleport="queensboro" type="button"><span class="pop-name">Queensboro Bridge approach</span><span class="pop-sub">59th St · Ride onto the bridge</span></button>
+    <button id="tp-fdr" class="pop-item tp-btn" data-teleport="fdr" type="button"><span class="pop-name">FDR elevated approach</span><span class="pop-sub">East River · Start of the climb</span></button>
+    <button id="tp-pier15" class="pop-item tp-btn" data-teleport="pier15" type="button"><span class="pop-name">Pier 15 ramp</span><span class="pop-sub">Lower promenade · Ride up to the lawn</span></button>
+    <button id="tp-littleisland" class="pop-item tp-btn" data-teleport="littleisland" type="button"><span class="pop-name">Little Island</span><span class="pop-sub">Hudson River · Park gangway</span></button>
+    <button id="tp-hudson" class="pop-item tp-btn" data-teleport="hudson" type="button"><span class="pop-name">Hudson River Greenway</span><span class="pop-sub">Pier 84 · Riverside riding</span></button>
   </div>
 
   <!-- Bottom-Left: Street-Name Signs & Live GPS Radar Minimap -->

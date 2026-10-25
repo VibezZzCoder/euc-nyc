@@ -1,9 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { subtractConvex, prismSlices, railBodies } from '../js/ride-geometry.js';
+import { subtractConvex, convexHullXZ, prismSlices, railBodies } from '../js/ride-geometry.js';
 
 const area = poly => Math.abs(poly.reduce((s, a, i) => { const b = poly[(i + 1) % poly.length]; return s + a.x * b.z - a.z * b.x; }, 0)) / 2;
 const rect = (x0, x1, z0, z1) => [{ x: x0, z: z0 }, { x: x1, z: z0 }, { x: x1, z: z1 }, { x: x0, z: z1 }];
+
+test('an almost horizontal road sweep has bounded clearance, not acute offset spikes', () => {
+  const road = [{ x: 0, z: 0 }, { x: 15.2, z: 0 }, { x: 90.2, z: 3 }, { x: 75, z: 3 }];
+  const padded = road.flatMap(p => [-2.8, 2.8].flatMap(dx => [-2.8, 2.8].map(dz => ({ x: p.x + dx, z: p.z + dz }))));
+  const hull = convexHullXZ(padded);
+  assert.equal(hull.length, 6);
+  assert.ok(hull.every(p => p.x >= -2.8 && p.x <= 93 && p.z >= -2.8 && p.z <= 5.8));
+  for (const p of padded) for (let i = 0; i < hull.length; i++) {
+    const a = hull[i], b = hull[(i + 1) % hull.length];
+    assert.ok((b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x) >= -1e-8);
+  }
+  assert.deepEqual(convexHullXZ(padded.reverse()), hull);
+  const park = rect(-10, 100, -10, 10);
+  assert.ok(Math.abs(subtractConvex(park, hull).reduce((s, p) => s + area(p), 0) + area(hull) - area(park)) < 1e-7);
+});
 
 test('a diagonal approach cuts the planting without losing the rest of the park', () => {
   const park = rect(-10, 10, -10, 10), cut = [{ x: -12, z: -10 }, { x: -10, z: -12 }, { x: 12, z: 10 }, { x: 10, z: 12 }];
