@@ -407,8 +407,10 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
   let boxSeed = float(0.0);
 
   if (boxLocal) {
-    const box = attribute('box', 'vec4'); // width, height, depth, seed (+ the building's tone in its fraction)
-    const faces = attribute('faces', 'vec4'); // WALL_KINDS of the -x, +x, -z & +z walls
+    // Per-instance constants must stay bit-exact: smooth interpolation perturbs the seed/tone and the storefront
+    // graffiti hash amplifies that into pixel speckle. Positions / UVs still interpolate normally.
+    const box = varying(attribute('box', 'vec4'), 'vFacadeBox').setInterpolation('flat');
+    const faces = varying(attribute('faces', 'vec4'), 'vFacadeFaces').setInterpolation('flat');
     const wallWidth = mix(box.x, box.z, alongZ);
     // The box-local normal's sign tells which wall this is
     kind = mix(
@@ -416,7 +418,7 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
       mix(faces.x, faces.y, step(0.0, nWall.x)),
       alongZ
     );
-    // The seed's fraction (0.1..0.9, never near an integer so floor() is stable on inexact varyings) is the tone
+    // The seed's fraction (0.1..0.9) is the tone; the integer part chooses a building's window pattern.
     tone = fract(box.w).sub(0.1).div(0.8);
     boxSeed = floor(box.w);
     // Whole-bay offset per wall so walls don't repeat each other's windows

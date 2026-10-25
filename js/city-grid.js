@@ -67,6 +67,7 @@ import {
   createTunnelShadeMaterial
 } from './tsl-materials.js';
 import { GEO } from './nyc-geodata.js';
+import { subtractConvex, prismSlices, railBodies } from './ride-geometry.js';
 
 // Live construction data consumed by the building and street-detail builders after buildCityGrid().
 let centralParkClearings;
@@ -75,6 +76,20 @@ let parkLampSites;
 let pavedPlazaRects;
 let sidewalkBlocks;
 let fdrViaduct;
+
+// Reserve the low bridge approaches in the park planting, not in the physics. Paved park slabs remain underneath.
+const bridgeApproaches = EAST_RIVER_BRIDGES.map(b => {
+  const length = Math.hypot(b.b.x - b.a.x, b.b.z - b.a.z), ux = (b.b.x - b.a.x) / length, uz = (b.b.z - b.a.z) / length;
+  const point = (d, s) => ({ x: b.a.x + ux * d - uz * s, z: b.a.z + uz * d + ux * s });
+  return { ...b.a, ux, uz, half: b.width / 2 + 1,
+    poly: [point(-80, -b.width / 2 - 1), point(65, -b.width / 2 - 1), point(65, b.width / 2 + 1), point(-80, b.width / 2 + 1)] };
+});
+function inBridgeApproach(x, z, margin = 0) {
+  return bridgeApproaches.some(a => {
+    const dx = x - a.x, dz = z - a.z, d = dx * a.ux + dz * a.uz;
+    return d > -80 - margin && d < 65 + margin && Math.abs(dz * a.ux - dx * a.uz) < a.half + margin;
+  });
+}
 
 // js/city-grid.js
 // Builds Manhattan Island's true polygonal coastline contour, granite seawall bulkhead,
@@ -768,6 +783,7 @@ function pierHullGeometry(len, beam, depth, bowFrac = 0.28, sternFrac = 0.06, do
   for (let i = side.length - 1; i >= 0; i--) if (side[i][1] > 0.001) shape.lineTo(side[i][0], -side[i][1]);
   const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 1 });
   geo.rotateX(-Math.PI / 2);
+  geo.userData = { outline: [...side.map(([x, z]) => ({ x, z: -z })), ...side.slice().reverse().filter(([, z]) => z > 0.001).map(([x, z]) => ({ x, z }))], depth };
   return geo;
 }
 
@@ -785,31 +801,41 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 
   // Local frame: u runs seaward from the bulkhead, s across the pier (rotation about Y as in Object3D.rotation.y)
-  const frame = (x0, z0, theta) => {
+  const frame = (x0, z0, theta, physical = false) => {
     const c = Math.cos(theta), sn = Math.sin(theta);
     const wx = (u, s) => x0 + u * c + s * sn;
     const wz = (u, s) => z0 - u * sn + s * c;
-    const box = (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => B.box(mat,
+    const drawBox = (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => B.box(mat,
       wx((u0 + u1) / 2, (s0 + s1) / 2), (y0 + y1) / 2, wz((u0 + u1) / 2, (s0 + s1) / 2),
       Math.abs(u1 - u0), Math.abs(y1 - y0), Math.abs(s1 - s0), theta, v, open);
-    const support = (geo, u, y, s, rot, surface) => {
+    const bodyBox = (mat, u0, u1, y0, y1, s0, s1) => {
+      const body = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
+        Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, mat === BL);
+      body.layered = true;
+      return body;
+    };
+    const box = (...args) => {
+      drawBox(...args);
+      // Paint stripes / glazing overlays do not need their own bodies. Cabin boxes already contain them.
+      if (physical && args[7] !== 11 && Math.min(Math.abs(args[2] - args[1]), Math.abs(args[4] - args[3]), Math.abs(args[6] - args[5])) >= 0.12) bodyBox(...args);
+    };
+    const support = (geo, u, y, s, rot, surface, layered = physical) => {
       const mesh = new THREE.Mesh(geo, GR);
       mesh.position.set(wx(u, s), y, wz(u, s));
       mesh.rotation.y = theta + rot;
-      addRideMesh(mesh, surface, true);
+      addRideMesh(mesh, surface, true, layered);
     };
     return {
       theta, wx, wz,
       box,
+      body: (u0, u1, y0, y1, s0, s1) => { const b = bodyBox(BL, u0, u1, y0, y1, s0, s1); b.support = false; return b; },
       // Suspended bodies use query elevation, so their roofs cannot lift a rider beneath them.
       solid: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
-        box(mat, u0, u1, y0, y1, s0, s1, v, open);
-        const body = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
-          Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, mat === BL);
-        body.layered = true;
+        drawBox(mat, u0, u1, y0, y1, s0, s1, v, open);
+        bodyBox(mat, u0, u1, y0, y1, s0, s1);
       },
       top: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
-        box(mat, u0, u1, y0, y1, s0, s1, v, open);
+        drawBox(mat, u0, u1, y0, y1, s0, s1, v, open);
         const poly = [[u0, s0], [u1, s0], [u1, s1], [u0, s1]].map(([u, s]) => ({ x: wx(u, s), z: wz(u, s) }));
         const t = addRideTop(poly, Math.max(y0, y1), v === 4 || v === 5 || v === 6 ? 'grass' : v === 3 ? 'wood' : v === 7 ? 'brick' : 'pavement');
         t.shore = true; // the actual deck opens the shore wall at its mouth, including below-zero floating docks
@@ -825,15 +851,28 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
         B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v);
         support(geo, u, y, s, rot, v === 4 ? 'grass' : 'pavement');
       },
-      sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot),
+      prism: (mat, geo, y, v) => {
+        B.geo(mat, geo, x0, y, z0, theta, v);
+        support(geo, 0, y, 0, 0, 'wood', true);
+        for (const r of prismSlices(geo.userData.outline)) {
+          const body = addRideSolid(wx((r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2), wz((r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2),
+            r.x1 - r.x0, r.z1 - r.z0, y, y + geo.userData.depth, theta, true);
+          body.support = false;
+        }
+      },
+      sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot, physical),
       // Thin beam between two local points [u, y, s] (rigging, masts, ramps); t thick, t2 wide
-      strut: (mat, a, b, t, v = 0, t2 = t, rideSurface = null) => {
+      strut: (mat, a, b, t, v = 0, t2 = t, rideSurface = null, solid = false, layered = physical) => {
         const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
         const g = new THREE.BoxGeometry(t, d.length(), t2);
         g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(Y_AXIS, d.normalize()));
         g.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
         B.geo(mat, g, x0, 0, z0, theta, v);
-        if (rideSurface) support(g, 0, 0, 0, 0, rideSurface);
+        if (rideSurface) support(g, 0, 0, 0, 0, rideSurface, layered);
+        if (solid || (physical && t >= 0.18)) railBodies(
+          { x: wx(a[0], a[2]), y: a[1], z: wz(a[0], a[2]) },
+          { x: wx(b[0], b[2]), y: b[1], z: wz(b[0], b[2]) }, t2, t, addRideSolid);
+        g.dispose();
       },
       tree: (u, s, y, r, ride = true) => trees.push([wx(u, s), y, wz(u, s), r, ride]),
       // Canvas-atlas lettering; rot = -PI/2 faces landward (-u), +PI/2 seaward (+u)
@@ -881,12 +920,13 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
   };
 
   // Steel pipe railing with posts every 3 m along both sides (+ optional seaward end)
-  const railing = (F, u0, u1, s0, s1, y, end = true) => {
+  const railing = (F, u0, u1, s0, s1, y, end = true, { start0 = u0, start1 = u0 } = {}) => {
     const box = F.solid;
-    for (const s of [s0 + 0.12, s1 - 0.12]) {
-      box(PA, u0, u1, y + 1.04, y + 1.1, s - 0.05, s + 0.05, 9);
-      box(PA, u0, u1, y + 0.52, y + 0.56, s - 0.02, s + 0.02, 9);
-      for (let u = u0; u <= u1 + 0.01; u += 3) box(PA, u - 0.04, u + 0.04, y, y + 1.06, s - 0.04, s + 0.04, 9, true);
+    for (const [s, start] of [[s0 + 0.12, start0], [s1 - 0.12, start1]]) {
+      if (start >= u1) continue;
+      box(PA, start, u1, y + 1.04, y + 1.1, s - 0.05, s + 0.05, 9);
+      box(PA, start, u1, y + 0.52, y + 0.56, s - 0.02, s + 0.02, 9);
+      for (let u = start; u <= u1 + 0.01; u += 3) box(PA, u - 0.04, u + 0.04, y, y + 1.06, s - 0.04, s + 0.04, 9, true);
     }
     if (end) {
       const u = u1 - 0.12;
@@ -1112,12 +1152,14 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
   const hull = (S, len, beam, depth, y0, v, bow = 0.28, stern = 0.06, dbl = false) => {
     const key = [len, beam, depth, bow, stern, dbl].join('|');
     if (!hullCache.has(key)) hullCache.set(key, pierHullGeometry(len, beam, depth, bow, stern, dbl));
-    S.geo(PA, hullCache.get(key), 0, y0, 0, 0, v);
+    S.prism(PA, hullCache.get(key), y0, v);
   };
   const flatShape = (pts, depth) => {
     const sh = new THREE.Shape();
     pts.forEach(([a, s], i) => (i === 0 ? sh.moveTo(a, -s) : sh.lineTo(a, -s)));
-    return new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false, curveSegments: 1 }).rotateX(-Math.PI / 2);
+    const geo = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false, curveSegments: 1 }).rotateX(-Math.PI / 2);
+    geo.userData = { outline: pts.map(([x, z]) => ({ x, z })), depth };
+    return geo;
   };
   // Simple jet silhouette (fuselage, wings, fin, tailplane) parked on a deck
   const plane = (S, a, s, rot, y, sc, v = 13, folded = false) => {
@@ -1135,7 +1177,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     S.box(PA, -44, 40, 7.6, 10.2, -9, 9, 0);
     for (const s of [-9.05, 9.05]) for (const [a0, a1] of [[-34, -14], [2, 22]]) S.box(PA, a0, a1, 8.0, 9.8, s - 0.02, s + 0.02, 12);
     const deckPts = [[50, 6], [40, 9.5], [-46, 9.5], [-50, 8], [-50, -8], [-46, -10], [-20, -14.5], [10, -13], [28, -9.5], [40, -8], [50, -6]];
-    S.geo(GR, flatShape(deckPts, 0.6), 0, 10.2, 0, 0, 8);
+    S.prism(GR, flatShape(deckPts, 0.6), 10.2, 8);
     S.box(PA, -46, 46, 10.8, 10.83, -0.18, 0.18, 4);
     S.sub(-9, -6.6, Math.atan2(7.6, 76)).box(PA, -40, 40, 10.8, 10.84, -0.2, 0.2, 4);
     // Island superstructure, bridge glazing, funnel and tripod mast with radar
@@ -1155,7 +1197,11 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
       .forEach(([a, s, r, sc, f]) => plane(S, a, s, r, 10.8, sc, 13, f));
     plane(S, 30, -9.5, -0.4, 10.8, 1.15, 2, false); // A-12 Blackbird
     // Space Shuttle Pavilion: white pressurised tent over the aft flight deck
-    S.geo(BL, new THREE.CylinderGeometry(6.4, 6.4, 20, 18, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), -36, 10.8, 1.5, 0, 6);
+    S.ground(BL, new THREE.CylinderGeometry(6.4, 6.4, 20, 18, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), -36, 10.8, 1.5, 0, 6);
+    for (let i = 0; i < 9; i++) {
+      const a = i * Math.PI / 18, b = (i + 1) * Math.PI / 18, half = 6.4 * Math.cos(b);
+      S.body(-46, -26, 10.8 + 6.4 * Math.sin(a), 10.8 + 6.4 * Math.sin(b), 1.5 - half, 1.5 + half);
+    }
   };
 
   // Concorde-type supersonic airliner on the pier apron: plain white, no airline livery
@@ -1163,7 +1209,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     const y = DY + 2.4;
     S.box(PA, -11, 10, y, y + 1.3, -0.65, 0.65, 4);
     S.strut(PA, [10, y + 0.65, 0], [15, y + 0.3, 0], 0.7, 4);
-    S.geo(PA, flatShape([[5, 0.7], [-11, 5.8], [-11, -5.8], [5, -0.7]], 0.22), 0, y + 0.2, 0, 0, 4);
+    S.prism(PA, flatShape([[5, 0.7], [-11, 5.8], [-11, -5.8], [5, -0.7]], 0.22), y + 0.2, 4);
     S.strut(PA, [-6.5, y + 1.3, 0], [-11, y + 5.4, 0], 2.2, 4, 0.2);
     for (const a of [-5, 6]) S.solid(PA, a - 0.25, a + 0.25, DY, y, -0.25, 0.25, 9);
   };
@@ -1369,7 +1415,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     for (const s of [-hw + 8, hw - 8]) {
       const y1 = height(-0.95, s / hw) - 0.1;
       F.strut(GR, [F.u0, DY - 0.15, s], [U0 + 2, y1, s], 0.5, 3, 4.2, 'wood');
-      for (const e of [-2.1, 2.1]) F.strut(PA, [F.u0, DY + 1.0, s + e], [U0 + 2, y1 + 1.1, s + e], 0.08, 9);
+      for (const e of [-2.1, 2.1]) F.strut(PA, [F.u0, DY + 1.0, s + e], [U0 + 2, y1 + 1.1, s + e], 0.08, 9, 0.08, null, true);
     }
   };
   // Pier 17 (SHoP, 2018): glass-and-steel box over a garage-door ground floor, rooftop lawn and concert stage
@@ -1389,9 +1435,9 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     // Rooftop: lawn bowl and stage with a white tensile canopy on the upper roof, planters on the lower roof
     const R1 = DY + 16.8 + 1.0, R2 = DY + 12.6 + 1.0;
     F.top(GR, uA + 3, uM - 18, R1, R1 + 0.15, s0 + 3, s1 - 3, 4);
-    F.box(PA, uM - 15, uM - 3, R1, R1 + 1.2, -8, 8, 2);
-    F.box(BL, uM - 16, uM - 1, R1 + 7.4, R1 + 7.9, -11, 11, 6);
-    for (const u of [uM - 15.5, uM - 1.5]) for (const s of [-10.5, 10.5]) F.box(PA, u - 0.2, u + 0.2, R1, R1 + 7.4, s - 0.2, s + 0.2, 9);
+    F.solid(PA, uM - 15, uM - 3, R1, R1 + 1.2, -8, 8, 2);
+    F.top(BL, uM - 16, uM - 1, R1 + 7.4, R1 + 7.9, -11, 11, 6);
+    for (const u of [uM - 15.5, uM - 1.5]) for (const s of [-10.5, 10.5]) F.solid(PA, u - 0.2, u + 0.2, R1, R1 + 7.4, s - 0.2, s + 0.2, 9);
     for (let u = uM + 4; u < uB - 2; u += 7) for (const s of [s0 + 3.5, s1 - 3.5]) {
       F.solid(PA, u - 0.9, u + 0.9, R2, R2 + 0.6, s - 0.9, s + 0.9, 6);
       F.tree(u, s, R2 + 0.6, 1.3);
@@ -1414,17 +1460,42 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { surface: 3 });
     const UY = DY + 6.2, ua = 4, ub = L - 20, sa = -hw + 1, sb = hw - 1;
-    F.top(GR, ua, ub, UY - 1.0, UY, sa, sb, 4);
+    const rampSide = sb - 4.2, rampTop = ua + 6, rampFoot = ub + 14;
+    F.top(GR, ua, ub, UY - 1.0, UY, sa, rampSide, 4);
+    F.top(GR, ua, rampTop + 0.05, UY - 1.0, UY, rampSide, sb, 4);
+    // A straight concrete access ramp beside the retained bleacher seating, with a level upper landing.
+    // Its mesh owns the slope; thin rail bodies never turn the whole ramp into a tall box.
+    const rampS = (rampSide + sb) / 2, run = rampFoot - rampTop, rise = UY - DY, thick = 0.18;
+    const lift = thick * run / Math.hypot(run, rise) / 2;
+    F.strut(GR, [rampFoot, DY - lift, rampS], [rampTop, UY - lift, rampS], thick, 0, sb - rampSide, 'pavement', false, true);
+    const pieces = Math.ceil(rise / 0.09);
+    for (let i = 0; i < pieces; i++) {
+      const u = rampFoot - run * (i + 0.5) / pieces;
+      const body = addRideSolid(F.wx(u, rampS), F.wz(u, rampS), run / pieces, sb - rampSide,
+        DY + rise * (i + 1) / pieces - thick, DY + rise * i / pieces - 0.01, F.theta, true);
+      body.support = false;
+    }
+    for (const s of [rampSide + 0.12, sb - 0.12]) {
+      for (const h of [0.55, 1.05]) F.strut(PA, [rampFoot, DY + h, s], [rampTop, UY + h, s], 0.07, 9, 0.07, null, true);
+      const posts = Math.ceil(run / 4);
+      for (let i = 0; i <= posts; i++) {
+        const t = i / posts, u = rampFoot - run * t, y = DY + rise * t;
+        F.solid(PA, u - 0.035, u + 0.035, y, y + 1.05, s - 0.035, s + 0.035, 9);
+      }
+    }
     F.box(PA, ua - 0.12, ua, UY - 1.1, UY + 0.04, sa - 0.12, sb + 0.12, 7);
-    for (const [s, t] of [[sa - 0.12, sa], [sb, sb + 0.12]]) F.box(PA, ua, ub, UY - 1.1, UY + 0.04, s, t, 7);
-    for (let u = ua + 1; u < ub; u += 6.5) for (const s of [sa + 1.2, 0, sb - 1.2]) F.solid(PA, u - 0.18, u + 0.18, DY, UY - 1.0, s - 0.18, s + 0.18, 9);
+    for (const [s, t] of [[sa - 0.12, sa], [rampSide, rampSide + 0.12]]) F.box(PA, ua, ub, UY - 1.1, UY + 0.04, s, t, 7);
+    F.box(PA, ua, rampTop, UY - 1.1, UY + 0.04, sb, sb + 0.12, 7);
+    for (let u = ua + 1; u < ub; u += 6.5) for (const s of [sa + 1.2, 0, rampSide - 1.2]) F.solid(PA, u - 0.18, u + 0.18, DY, UY - 1.0, s - 0.18, s + 0.18, 9);
     F.solid(BL, 7, 25, DY, UY - 1.0, -hw + 3.5, hw - 3.5, 7);
     F.solid(BL, ub - 13, ub - 3, DY, UY - 1.0, -4, 4, 7);
     const n = 6, dh = (UY - DY) / n;
-    for (let i = 0; i < n; i++) F.solid(PA, ub + i * 2.2, ub + (i + 1) * 2.2, DY, UY - i * dh, sa + 1, sb - 1, 7);
-    railing(F, ua, ub, sa, sb, UY, false);
+    for (let i = 0; i < n; i++) F.solid(PA, ub + i * 2.2, ub + (i + 1) * 2.2, DY, UY - i * dh, sa + 1, rampSide - 0.2, 7);
+    // Keep a six-metre opening at the level landing so the ramp actually connects to the upper lawn.
+    railing(F, ua, ub, sa, rampSide, UY, false, { start1: rampTop + 0.2 });
+    railing(F, ua, rampTop, rampSide, sb, UY, false, { start0: rampTop });
     lamps(F, ub + 16, L - 3, -hw + 1, hw - 1, DY, 10);
-    for (let u = ua + 4; u < ub - 6; u += 9) F.tree(u, (u % 2 ? 1 : -1) * (hw - 3.5), UY, 1.5);
+    for (let u = ua + 4; u < ub - 6; u += 9) F.tree(u, u % 2 ? rampSide - 2.5 : -hw + 3.5, UY, 1.5);
     ships.schooner(F.sub(L * 0.62, hw + 4.4, Math.PI));
   };
   // Ferry piers (Pier 11, Pier 79, E 34th St; the sightseeing-cruise pier at Pier 83, `circleLine` flag in city-config): terminal at the head, floating barges with gangways
@@ -1500,6 +1571,8 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh }) 
   };
   // [pier kinds]
 
+  // Only vessel frames opt into physical cabin / deck equipment. Paint and rigging keep their original drawing.
+  for (const [name, build] of Object.entries(ships)) ships[name] = (S, ...args) => build(frame(S.wx(0, 0), S.wz(0, 0), S.theta, true), ...args);
   for (const p of WATERFRONT_PIERS) (kinds[p.kind] || kinds.generic)(pierFrame(p), p);
 
   // Park trees: trunks and lumpy low-poly crowns (one of three summer greens) join the paint batch: no extra draw calls
@@ -1605,6 +1678,23 @@ function buildCityGrid(scene) {
   const circlePoly = (cx, cz, r, n = 20) => Array.from({ length: n }, (_, i) => ({
     x: cx + r * Math.cos((i / n) * Math.PI * 2), z: cz + r * Math.sin((i / n) * Math.PI * 2)
   }));
+  function addRoundBody(mesh) {
+    const { radiusTop, radiusBottom, height, radialSegments: n } = mesh.geometry.parameters;
+    const bands = Math.max(1, Math.ceil(Math.abs(radiusTop - radiusBottom) / 0.1));
+    for (let j = 0; j < bands; j++) {
+      const radius = Math.min(radiusBottom + (radiusTop - radiusBottom) * j / bands,
+        radiusBottom + (radiusTop - radiusBottom) * (j + 1) / bands);
+      const apothem = radius * Math.cos(Math.PI / n), chord = 2 * radius * Math.sin(Math.PI / n);
+      for (let i = 0; i < n; i++) {
+        const a = (i + 0.5) * Math.PI * 2 / n;
+        const body = addRideSolid(mesh.position.x + Math.sin(a) * apothem / 2, mesh.position.z + Math.cos(a) * apothem / 2,
+          chord, apothem, mesh.position.y - height / 2 + height * j / bands - 1e-6,
+          mesh.position.y - height / 2 + height * (j + 1) / bands + 1e-6, a, true);
+        body.support = false;
+      }
+    }
+    addRideMesh(mesh);
+  }
   // Register the upward faces of a ground object, after its transform is set, before static batching.
   // Facets preserve rock slopes and tapered platform edges without an enclosing box or a flat invisible lid.
   function addRideMesh(mesh, surface = 'stone', shore = false, layered = false) {
@@ -1898,10 +1988,12 @@ function buildCityGrid(scene) {
       const rail = addBox(steelMat, tkX + rx, 0, tkFrontZ - tkRun * 0.5, 0.07, 0.07, tkRailLen, 0, false);
       rail.rotation.x = tkSlope;
       rail.position.y = PLAZA_Y + tkRise * 0.5 + 1.0;
+      railBodies({ x: tkX + rx, y: PLAZA_Y + 1, z: tkFrontZ },
+        { x: tkX + rx, y: PLAZA_Y + tkRise + 1, z: tkFrontZ - tkRun }, 0.07, 0.07, addRideSolid);
       for (let k = 0; k <= 4; k++) {
         const pz = tkFrontZ - 0.5 - k * ((tkRun - 1.0) / 4);
         const stepTop = PLAZA_Y + Math.ceil((tkFrontZ - pz) / tkTread) * tkRiser;
-        addBox(steelMat, tkX + rx, stepTop, pz, 0.06, PLAZA_Y + tkRise * ((tkFrontZ - pz) / tkRun) + 1.0 - stepTop, 0.06, 0, false);
+        addSolidBox(steelMat, tkX + rx, stepTop, pz, 0.06, PLAZA_Y + tkRise * ((tkFrontZ - pz) / tkRun) + 1.0 - stepTop, 0.06, 0, false);
       }
     }
     // Father Duffy statue: bronze chaplain before a granite Celtic cross at the south end of the square
@@ -2132,14 +2224,14 @@ function buildCityGrid(scene) {
   const bethesdaBasin = new THREE.Mesh(new THREE.CylinderGeometry(9.5, 10.2, 1.1, 20), marbleArchMat);
   bethesdaBasin.position.set(beth.x, 1.5, beth.z);
   group.add(bethesdaBasin);
-  addRideSolid(beth.x, beth.z, 14.4, 14.4, 0, 2.05, Math.PI / 4); // existing compact body collider for swept / ragdoll contact
+  addRoundBody(bethesdaBasin);
   const bethesdaStatue = new THREE.Mesh(
     new THREE.CylinderGeometry(0.8, 1.6, 5.2, 10),
     new THREE.MeshStandardNodeMaterial({ color: 0x5c7a68, metalness: 0.65, roughness: 0.35 })
   );
   bethesdaStatue.position.set(beth.x, 3.8, beth.z);
   group.add(bethesdaStatue);
-  addRideMesh(bethesdaStatue);
+  addRoundBody(bethesdaStatue);
 
   // Manhattan Schist glacial outcrops: Umpire Rock (by the Heckscher ballfields), Rat Rock (Billy Johnson Playground),
   // Vista Rock under Belvedere Castle, a couple near the Pond & the Lake
@@ -2181,7 +2273,7 @@ function buildCityGrid(scene) {
   castleTurret.position.set(belv.x + 6, 13.0, belv.z + 3);
   group.add(castleTurret);
   addRideSolid(belv.x, belv.z, 12, 10, 0, 16, 0, true);
-  addRideSolid(belv.x + 6, belv.z + 3, 6.4, 6.4, 0, 21, 0, true);
+  addRoundBody(castleTurret);
 
   // Areas the Central Park woodland (street-details.js section 7) must keep clear: meadows, water, the loop
   // drives, the transverses, the Mall elm allée, Bethesda Terrace, Belvedere Castle & the schist outcrops
@@ -2218,11 +2310,11 @@ function buildCityGrid(scene) {
   columbusCircle.position.set(colC.x, 0.25, colC.z);
   group.add(columbusCircle);
   addRideMesh(columbusCircle);
-  addRideSolid(colC.x, colC.z, 2.6, 2.6, 0, 18.5); // retain the column's swept / ragdoll body collider
   addFootprint(colC.x, colC.z, 32, 32);
   const columbusColumn = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.5, 18, 12), marbleArchMat);
   columbusColumn.position.set(colC.x, 9.5, colC.z);
   group.add(columbusColumn);
+  addRoundBody(columbusColumn);
 
   // 7B. Madison Square Park, Union Square Park, Washington Square Park, Tompkins Square Park & Battery Park
   //     Flush with the sidewalks: hex-paver walks, granite-coped lawn beds with low hoop fences between radial &
@@ -2531,23 +2623,30 @@ function buildCityGrid(scene) {
     group.add(top);
     pavedRects.push({ minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ });
     addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
-    const bed = offsetPolygonInward(b.poly, Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2));
-    if (!bed) continue;
-    addRideTop(bed, BED_Y, 'grass');
-    group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
-    const lawnTop = offsetPolygonInward(bed, 0.3);
-    if (lawnTop) parkLawnGeos.push(createExtrudedPolygonMesh(lawnTop, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
-    // trees on a jittered grid inside the bed
-    const SP = 11;
-    for (let gx = b.minX + SP * 0.5; gx < b.maxX; gx += SP) {
-      for (let gz = b.minZ + SP * 0.5; gz < b.maxZ; gz += SP) {
-        const tx = gx + (prand(gx, gz) - 0.5) * SP * 0.7;
-        const tz = gz + (prand(gz, gx, 1) - 0.5) * SP * 0.7;
-        if (prand(tx, tz, 9) < 0.3) continue; // glades
-        const inner = lawnTop || bed;
-        if (!inPolygon(tx, tz, inner)) continue;
-        const r = prand(tx, tz, 2);
-        treeSites.push({ x: tx, y: BED_Y, z: tz, scale: 0.9 + prand(tx, tz, 3) * 0.4, species: r < 0.55 ? 0 : (r < 0.75 ? 1 : 2) });
+    const fullBed = offsetPolygonInward(b.poly, Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2));
+    if (!fullBed) continue;
+    let beds = [fullBed];
+    for (const a of bridgeApproaches) {
+      if (a.x < b.minX - 150 || a.x > b.maxX + 150 || a.z < b.minZ - 150 || a.z > b.maxZ + 150) continue;
+      beds = beds.flatMap(bed => subtractConvex(bed, a.poly));
+    }
+    for (const bed of beds) {
+      addRideTop(bed, BED_Y, 'grass');
+      group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
+      const lawnTop = offsetPolygonInward(bed, 0.3);
+      if (lawnTop) parkLawnGeos.push(createExtrudedPolygonMesh(lawnTop, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
+      // trees on a jittered grid inside the bed
+      const SP = 11;
+      for (let gx = b.minX + SP * 0.5; gx < b.maxX; gx += SP) {
+        for (let gz = b.minZ + SP * 0.5; gz < b.maxZ; gz += SP) {
+          const tx = gx + (prand(gx, gz) - 0.5) * SP * 0.7;
+          const tz = gz + (prand(gz, gx, 1) - 0.5) * SP * 0.7;
+          if (prand(tx, tz, 9) < 0.3) continue; // glades
+          const inner = lawnTop || bed;
+          if (!inPolygon(tx, tz, inner) || inBridgeApproach(tx, tz, 1.5)) continue;
+          const r = prand(tx, tz, 2);
+          treeSites.push({ x: tx, y: BED_Y, z: tz, scale: 0.9 + prand(tx, tz, 3) * 0.4, species: r < 0.55 ? 0 : (r < 0.75 ? 1 : 2) });
+        }
       }
     }
     // lampposts every ~34 m along the walk
@@ -2558,7 +2657,7 @@ function buildCityGrid(scene) {
       for (let t = 17; t < len - 8; t += 34) {
         const px = a.x + ((c.x - a.x) * t) / len;
         const pz = a.z + ((c.z - a.z) * t) / len;
-        addLamp(px, PARK_Y, pz);
+        if (!inBridgeApproach(px, pz, 1)) addLamp(px, PARK_Y, pz);
       }
     }
   }
@@ -3221,12 +3320,18 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   // Over the last 42 m of Route 9A's carriageway, whose lanes go underground behind its dark screen and come up on the
   // South Street Viaduct (and vice versa); the park trees, lamps and highway lights in its way are dropped
   const zW = westRows[westRows.length - 1].z;
-  const wFrames = westRows.filter((r) => r.z >= zW - 42 - 1e-6).map((r) => {
+  const oldWestFrames = westRows.filter((r) => r.z >= zW - 42 - 1e-6).map((r) => {
     const c = P(r, H(r, 7.6));
     return { x: c.x, z: c.z, nx: r.sgn, nz: 0, y: 0, half: 7.6 * r.k + 0.5 };
   });
-  const wPortal = { conc: makeAcc(), roof: lawn, dark: makeAcc(), shade: makeAcc() };
-  buildUnderpassPortal(wFrames, wPortal, quad, underSpots, viaduct.trafficColliders, viaduct.colliders);
+  // The shoreline changes branch behind the mouth. Continue the entry bore instead of following that 60 m jump.
+  // Traffic's coarse obstacles stay on their historical frames; its underground route is hidden by the screen.
+  const firstWest = oldWestFrames[0], secondWest = oldWestFrames[1];
+  const westSlope = (secondWest.x - firstWest.x) / (secondWest.z - firstWest.z);
+  const wFrames = oldWestFrames.map(f => ({ ...f, x: firstWest.x + westSlope * (f.z - firstWest.z), half: firstWest.half }));
+  const wPortal = { deck: makeAcc(), conc: makeAcc(), roof: makeAcc(), dark: makeAcc(), shade: makeAcc() };
+  buildUnderpassPortal(wFrames, wPortal, quad, underSpots, viaduct.trafficColliders, viaduct.colliders, oldWestFrames);
+  viaduct.westPortalFrames = wFrames;
   const inWestPortal = (x, z, m) => {
     let f = wFrames[0];
     for (const g of wFrames) if (Math.abs(g.z - z) < Math.abs(f.z - z)) f = g;
@@ -3259,8 +3364,10 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   const esplanadeFenceMat = createIronFenceMaterial();
   esplanadeFenceMat.name = 'EsplanadeRailing';
   addMesh(fence, esplanadeFenceMat);
-  // West St's underpass portal in the South Street Viaduct portal's materials (its lawn roof went in with the lawns)
+  // West St's underpass portal shares the South Street portal's materials; its floor / roof also own riding support.
   addMesh(wPortal.conc, viaduct.portalMats.conc, true);
+  addRideMesh(addMesh(wPortal.deck, roadMat), 'pavement', true, true);
+  addRideMesh(addMesh(wPortal.roof, lawnMat), 'grass', true, true);
   addMesh(wPortal.dark, viaduct.portalMats.dark);
   const wShade = addMesh(wPortal.shade, viaduct.portalMats.shade);
   if (wShade) wShade.renderOrder = 1; // over the lane markings (renderOrder -1)
@@ -3528,9 +3635,12 @@ function buildSouthStreetViaduct(group, opts) {
   path[0].set(start.x, start.z);
   path = smoothPts(resample(path, 3), 2);
   const nP = path.length;
-  const pn = normals(path);
   const S = [0];
   for (let i = 1; i < nP; i++) S.push(S[i - 1] + path[i].distanceTo(path[i - 1]));
+  // S keeps the established column / fill / lamp stations. Correct only the folded first eight road sections.
+  // The old coast-normal blend initially ran backwards; a straight join has no overlapping parapets or median.
+  for (let i = 1; i < 8; i++) path[i] = path[0].clone().lerp(path[8], i / 8);
+  const pn = normals(path);
   const L = S[nP - 1];
   const iAt = (s) => { let i = 0; while (i < nP - 2 && S[i + 1] <= s) i++; return i; };
   const tan = (i) => {
@@ -3548,6 +3658,8 @@ function buildSouthStreetViaduct(group, opts) {
   const dn0 = dn1 - 160;
   const END_Y = 0.26;
   const Y = S.map((s) => 0.03 + RISE * ss((s - up0) / (up1 - up0)) - (RISE + 0.03 - END_Y) * ss((s - dn0) / (dn1 - dn0)));
+  // Cross the existing 0.22 m sidewalk and 0.20 m belt at a drawn road height, not through their tops.
+  for (let i = 0; i < 13; i++) Y[i] = Math.max(Y[i], 0.27);
   const iMouth = iAt(sMouth);
 
   // ---- Structure --------------------------------------------------------------------------------------------------
@@ -3777,7 +3889,7 @@ function buildSouthStreetViaduct(group, opts) {
   opts.addRideMesh(addMesh(deck, roadMat, false, 'SouthStreetViaductDeck'), 'pavement', true, true);
   addMesh(conc, portalMats.conc, true, 'SouthStreetViaductConcrete');
   addMesh(steel, new THREE.MeshStandardNodeMaterial({ color: 0x55625b, roughness: 0.6, metalness: 0.3 }), true, 'SouthStreetViaductSteel');
-  addMesh(roof, lawnMat, false, 'BatteryUnderpassRoof');
+  opts.addRideMesh(addMesh(roof, lawnMat, false, 'BatteryUnderpassRoof'), 'grass', true, true);
   addMesh(dark, portalMats.dark, false, 'BatteryUnderpassMouth');
   const shadeMesh = addMesh(shade, portalMats.shade, false, 'BatteryUnderpassShade');
   if (shadeMesh) shadeMesh.renderOrder = 1; // over the lane markings (renderOrder -1)
@@ -3802,7 +3914,7 @@ function buildSouthStreetViaduct(group, opts) {
   };
   return {
     lane, boxes, keepOut: (x, z, m = 0) => boxes.some((o) => inBox(o, x, z, m)), path, req, length: L, colliders,
-    trafficColliders, portalMats
+    trafficColliders, portalMats, portalFrames
   };
 }
 
@@ -3821,7 +3933,7 @@ function buildSouthStreetViaduct(group, opts) {
  * lights: the ceiling lights are pushed as [x, y, z, yaw, 'tunnel']; trafficColliders: AABBs (four across each
  * segment, the road network's); rideColliders: the rider's, as drawn (the walls, and the bore from the dark screen on)
  */
-function buildUnderpassPortal(frames, acc, quad, lights, trafficColliders, rideColliders) {
+function buildUnderpassPortal(frames, acc, quad, lights, trafficColliders, rideColliders, trafficFrames = frames) {
   const ROOF = 6.4; // lawn level
   const CEIL = ROOF - 0.8;
   const UP = new THREE.Vector3(0, 1, 0);
@@ -3899,10 +4011,10 @@ function buildUnderpassPortal(frames, acc, quad, lights, trafficColliders, rideC
     for (let j = 0; j < 4; j++) {
       const pts = [];
       for (const kk of [k, k + 1]) {
-        const w = F[kk].half + 0.8;
+        const f = trafficFrames[kk], w = f.half + 0.8;
         for (const a of [j, j + 1]) {
           const ww = -w + (a * w) / 2;
-          pts.push(new THREE.Vector3(F[kk].x + F[kk].nx * ww, 0, F[kk].z + F[kk].nz * ww));
+          pts.push(new THREE.Vector3(f.x + f.nx * ww, 0, f.z + f.nz * ww));
         }
       }
       trafficColliders.push({
@@ -3933,7 +4045,8 @@ function buildUnderpassPortal(frames, acc, quad, lights, trafficColliders, rideC
   };
   const inPlane = (k, a0, a1, b0, b1) => {
     const { ux, uz, at } = plane(k);
-    return rideBoxAround([at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)], ux, uz, top);
+    // The closed bore fills to its lawn roof, not the higher parapet: no hovering over the rooftop.
+    return rideBoxAround([at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)], ux, uz, ROOF);
   };
   for (let k = 0; k < n - 1; k++) {
     const [ux, uz] = unitDir(F[k].x, F[k].z, F[k + 1].x, F[k + 1].z);
@@ -3954,7 +4067,7 @@ function buildUnderpassPortal(frames, acc, quad, lights, trafficColliders, rideC
   }
   if (kO < n - 1) {
     rideColliders.push(inPlane(kO, 0, 0.5, -F[kO].half, F[kO].half)); // behind the screen
-    rideColliders.push(inPlane(n - 1, 0, 0.5, -F[n - 1].half, F[n - 1].half)); // inside the end wall
+    rideColliders.push({ ...inPlane(n - 1, 0, 0.5, -F[n - 1].half, F[n - 1].half), maxY: top }); // inside the end wall
   }
   return { S, kO };
 }

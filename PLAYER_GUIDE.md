@@ -69,14 +69,16 @@ Slower knocks only stop you or scrub your speed.
   Ride through open pier entrances onto their promenades. Pier decks, raised lawns, benches, posts, railings and
   terminal buildings have physical surfaces and bodies. Little Island's park follows its hills and gangways. The
   riverside grass belts, their raised curbs and their stone walls are physical too; hop the higher edges.
-  Open pier mouths have matching gaps in the shoreline fence.
+  Open pier mouths have matching gaps in the shoreline fence. Moored vessels have solid hulls, cabins and major deck
+  equipment. Little Island's gangway handrails and the rails on Duffy Square's steps are solid too.
 - **The north end:** the city stops just past 129th St, at a line of blue police barricades ("Police line · do not
   cross") across the island. Cars drive on past them and out of sight.
 - **Elevated routes:** the Queensboro, Williamsburg, Manhattan and Brooklyn bridge decks, the elevated FDR and upper
   pier terraces now support riding at their own heights. You can still ride underneath where the ground route is
-  open. Bridge approaches can cross existing park curbs / furniture, and a raised anchorage lip may need a hop.
-  Use the map to reach an upper pier terrace whose drawn steps are too tall to climb. The surrounding boroughs and
-  distant outer bridges remain scenery rather than a fully rideable second city.
+  open. Brooklyn's approach has a clear paved route through the park; the FDR's entrance follows a continuous road.
+  A raised bridge anchorage lip may still need a hop. At **Pier 15**, enter the ramp near the outer end of the pier and
+  ride back toward shore to reach the upper lawn through its open landing. Other high rooftops can be reached with
+  the map. The surrounding boroughs and distant outer bridges remain scenery rather than a fully rideable second city.
 
 ## Officer Dorkins
 
