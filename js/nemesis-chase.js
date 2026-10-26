@@ -6,11 +6,11 @@
 // he ambushes now and then, and the rider can shake him off.
 //   - Ambush: a random wait after Ride (and after each escape), never while the rider is down or just back up.
 //   - He only starts counting once he has seen the player: he arrives out of sight on purpose.
-//   - Escape: out of his sight for `loseSeconds` in a row, or more than `outrunDistance` away for `outrunSeconds`.
-//     The clocks stand still while the rider is down (a crash is no hiding place).
+//   - Escape needs BOTH sustained time unseen AND a sustained distance gap. Seeing the rider resets both clocks;
+//     being down or recovering clears escape progress, never the pursuit or its knockdown tally.
 //   - Then he gives up and flies off; the next ambush is a while later.
-//   - Or his paddle connects (js/nemesis-swing.js): busted. He hovers over the fallen rider a moment, then flies off
-//     the same way.
+//   - Three confirmed paddle knockdowns are warnings; the fourth captures. main.js hands off to booking.js.
+//     This referee never relocates the rider or changes their physics.
 
 export const CHASE_RULES = Object.freeze({
   firstMin: 15, // s of riding after Ride before the first ambush...
@@ -19,13 +19,14 @@ export const CHASE_RULES = Object.freeze({
   againMax: 100,
   calmSeconds: 4, // s back on the wheel after a crash before an ambush may start
   retrySeconds: 1, // no spot to appear at: try again this much later
-  sightRange: 70, // m: how far he can see the player (with a clear line)
-  loseSeconds: 6, // s out of his sight in a row: lost him
+  sightRange: 110, // m: how far he can see the player (with a clear line)
+  loseSeconds: 12, // s continuously out of sight, AND...
   outrunDistance: 150, // m: further than this...
-  outrunSeconds: 2, // ...this long: outran him
-  acquireSeconds: 40, // s: never seen the player by then (stuck far off): he gives up
+  outrunSeconds: 6, // ...this long, also unseen: escaped
+  acquireSeconds: 60, // s: failed to acquire anyone at all; silently withdraw, not a credited escape
   leaveSeconds: 8, // s he flies off for at most (gone sooner once out of view)
-  bustedHoverSeconds: 1.2, // s he hovers over a rider he has knocked down before he flies off
+  recoverySeconds: 3, // s after getting up before he can swing again; no escape progress during this grace period
+  warningKnockdowns: 3, // all three are warnings; the next confirmed knockdown captures
   leaveMinSeconds: 1.5,
   bannerSeconds: 2.6, // the "after you" and "lost him" banners
 });
@@ -33,16 +34,20 @@ export const CHASE_RULES = Object.freeze({
 /**
  * The chase referee. update(dt, facts) with facts { riding, crashed, distance, sees, inView } returns the event of the
  * step: 'ambush' (spawn him now; call postpone() if that failed), 'escaped' (he gives up: fly him off), 'gone' (hide
- * him), or null. busted() ends a chase with a hit; while state.leaveTime < 0 after it, he hovers.
+ * him), 'missed' (failed initial acquisition: silent withdrawal), or null. knockedDown() records only a successful
+ * controller hardKnock, once per swing. No crash, get-up or brief sight break clears the tally.
  */
 export function createChaseDirector({ rules = CHASE_RULES, random = Math.random } = {}) {
   const r = rules;
   const between = (lo, hi) => lo + (hi - lo) * random();
   const s = {
-    phase: 'waiting', // 'waiting' | 'chasing' | 'leaving'
+    phase: 'waiting', // 'waiting' | 'chasing' | 'leaving' | 'captured'
     wait: between(r.firstMin, r.firstMax),
     calm: 0,
     acquired: false,
+    sees: false,
+    knockdowns: 0,
+    recovery: 0,
     chaseTime: 0,
     unseen: 0,
     far: 0,
@@ -64,12 +69,27 @@ export function createChaseDirector({ rules = CHASE_RULES, random = Math.random 
       s.lastEvent = null;
       s.eventAge = Infinity;
     },
-    /** His paddle connected: the chase is over, he leaves after a moment's hover. */
-    busted() {
-      if (s.phase !== 'chasing') return;
-      s.phase = 'leaving';
-      s.leaveTime = -r.bustedHoverSeconds;
-      fire('busted');
+    /** Only call after hardKnock succeeds, not on a miss, rejected contact or an unrelated crash. */
+    knockedDown() {
+      if (s.phase !== 'chasing' || s.recovery > 0) return false;
+      s.knockdowns++;
+      s.recovery = r.recoverySeconds;
+      s.unseen = s.far = 0;
+      if (s.knockdowns > r.warningKnockdowns) {
+        s.phase = 'captured';
+        fire('captured');
+      } else fire('warning');
+      return true;
+    },
+    /** Booking finished and the rider has actually been placed safely outside. */
+    release() {
+      if (s.phase !== 'captured') return false;
+      s.phase = 'waiting';
+      s.wait = between(r.againMin, r.againMax);
+      s.knockdowns = s.recovery = s.unseen = s.far = s.calm = 0;
+      s.acquired = s.sees = false;
+      fire('released');
+      return true;
     },
     /** For testing and QA: ambush on the next step. */
     soon() {
@@ -79,31 +99,38 @@ export function createChaseDirector({ rules = CHASE_RULES, random = Math.random 
       }
     },
     update(dt, { riding = false, crashed = false, distance = Infinity, sees = false, inView = false } = {}) {
+      if (!(dt > 0) || !riding) return null;
+      if (s.phase === 'captured') return null; // booking owns the lifecycle until a successful release
       s.eventAge += dt;
       if (s.phase === 'waiting') {
-        if (!riding) return null;
         s.calm = crashed ? r.calmSeconds : Math.max(0, s.calm - dt);
         s.wait -= dt;
         if (s.wait > 0 || s.calm > 0 || crashed) return null;
         s.phase = 'chasing';
         s.acquired = false;
+        s.sees = false;
+        s.knockdowns = s.recovery = 0;
         s.chaseTime = s.unseen = s.far = 0;
         return fire('ambush');
       }
       if (s.phase === 'chasing') {
         s.chaseTime += dt;
+        s.sees = sees;
         if (sees) s.acquired = true;
         let escaped = false;
         if (!s.acquired) escaped = s.chaseTime >= r.acquireSeconds;
-        else if (!crashed) {
+        if (crashed) s.recovery = r.recoverySeconds;
+        else s.recovery = Math.max(0, s.recovery - dt);
+        if (crashed || s.recovery > 0) s.unseen = s.far = 0;
+        else if (s.acquired) {
           s.unseen = sees ? 0 : s.unseen + dt;
-          s.far = distance > r.outrunDistance ? s.far + dt : 0;
-          escaped = s.unseen >= r.loseSeconds || s.far >= r.outrunSeconds;
+          s.far = !sees && distance > r.outrunDistance ? s.far + dt : 0;
+          escaped = s.unseen >= r.loseSeconds && s.far >= r.outrunSeconds;
         }
         if (!escaped) return null;
         s.phase = 'leaving';
         s.leaveTime = 0;
-        return fire('escaped');
+        return fire(s.acquired ? 'escaped' : 'missed');
       }
       s.leaveTime += dt;
       if (s.leaveTime < 0 || (s.leaveTime < r.leaveSeconds && (s.leaveTime < r.leaveMinSeconds || inView))) return null;
@@ -117,31 +144,40 @@ export function createChaseDirector({ rules = CHASE_RULES, random = Math.random 
 
 /**
  * What the HUD shows, from the director's state, his distance and his swing's phase:
- *   { banner: null | 'ambush' | 'escaped' | 'busted' | 'paddle', cue: null | 'seen' | 'unseen' | 'far', metres,
- *     losing (0..1) }.
- * The cue shows only once he has seen the player; `losing` is how near the player is to shaking him off. 'paddle'
- * (his wind-up: hop or swerve) wins over the others.
+ * Escape meter fills only while BOTH requirements are being met. A separate three-segment heat strip and exact hit
+ * count survive recovery / searching. 'paddle' (the readable wind-up) wins over transient banners.
  */
 export function chaseHudView(state, distance, rules = CHASE_RULES, swingPhase = 'idle') {
-  let banner = state.lastEvent === 'ambush' || state.lastEvent === 'escaped' || state.lastEvent === 'busted'
+  let banner = ['ambush', 'escaped', 'warning', 'captured', 'released'].includes(state.lastEvent)
     ? (state.eventAge < rules.bannerSeconds ? state.lastEvent : null) : null;
   if (swingPhase === 'windup' && state.phase === 'chasing') banner = 'paddle';
-  if (state.phase !== 'chasing' || !state.acquired) return { banner, cue: null, metres: 0, losing: 0 };
-  const unseen = state.unseen / rules.loseSeconds;
-  const far = state.far / rules.outrunSeconds;
-  const losing = Math.min(1, Math.max(unseen, far));
-  const cue = state.far > 0 ? 'far' : state.unseen > 0 ? 'unseen' : 'seen';
-  return { banner, cue, metres: Math.round(Number.isFinite(distance) ? distance : 0), losing };
+  const knockdowns = state.knockdowns;
+  const heat = Math.min(rules.warningKnockdowns, knockdowns);
+  const hot = knockdowns >= rules.warningKnockdowns;
+  const heatText = hot ? `${heat}/${rules.warningKnockdowns} · arrest risk`
+    : `Warnings ${knockdowns}/${rules.warningKnockdowns}`;
+  const bannerText = banner === 'warning' ? (hot ? 'Final warning · arrest risk!' : `Warning ${knockdowns}/${rules.warningKnockdowns} · on your feet!`)
+    : banner === 'paddle' && hot ? 'Arrest risk! Hop or swerve' : CHASE_TEXT[banner] || '';
+  let cue = null, losing = 0;
+  if (state.phase === 'chasing') {
+    cue = !state.acquired ? 'incoming' : state.recovery > 0 ? 'recovering' : state.sees ? 'seen' : state.far > 0 ? 'far' : 'unseen';
+    losing = Math.min(1, state.unseen / rules.loseSeconds, state.far / rules.outrunSeconds);
+  }
+  return { banner, bannerText, cue, metres: Math.round(Number.isFinite(distance) ? distance : 0), losing,
+    knockdowns, heat, hot, heatText };
 }
 
 export const CHASE_TEXT = Object.freeze({
   ambush: 'Officer Dorkins is after you!',
   escaped: 'You lost him',
-  busted: 'Busted!',
+  captured: 'Busted · off to Civic Detention',
+  released: 'Released · back to riding',
   paddle: 'Paddle! Hop or swerve',
   seen: 'Officer Dorkins',
-  unseen: 'Out of his sight',
-  far: 'Pulling away',
+  incoming: 'Dorkins is closing in',
+  recovering: 'Catch your breath · still pursued',
+  unseen: 'Searching · get more distance',
+  far: 'Stay hidden · losing him',
 });
 
 /** DOM writer: touches a node only when its value changes. Every element is optional. */
@@ -152,6 +188,8 @@ export class NemesisHud {
       cue: doc.getElementById('hud-chase'),
       text: doc.getElementById('hud-chase-text'),
       meter: doc.getElementById('hud-chase-meter'),
+      heat: doc.getElementById('hud-chase-heat'),
+      heatText: doc.getElementById('hud-chase-heat-text'),
     };
     this.last = {};
   }
@@ -163,14 +201,14 @@ export class NemesisHud {
   }
 
   update(view) {
-    const { banner, cue, text, meter } = this.el;
+    const { banner, cue, text, meter, heat, heatText } = this.el;
     if (banner) {
       this.set('banner', view.banner, (b) => {
         banner.hidden = !b;
         if (!b) return;
         banner.dataset.kind = b;
-        banner.textContent = CHASE_TEXT[b];
       });
+      if (view.banner) this.set('bannerText', view.bannerText, (t) => { banner.textContent = t; });
     }
     if (cue) {
       this.set('cue', view.cue, (c) => {
@@ -178,6 +216,9 @@ export class NemesisHud {
         if (c) cue.dataset.state = c;
       });
       if (!view.cue) return;
+      this.set('hot', view.hot, (h) => { cue.dataset.hot = String(h); });
+      if (heat) this.set('heat', view.heat, (h) => { heat.dataset.level = String(h); });
+      if (heatText) this.set('heatText', view.heatText, (t) => { heatText.textContent = t; });
       const label = view.cue === 'seen' ? `${CHASE_TEXT.seen} · ${view.metres} m` : CHASE_TEXT[view.cue];
       if (text) this.set('text', label, (t) => { text.textContent = t; });
       if (meter) this.set('meter', Math.round(view.losing * 20), (m) => { meter.style.width = `${m * 5}%`; });

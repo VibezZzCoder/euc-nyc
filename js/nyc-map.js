@@ -80,7 +80,7 @@ const MAP = {
 const MODELLED_LANDMARKS = [
   'Empire State Building', 'Chrysler Building', 'One Vanderbilt', 'Grand Central Terminal', 'MetLife Building',
   'Stephen A. Schwarzman Building', 'One Times Square', '30 Rockefeller Plaza', 'Citigroup Center', 'Seagram Building',
-  'Flatiron Building', 'One World Trade Center', 'New York Stock Exchange'
+  'Flatiron Building', 'One World Trade Center', 'New York Stock Exchange', 'Civic Detention'
 ];
 
 // Borough (0), waterway (1) & neighbourhood (2) names at their real places (world metres)

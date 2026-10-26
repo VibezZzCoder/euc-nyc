@@ -16,7 +16,7 @@ for (const [hasView, inView, draw] of [[true, false, false], [true, true, true],
     let args, drawn = 0;
     const ped = { x: 10, z: 20, ux: 0, uz: 1, dir: 1, rig: { update(...values) { args = values; } } };
     const renderPed = productionFunction('renderPed', {
-      hasView, visible: () => inView, pedGround: () => 0, focusX: 0, focusZ: 0,
+      hasView, visible: () => inView, pedGround: () => 0, focusX: 0, focusZ: 0, presentationClearance: null,
       pedCrowd: { add(rig) { assert.equal(rig, ped.rig); drawn++; } }
     });
     renderPed(ped, 1 / 60);
@@ -28,6 +28,27 @@ for (const [hasView, inView, draw] of [[true, false, false], [true, true, true],
     assert.equal(drawn, draw ? 1 : 0);
   });
 }
+
+test('temporary booking clearance omits stage walkers, keeps gait advancing, and restores normal drawing', () => {
+  let args, drawn = 0;
+  const ped = { x: 10, z: 20, ux: 0, uz: 1, dir: 1, rig: { update(...values) { args = values; } } };
+  const context = { hasView: true, visible: () => true, pedGround: () => 0, focusX: 0, focusZ: 0,
+    presentationClearance: { minX: 5, maxX: 15, minZ: 15, maxZ: 25 },
+    pedCrowd: { add() { drawn++; } } };
+  const renderPed = productionFunction('renderPed', context);
+  renderPed(ped, 1 / 60);
+  assert.equal(args[0], 1 / 60, 'gait is not paused or reset');
+  assert.equal(args[7], false);
+  assert.equal(drawn, 0);
+  assert.equal(ped.x, 10, 'presentation does not relocate actors');
+  ped.x = 30;
+  renderPed(ped, 1 / 60);
+  assert.equal(drawn, 1, 'surrounding street remains visible');
+  ped.x = 10;
+  context.presentationClearance = null;
+  renderPed(ped, 1 / 60);
+  assert.equal(drawn, 2, 'release removes the presentation mask');
+});
 
 function sparkHarness(updates = 3) {
   const sparks = Array.from({ length: 120 }, () => ({ life: 0 }));

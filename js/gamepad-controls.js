@@ -41,6 +41,8 @@ class GamepadControls {
     this.padId = null;
     this.previousButtons = [];
     this.suppressedButtons = [];
+    this.suppressedSticks = [false, false];
+    this.suppressedTriggers = [false, false];
     this.syncButtons = true;
     this.revision = 0;
     this.wasActive = false;
@@ -75,10 +77,19 @@ class GamepadControls {
     }
   }
 
+  suppressAnalog(pad) {
+    this.suppressedSticks = [0, 2].map((offset) => {
+      const s = pad ? stick(pad, offset) : { x: 0, y: 0 };
+      return Math.hypot(s.x, s.y) > 0;
+    });
+    this.suppressedTriggers = [6, 7].map((i) => !!pad && buttonValue(pad, i) > 0.01);
+  }
+
   reset() {
     this.revision++;
     this.controller.clearGamepadInput();
     const pad = this.readPad();
+    this.suppressAnalog(pad);
     if (pad && pad.index === this.padIndex && pad.id === this.padId) {
       this.previousButtons = buttons(pad);
       this.suppressedButtons = this.previousButtons.slice();
@@ -104,6 +115,7 @@ class GamepadControls {
       this.padIndex = pad ? pad.index : null;
       this.padId = pad ? pad.id : null;
       this.syncButtons = true;
+      this.suppressAnalog(pad);
     }
     this.connected = connected;
     if (!pad) return;
@@ -155,8 +167,18 @@ class GamepadControls {
 
     // EUC: lean with RT / LT or the left stick's Y, carve with its X; A hops, X crouches, B gets up after a crash
     const movement = stick(pad, 0), look = stick(pad, 2);
+    for (const [i, s] of [movement, look].entries()) {
+      if (!this.suppressedSticks[i]) continue;
+      if (Math.hypot(s.x, s.y) === 0) this.suppressedSticks[i] = false;
+      else s.x = s.y = 0;
+    }
     const lean = -movement.y;
-    const drive = Math.max(0, lean, buttonValue(pad, 7)) - Math.max(0, -lean, buttonValue(pad, 6));
+    const trigger = (i) => {
+      const value = buttonValue(pad, i), slot = i - 6;
+      if (this.suppressedTriggers[slot] && value <= 0.01) this.suppressedTriggers[slot] = false;
+      return this.suppressedTriggers[slot] || this.suppressedButtons[i] ? 0 : value;
+    };
+    const drive = Math.max(0, lean, trigger(7)) - Math.max(0, -lean, trigger(6));
     this.controller.setGamepadInput('forward', Math.max(0, drive));
     this.controller.setGamepadInput('backward', Math.max(0, -drive));
     this.controller.setGamepadInput('left', Math.max(0, -movement.x));

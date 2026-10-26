@@ -6,7 +6,7 @@ const test = require('node:test');
 const html = readFileSync(join(__dirname, '../index.html'), 'utf8');
 const importMap = html.match(/<script type="importmap">([^]*?)<\/script>/);
 const preloads = [...html.matchAll(/<link rel="modulepreload" href="([^"]+)"\s*\/>/g)];
-const entries = [...html.matchAll(/<script type="module" src="([^"]+)"><\/script>/g)];
+const entries = [...html.matchAll(/<script defer src="([^"]+)"><\/script>/g)];
 
 test('city module preloads start after the import map and before stylesheets', () => {
   assert.ok(importMap);
@@ -32,18 +32,18 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   const all = preloads.map((match) => match[1]);
   assert.deepEqual(all.slice(0, three.length).sort(), [...three].sort(), 'every vendored three.js module is preloaded first');
   const links = all.slice(three.length);
-  // 32 city modules (29 upstream + pedestrian-routes.js, fire-escapes.js (upstream 8c17250) + solid-rects.js), the 14 fork modules
+  // 32 city modules (29 upstream + pedestrian-routes.js, fire-escapes.js (upstream 8c17250) + solid-rects.js), the 17 fork modules
   // (EUC terrain, rider, dynamic world, audio, HUD; the title screen; the chasing cop, his brain, chase rules, paddle swing and audio;
-  // the north end's barricades; construction-time ride geometry helpers; view preferences) and every module tools/vendor-euc.mjs copied into
+  // the north end's barricades; construction-time ride geometry helpers; view preferences; the civic jail; booking lifecycle/scene) and every module tools/vendor-euc.mjs copied into
   // js/euc/ (listed in its MANIFEST.json)
   const vendored = Object.keys(JSON.parse(readFileSync(join(__dirname, '../js/euc/MANIFEST.json'), 'utf8')).files);
-  assert.equal(links.length, 32 + 14 + vendored.length);
+  assert.equal(links.length, 32 + 17 + vendored.length);
   for (const file of vendored) assert.ok(links.includes(`./js/euc/${file}`), `vendored module preloaded: ${file}`);
   assert.equal(new Set(links).size, links.length, 'each module is preloaded once');
   assert.equal(entries.length, 1);
-  assert.equal(entries[0][1], './js/main.js');
-  assert.ok(links.includes(entries[0][1]));
-  assert.equal([...html.matchAll(/<script\b/g)].length, 2, 'only the import map and native entry are needed');
+  assert.equal(entries[0][1], './js/boot.js');
+  assert.ok(links.includes('./js/main.js'), 'the dynamic game entry is still preloaded');
+  assert.equal([...html.matchAll(/<script\b/g)].length, 2, 'only the import map and independent boot script are needed');
   const base = 'https://example.test/slop-newyork/';
   const urls = new Set(all.map((src) => new URL(src, base).href));
   const { imports } = JSON.parse(importMap[1]);

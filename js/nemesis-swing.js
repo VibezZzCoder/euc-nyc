@@ -37,12 +37,16 @@ export function createSwing(tuning = SWING) {
   const t = tuning;
   const span = { windup: t.windupSeconds, active: t.activeSeconds, recover: t.recoverSeconds };
   const s = { phase: 'idle', elapsed: 0, cooldown: 0 };
+  // Fractions of the latest frame actually spent striking (empty when from > to). Keep the last slice even when
+  // this update finishes in recovery; drawing back and returning the paddle must remain harmless.
+  const contact = { from: 1, to: 0 };
   const progress = () => (span[s.phase] > 0 ? Math.min(1, s.elapsed / span[s.phase]) : 1);
   const restAngle = PADDLE.startAngle + PADDLE.sweepRadians / 2;
   const strikeStart = PADDLE.startAngle;
   const strikeEnd = PADDLE.startAngle + PADDLE.sweepRadians;
   return {
     state: s,
+    contact,
     get phase() {
       return s.phase;
     },
@@ -52,14 +56,23 @@ export function createSwing(tuning = SWING) {
     start() {
       s.phase = 'windup';
       s.elapsed = 0;
+      contact.from = 1; contact.to = 0;
     },
     /** Called off (the player went down some other way): back to carrying, a short wait. */
     cancel(cooldown = 1) {
       s.phase = 'idle';
       s.elapsed = 0;
       s.cooldown = cooldown;
+      contact.from = 1; contact.to = 0;
     },
     update(dt) {
+      contact.from = 1; contact.to = 0;
+      if (!(dt > 0)) return null;
+      const untilStrike = s.phase === 'windup' ? span.windup - s.elapsed : s.phase === 'active' ? -s.elapsed : Infinity;
+      if (untilStrike <= dt && untilStrike + span.active >= 0) {
+        contact.from = Math.max(0, untilStrike / dt);
+        contact.to = Math.min(1, (untilStrike + span.active) / dt);
+      }
       s.cooldown = Math.max(0, s.cooldown - dt);
       if (s.phase === 'idle') return null;
       s.elapsed += dt;
@@ -112,17 +125,31 @@ export function createSwing(tuning = SWING) {
   };
 }
 
+const FULL_FRAME = Object.freeze({ from: 0, to: 1 });
+
 /**
- * Did the paddle face, moving from a to b this frame, touch the rider? The rider is an upright capsule of radius
- * `hitRadius` (rider plus paddle head) from `bottom` (the wheel's contact, airborne or not) up `riderHeight`.
+ * Drawn face a→b against the rider previous→current, at the SAME instant. Work in relative coordinates so forward,
+ * reverse and hopping cannot tunnel through it or collide with a place the rider has already left. Solve the segment
+ * exactly, clipped to the striking part of this frame; six discrete samples used to miss grazing contacts.
+ * The upright hit volume retains the existing radius/height and hop clearance; no enlarged invisible reach.
  */
-export function sweptHit(ax, ay, az, bx, by, bz, rider, tuning = SWING) {
-  const steps = 6;
-  for (let i = 0; i <= steps; i++) {
-    const k = i / steps;
-    const x = ax + (bx - ax) * k, y = ay + (by - ay) * k, z = az + (bz - az) * k;
-    if (y < rider.bottom - PADDLE.headRadius || y > rider.bottom + tuning.riderHeight) continue;
-    if (Math.hypot(x - rider.x, z - rider.z) <= tuning.hitRadius) return true;
+export function sweptHit(ax, ay, az, bx, by, bz, rider, tuning = SWING, previous = rider, interval = FULL_FRAME) {
+  let lo = Math.max(0, interval.from), hi = Math.min(1, interval.to);
+  if (lo > hi) return false;
+  ax -= previous.x; ay -= previous.bottom; az -= previous.z;
+  bx -= rider.x; by -= rider.bottom; bz -= rider.z;
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  const bottom = -PADDLE.headRadius, top = tuning.riderHeight;
+  if (Math.abs(dy) < 1e-12) {
+    if (ay < bottom || ay > top) return false;
+  } else {
+    const a = (bottom - ay) / dy, b = (top - ay) / dy;
+    lo = Math.max(lo, Math.min(a, b));
+    hi = Math.min(hi, Math.max(a, b));
+    if (lo > hi) return false;
   }
-  return false;
+  const lengthSq = dx * dx + dz * dz;
+  const k = lengthSq > 1e-12 ? Math.max(lo, Math.min(hi, -(ax * dx + az * dz) / lengthSq)) : lo;
+  const x = ax + dx * k, z = az + dz * k;
+  return x * x + z * z <= tuning.hitRadius * tuning.hitRadius;
 }

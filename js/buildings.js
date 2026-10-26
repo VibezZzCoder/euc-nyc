@@ -27,6 +27,7 @@ import {
   ISLAND_BOUNDS,
   BLOCKS,
   LANDMARK_SITES,
+  CIVIC_JAIL,
   streetZ,
   avenueX,
   getBroadwayX,
@@ -1811,7 +1812,7 @@ function buildCityBlocks(scene) {
    * architectural features (stone cornices, water towers, rooftop bulkheads, fire escapes, awnings, storefront
    * fascia signs, and scaffolding sheds) into the Quadtree.
    */
-  function populateBlock(minX, maxX, minZ, maxZ, colIndex, rowIndex, isOuter = false, lowRiseEsplanade = false, district = 'midtown') {
+  function populateBlock(minX, maxX, minZ, maxZ, colIndex, rowIndex, isOuter = false, lowRiseEsplanade = false, district = 'midtown', civicJail = false) {
     const bw = maxX - minX;
     const bd = maxZ - minZ;
     if (bw < (district === 'riverfront' ? 9 : minLot) || bd < minLot) return;
@@ -1879,6 +1880,19 @@ function buildCityBlocks(scene) {
       if (z1 - z0 > 8) blockDetail.scaffoldSheds.push({ x: minX - 2.2, y: 0.22, z: (z0 + z1) * 0.5, w: 3.8, d: (z1 - z0) * 0.85 });
     }
 
+    // Keep the original lot obstacle for traffic, but replace this block's emitted architecture and rider geometry.
+    // Generating then discarding its local buckets preserves the established road network and every other block.
+    const trafficTop = Math.min(BLOCK_COLLIDER_TOP, blockDetail.maxH);
+    if (civicJail) {
+      buckets.forEach((items, i) => { items.length = bucketMarks[i]; });
+      for (const key of ['cornices', 'waterTowers', 'hvacUnits', 'fireEscapes', 'awnings', 'scaffoldSheds', 'yards', 'solidParts']) blockDetail[key] = [];
+      blockDetail.avenueFronts = { w: [], e: [] };
+      blockDetail.footprints = CIVIC_JAIL.parts.map((p) => ({
+        x0: CIVIC_JAIL.x + p.x - p.w / 2, x1: CIVIC_JAIL.x + p.x + p.w / 2,
+        z0: CIVIC_JAIL.z + p.z - p.d / 2, z1: CIVIC_JAIL.z + p.z + p.d / 2, h: p.top, tone: 0.6
+      }));
+      blockDetail.maxH = Math.max(...CIVIC_JAIL.parts.map((p) => p.top));
+    }
     blockDetail.footprints.sort((a, b) => a.h - b.h);
     if (xf) placeInFrame(blockDetail, bucketMarks);
     // The rider collides with the ground the buildings cover (plazas, lawns, yards and gaps stay open); traffic keeps
@@ -1886,7 +1900,7 @@ function buildCityBlocks(scene) {
     for (const r of mergeSolidParts(blockDetail.solidParts, BLOCK_COLLIDER_TOP)) pushCollider(r.x0, r.x1, r.z0, r.z1, r.y1);
     delete blockDetail.solidParts;
     if (blockDetail.maxH > 0) {
-      pushCollider(minX + 0.5, maxX - 0.5, minZ + 0.5, maxZ - 0.5, Math.min(BLOCK_COLLIDER_TOP, blockDetail.maxH), lotColliders);
+      pushCollider(minX + 0.5, maxX - 0.5, minZ + 0.5, maxZ - 0.5, trafficTop, lotColliders);
     }
 
     quadtree.insert(blockDetail);
@@ -2012,7 +2026,7 @@ function buildCityBlocks(scene) {
         for (const part of minusReserves(r)) {
           for (const [x0, x1, z0, z1] of splitDeep(part)) {
             if (x1 - x0 < minLot || z1 - z0 < minLot) continue;
-            populateBlock(x0, x1, z0, z1, 0, 0, false, false, b.district);
+            populateBlock(x0, x1, z0, z1, 0, 0, false, false, b.district, b.id === CIVIC_JAIL.blockId);
           }
         }
       }

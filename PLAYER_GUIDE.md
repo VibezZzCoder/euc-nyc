@@ -6,13 +6,18 @@ of Mr.doob's three.js New York.
 
 ## What you need
 
-A browser with WebGPU: current Chrome or Edge on a desktop or laptop, or a recent Chrome on Android. A gamepad and a touch
-screen both work. Sound starts after your first click, key or tap.
+An up-to-date browser with hardware acceleration. WebGPU is preferred; the renderer automatically tries WebGL2 if
+WebGPU is unavailable. Keyboard, gamepad and touch controls work. Sound starts after your first click, key or tap.
 
 ## Starting
 
 After loading, the title screen shows the city with your rider in it. Pick **Cool Rider** or **Trollina**, then
 press **Ride** (or Enter, or A on a gamepad). You can still change rider at any time while riding.
+
+If the game cannot start, the loading screen shows an explanation and a **Retry** button. A graphics failure includes
+browser and hardware-acceleration tips; a failed download suggests checking your connection. **Technical details** can
+be expanded to help troubleshoot. Retry reloads the page and keeps your saved settings. If a link opened inside another
+app fails, try opening it directly in Safari or Chrome.
 
 The title screen links to the [EUC Thrills website](https://euc.erodmen.com/). While riding, **Website ↗** sits beside
 **GitHub ↗** in the top-left header. Both open in a new tab, keeping the game open.
@@ -45,6 +50,10 @@ Slower knocks only stop you or scrub your speed.
 
 ## The city
 
+- **Civic Detention Jail** is an original fictional exterior on the historic north Tombs block, between Centre and
+  Baxter Streets and Walker and White Streets. Find it through **Teleport → Civic Detention Jail**, or search **jail**
+  on the full map. The White Street entrance has a clear forecourt, barred windows and warm intake lighting at night.
+  Dorkins handles captured riders at a temporary intake desk outside this entrance; the chase and booking rules are below.
 - **Traffic is solid.** Cars and buses brake for a rider ahead of them, and stop and wait when they touch you. A car
   hitting you at speed knocks you down.
 - **People are solid too.** They step aside if they see you coming. Bump one and they stumble out of the way and let
@@ -93,17 +102,33 @@ thrusters under his feet, a red and blue light bar. A siren blast and a banner a
 you can't see, usually behind you, flies over the traffic and the low roofs, and drops in low right behind you. His
 siren gets louder the closer he is, his blip flashes on the radar, and at night his searchlight finds you.
 
-- **Losing him:** get out of his sight (round corners, behind buildings) and stay out of it for 6 seconds, or get more
-  than 150 m away from him for 2 seconds. While he can't see you, the cue by the speedometer says so and fills up as
-  you get away. Your wheel is faster than his on a straight (about 100 km/h against his 61), but he cuts over the
-  low rooftops.
-- Crashing doesn't help: his clocks stop while you are down.
+- **Losing him takes a real escape:** stay out of his sight for **12 continuous seconds**, and keep more than
+  **150 m** between you for **6 continuous seconds** while unseen. Both conditions must be met together. A glimpse
+  resets the escape progress; briefly turning a corner or hiding nearby isn't enough. Your wheel is still faster
+  on a clean straight (about 100 km/h against his 86), but he now closes on ordinary cruising and cuts over low rooftops.
+- **Searching:** when he loses sight, he checks where he last saw you, then nearby streets. His searchlight follows
+  that search rather than tracking you through walls. The cue says **Searching · get more distance** until you open
+  a sustained gap; the green escape bar fills while you're genuinely losing him.
+- Crashing doesn't help you escape. Pursuit and warnings stay active while you're down, and you get **3 seconds
+  after getting up** before he can swing again. The full map and a hidden browser tab freeze his chase clocks.
 - Once you lose him, he climbs away into the sky. He comes back, but not for a while.
 - **His paddle:** when he catches up with you (and you are not getting away at speed), he swoops in low on your left,
   crouches and swings his paddle at your wheel. You get a moment's warning: "Paddle! Hop or swerve", his light bar
   racing and a rising whoosh. Hop as it comes (a charged hop, Shift then Space, is easier to time) or swerve away
-  from him. If it connects you go down: busted. He hovers over you a moment, then flies off; he comes back, but not
-  for a while. If he misses, he tries again a couple of seconds later.
+  from him. His paddle must connect during the swipe, whether you're riding forward or in reverse.
+  A successful knockdown adds **one warning** and he keeps pursuing. Misses and ordinary crashes don't add warnings.
+  The three-segment heat strip fills over the first **three knockdowns**; the third is the final warning.
+  Getting up and brief sight breaks never erase the tally. A fresh pursuit after a proper escape starts at zero.
+- **Fourth knockdown: captured.** The next successful paddle hit takes you to **Civic Detention** for a short,
+  slightly incompetent booking at the White Street intake desk. The first three hits always remain warnings.
+- **Back to riding:** the booking reaches its release button in about nine seconds. Click/tap **Back to riding**,
+  press **Enter / Space**, or use gamepad **A / Start**. You return upright on the jail-side pavement, facing along
+  **White Street toward Centre Street**, with heat cleared and a quiet spell before Dorkins ambushes again.
+  There is no fine or wheel penalty.
+- **Skip:** use **Skip booking**, **Esc**, or gamepad **B** at any point. A busy exit is checked before releasing you;
+  if asked to try again, the scene stays safely open. Held gamepad controls need releasing before they ride again.
+- Booking suspends riding/map/camera/rider input. It preserves your saved view preferences, then automatically frames
+  release in Chase. Backgrounding pauses the booking; reloading during it resumes outside the jail.
 - `?cop=0` at the end of the address leaves him out.
 
 ## Controls

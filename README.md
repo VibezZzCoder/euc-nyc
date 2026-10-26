@@ -15,12 +15,16 @@ place names.
 
 ## Run it
 
-No build step. Serve the folder and open it in a browser with WebGPU (current Chrome or Edge):
+No build step. Serve the folder and open it in an up-to-date browser with hardware acceleration. WebGPU is preferred;
+the renderer automatically tries WebGL2 when WebGPU is unavailable:
 
 ```bash
 python3 -m http.server 8000 --bind 127.0.0.1
 # then open http://127.0.0.1:8000
 ```
+
+If graphics or a required game file fails during startup, the loading screen explains the problem and offers
+**Retry**, browser tips and expandable technical details.
 
 ### Keyboard and gamepad
 
@@ -56,8 +60,15 @@ The speed shows in mph and km/h. When the wheel works hard, tilts back or nears 
 above the gauge. Central Park sits behind its wall: ride in by one of its gates (the real entrances, such as 6th Ave
 or 7th Ave at 59th St, or 5th Ave at 72nd or 90th St).
 
-The Teleport menu has sixteen stops, including the four East River bridge approaches, the FDR climb, Pier 15,
-Little Island and the Hudson River Greenway. Your camera and time-of-day choices are remembered between visits.
+The Teleport menu has seventeen stops, including the four East River bridge approaches, the FDR climb, Pier 15,
+Little Island, the Hudson River Greenway and **Civic Detention Jail** on White Street. The jail is an original fictional
+exterior on the historic Tombs site. Your camera and time-of-day choices are remembered between visits.
+
+Officer Dorkins ambushes you on a police hover-wheel. Paddle knockdowns add warning strikes and fill a small heat
+indicator; getting up keeps the chase going. Escape takes sustained distance **and** time out of sight, while he
+searches your last known position. The first three knockdowns are warnings; the fourth earns a short comedic booking
+at Civic Detention, then release outside with heat cleared. See the [player guide](PLAYER_GUIDE.md#officer-dorkins)
+for the chase rules, release and skip controls.
 
 ## Developing
 

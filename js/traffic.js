@@ -2049,6 +2049,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // with 2 m of sidewalk (the rig steps down and up the curbs)
   const SIDEWALK_Y = 0.22;
   const CROSSWALK_Y = 0.012;
+  let presentationClearance = null; // temporary cinematic stage only; never changes routes, occupancy or bodies
   function pedGround(p, x, z) {
     if (!p.node) return SIDEWALK_Y;
     const t = (x - p.ax) * p.ux + (z - p.az) * p.uz;
@@ -2058,7 +2059,9 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // Every rig's gait advances every frame; only those the camera may see (or whose shadow it may see) solve their
   // bone transforms and are drawn, the far ones with the light LOD.
   function renderPed(p, dt) {
-    const draw = !hasView || visible(p.x, p.z, 7);
+    const a = presentationClearance;
+    const onStage = a && p.x >= a.minX && p.x <= a.maxX && p.z >= a.minZ && p.z <= a.maxZ;
+    const draw = !onStage && (!hasView || visible(p.x, p.z, 7));
     const partner = p.conversation && (p.conversation.a === p ? p.conversation.b : p.conversation.a);
     const heading = partner ? Math.atan2(partner.x - p.x, partner.z - p.z) : Math.atan2(p.ux * p.dir, p.uz * p.dir);
     p.rig.update(dt, p.x, p.z, heading, pedGround, p, 0, draw);
@@ -2255,6 +2258,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     update,
     setCollisionListener,
     dynamicBodiesNear,
+    setPresentationClearance(area) { presentationClearance = area; },
     bodyVersion: () => bodySerial,
     cars,
     buses,

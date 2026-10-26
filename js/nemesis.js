@@ -1,7 +1,7 @@
 // js/nemesis.js — Officer Dorkins, the chaser, on his police hover-wheel: his look, when he turns up, and his flight.
 //
 // docs/PLANS.md's "Nemesis", stages (a) to (c): he ambushes and chases, the player can lose him, and close by he swoops
-// in with his paddle (js/nemesis-swing.js): a hit knocks the rider down and ends the chase.
+// in with his paddle (js/nemesis-swing.js): confirmed knockdowns add warnings; pursuit continues after recovery.
 //   - His machine is the stock wheel restyled (no tyre: a glowing ring in its place, thruster pods under the pedals,
 //     a red and blue light bar, police navy paint). He stands on it as the riders do (EUC Thrills' rig, posed by hand).
 //   - He flies (js/nemesis-brain.js): over traffic and kerbs, along the streets, low behind the player when close. No
@@ -23,7 +23,7 @@ import { riderLook } from './euc/render/riderLook.js';
 import { machineLook } from './euc/render/machineLook.js';
 import { cityUniforms } from './tsl-materials.js';
 import { headlightBeamScale } from './vehicle-lights.js';
-import { buildPursuitGraph, createFlightBrain, pickSpawnPoint, HOVER } from './nemesis-brain.js';
+import { buildPursuitGraph, createFlightBrain, createPursuitMemory, pickSpawnPoint, HOVER } from './nemesis-brain.js';
 import { createChaseDirector, chaseHudView, CHASE_RULES } from './nemesis-chase.js';
 import { createSwing, sweptHit, SWING } from './nemesis-swing.js';
 
@@ -160,6 +160,7 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
     return sampler.raycast(origin, direction, length) === null;
   };
   const brain = createFlightBrain(graph, { groundAt, clearLine });
+  const memory = createPursuitMemory(graph);
 
   const hover = createHoverRig();
   const { rig } = hover;
@@ -188,6 +189,8 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
   const face = new THREE.Vector3();
   const lastFace = new THREE.Vector3();
   const quarry = { x: 0, z: 0, bottom: 0 };
+  const lastQuarry = { x: 0, z: 0, bottom: 0 };
+  let quarryEntity = null;
   let faceValid = false;
   let struck = false;
   const director = createChaseDirector();
@@ -270,6 +273,7 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
   const nemesis = {
     rig,
     brain,
+    memory,
     graph,
     searchlight,
     director,
@@ -280,6 +284,41 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
       return chaseHudView(director.state, facts.distance, CHASE_RULES, swing.phase);
     },
     swing,
+    /** Presentation only: booking owns his pose; no hit tests or flight while at the intake desk. */
+    beginBooking(x, y, z) {
+      brain.place(x, y, z, 0);
+      swing.cancel(0);
+      faceValid = false;
+      nemesis.active = true;
+      rig.group.visible = shadow.mesh.visible = true;
+      audioView.present = true;
+      audioView.chasing = audioView.swinging = false;
+      parkLight();
+    },
+    presentBooking(dt, action) {
+      time += dt;
+      const f = brain.state;
+      pose_(f);
+      if (action.writing) {
+        pose.crouch = 0.12;
+        pose.riderPitch = 0.08;
+        swingHead.set(action.x + Math.sin(action.age * 24) * 0.09,
+          action.y + Math.abs(Math.sin(action.age * 12)) * 0.04, action.z);
+        rig.applySwing(swingHead, 0.45, 0.8);
+        rig.apply(pose);
+      }
+      audioView.x = f.x; audioView.z = f.z; audioView.speed = 0;
+      const p = getPlayer();
+      audioView.range = Math.hypot(p.position.x - f.x, p.position.z - f.z);
+      const beam = headlightBeamScale(cityUniforms.uInteriorGlow.value);
+      if (beam > 0.001) {
+        searchlight.position.set(action.light.x, action.light.y, action.light.z);
+        searchlight.target.position.set(f.x - 0.1, f.y + 1.05, f.z);
+        searchlight.angle = 0.95; searchlight.penumbra = 0.85; searchlight.distance = 8; searchlight.decay = 2;
+        searchlight.color.set(0xffe0b0);
+        searchlight.intensity = 8 * beam;
+      } else parkLight();
+    },
     /** Ambush on the next frame (testing and QA). */
     ambushSoon() {
       director.soon();
@@ -299,8 +338,12 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
       rig.group.visible = false;
       shadow.mesh.visible = false;
       parkLight();
+      searchlight.angle = SEARCHLIGHT.angle; searchlight.penumbra = SEARCHLIGHT.penumbra;
+      searchlight.distance = SEARCHLIGHT.distance; searchlight.decay = SEARCHLIGHT.decay;
+      searchlight.color.set(0xe8f2ff);
       audioView.present = audioView.chasing = false;
       audioView.range = Infinity;
+      faceValid = false;
     },
 
     /** Appear where the player would not see him drop in, behind them, above a street, facing them. */
@@ -328,6 +371,7 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
       nemesis.active = true;
       sightIn = 0;
       facts.sees = false;
+      memory.seed({ x: p.position.x, y: p.position.y, z: p.position.z, vx: 0, vz: 0, heading: p.heading });
       lastRange = Infinity;
       swing.cancel(0);
       faceValid = false;
@@ -339,6 +383,7 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
       frames++;
       if (frames === 2) nemesis.hide(); // after the warm-up frame
       if (frames < 2) return;
+      if (!riding) return; // title, full map and hidden tab freeze the pursuit, including its escape clocks
       const p = getPlayer();
       facts.riding = riding;
       facts.crashed = !!p.controller?.crashed;
@@ -353,66 +398,74 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
       }
       time += dt;
       target.x = p.position.x;
-      target.y = groundAt(p.position.x, p.position.z);
+      target.y = sampler.sampleGround(p.position.x, p.position.z, probe, p.position.y).height;
       target.z = p.position.z;
       target.vx = Math.sin(p.heading) * p.speed;
       target.vz = Math.cos(p.heading) * p.speed;
       target.heading = p.heading;
       const chasing = director.state.phase === 'chasing';
+      const before = brain.state;
+      facts.distance = Math.hypot(target.x - before.x, target.z - before.z);
+      sightIn -= dt;
+      if (sightIn <= 0) {
+        sightIn = NEMESIS_TIMING.sightSeconds;
+        facts.sees = chasing && facts.distance <= CHASE_RULES.sightRange
+          && clearLine(before.x, before.y + 0.9, before.z, target.x, target.y + 1.2, target.z);
+      }
+      const pursuit = memory.update(dt, target, facts.sees, before);
 
       // The paddle swoop: close, in sight, the player up and not getting away; called off if they go down another way
       if (chasing && swing.ready && director.state.acquired && facts.sees && facts.distance <= SWING.triggerRange
-        && !facts.crashed && Math.abs(p.speed) <= SWING.maxQuarrySpeed) {
+        && !facts.crashed && director.state.recovery <= 0 && Math.abs(p.speed) <= SWING.maxQuarrySpeed) {
         swing.start();
         struck = false;
         audioView.windup++;
-      } else if (swing.phase === 'windup' && (facts.crashed || !chasing)) swing.cancel();
+      } else if (swing.phase === 'windup' && (facts.crashed || !facts.sees || !chasing)) swing.cancel();
       if (swing.update(dt) === 'strike') audioView.swing++;
+      const striking = swing.contact.from <= swing.contact.to;
 
       let f;
-      if (chasing && (swing.phase === 'windup' || swing.phase === 'active')) {
-        f = brain.swoop(dt, target, { lateral: SWING.lateral, height: SWING.swoopHeight, commit: swing.phase === 'active' });
-      } else if (chasing || director.state.leaveTime < 0) f = brain.update(dt, target); // busted: a moment's hover first
+      if (chasing && (swing.phase === 'windup' || swing.phase === 'active' || striking)) {
+        f = brain.swoop(dt, target, { lateral: SWING.lateral, height: SWING.swoopHeight, commit: swing.phase !== 'windup' });
+      } else if (chasing) f = brain.update(dt, pursuit);
       else f = leave(dt);
       pose_(f);
 
-      // Did it connect? The drawn paddle's face, swept since last frame, against the rider
+      // Sweep BOTH drawn poses over the same striking interval, including a frame that ends in recovery.
       const paddleMesh = hover.paddleMesh;
       if (paddleMesh) {
         paddleMesh.updateWorldMatrix(true, false);
         face.set(0, 0, PADDLE_FACE).applyMatrix4(paddleMesh.matrixWorld);
-        if (swing.phase === 'active' && faceValid && !struck && !p.controller?.crashed) {
-          quarry.x = p.position.x;
-          quarry.z = p.position.z;
-          quarry.bottom = p.position.y;
-          if (sweptHit(lastFace.x, lastFace.y, lastFace.z, face.x, face.y, face.z, quarry)) {
-            struck = true;
+        quarry.x = p.position.x;
+        quarry.z = p.position.z;
+        quarry.bottom = p.position.y;
+        // A teleport/rider replacement has no swept travel path. Ordinary riding moves < 2 m at the frame-dt cap.
+        if (quarryEntity !== p || Math.hypot(quarry.x - lastQuarry.x, quarry.bottom - lastQuarry.bottom, quarry.z - lastQuarry.z) > 5) faceValid = false;
+        if (chasing && striking && faceValid && !struck && !p.controller?.crashed) {
+          if (sweptHit(lastFace.x, lastFace.y, lastFace.z, face.x, face.y, face.z, quarry, SWING, lastQuarry, swing.contact)) {
             if (p.controller?.hardKnock?.(face.x - lastFace.x, face.z - lastFace.z)) {
+              struck = true;
               audioView.hit++;
-              director.busted();
+              director.knockedDown();
+              facts.crashed = true;
             }
           }
         }
         lastFace.copy(face);
+        lastQuarry.x = quarry.x; lastQuarry.z = quarry.z; lastQuarry.bottom = quarry.bottom;
+        quarryEntity = p;
         faceValid = paddleMesh.parent?.visible !== false;
       }
 
-      // The searchlight, at night, while he chases: from under his machine onto the player
+      // At night, light his known/search target, never track a hidden rider through a wall.
       const beam = chasing ? headlightBeamScale(cityUniforms.uInteriorGlow.value) : 0;
       if (beam > 0.001) {
         searchlight.position.set(f.x, f.y + 0.1, f.z);
-        searchlight.target.position.set(target.x, target.y, target.z);
+        searchlight.target.position.set(pursuit.x, pursuit.y, pursuit.z);
         searchlight.intensity = SEARCHLIGHT.intensity * beam;
       } else if (searchlight.intensity !== 0) parkLight();
 
-      // Can he see the player? (chest height, from his machine, within sight range)
       const distance = Math.hypot(target.x - f.x, target.z - f.z);
-      sightIn -= dt;
-      if (sightIn <= 0) {
-        sightIn = NEMESIS_TIMING.sightSeconds;
-        facts.sees = chasing && distance <= CHASE_RULES.sightRange
-          && clearLine(f.x, f.y + 0.9, f.z, target.x, target.y + 1.2, target.z);
-      }
       facts.distance = distance;
       facts.inView = director.state.phase === 'leaving' && nemesis.inView();
       const event = director.update(dt, facts);

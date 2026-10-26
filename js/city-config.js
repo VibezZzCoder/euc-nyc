@@ -632,7 +632,19 @@ for (const b of BLOCKS) b.district = districtAt(b.cx, b.cz);
 // ---------------------------------------------------------------------------------------------------------------------
 // Landmarks (real footprints from OpenStreetMap: centre, grid-aligned width x depth, height)
 // ---------------------------------------------------------------------------------------------------------------------
-const LANDMARK_SITES = GEO.landmarks;
+// Authored fictional jail on the historic north Tombs block: Centre / Baxter, Walker / White.
+// Fit to committed street/block geometry; no geodata rebuild or remote map query required.
+const CIVIC_JAIL = {
+  blockId: 2398, name: 'Civic Detention', x: 539.5, z: 4322, w: 57, d: 74,
+  parts: [
+    { x: 0, z: 0, w: 52, d: 66, bottom: 0.22, top: 12.22 },
+    { x: 0, z: -4, w: 40, d: 50, bottom: 12.22, top: 50.22 }
+  ]
+};
+// Booking exits on the jail-side pavement, facing along White Street toward Centre Street.
+// The menu's opposite-side viewpoint is for looking AT the jail, not for riding away after release.
+CIVIC_JAIL.release = { x: CIVIC_JAIL.x, z: CIVIC_JAIL.z + 41.3, y: 0.22, heading: Math.PI / 2 };
+const LANDMARK_SITES = { ...GEO.landmarks, [CIVIC_JAIL.name]: CIVIC_JAIL };
 // EUC arrivals. Heading 0 faces south (+z), PI north; optional y selects a lower stacked route.
 const owtc = LANDMARK_SITES['One World Trade Center'];
 function bridgeArrival(id) {
@@ -671,7 +683,8 @@ const TELEPORT_LOCATIONS = {
   // Lower promenade, just beyond the ramp foot; turn shoreward to climb.
   pier15: { ...pierArrival('pier15', (p) => p.length - 4, (p) => p.width / 2 - 3.1), y: 0.12 },
   littleisland: pierArrival('littleIsland', () => 3, (p) => p.width / 2 - 8),
-  hudson: { ...pierArrival('park', () => -6, () => 0), heading: 0 }
+  hudson: { ...pierArrival('park', () => -6, () => 0), heading: 0 },
+  jail: { x: CIVIC_JAIL.x, z: 4371, y: 0.22, heading: Math.PI }
 };
 TELEPORT_LOCATIONS.pier15.heading += Math.PI;
 const site = (name, fallback) => LANDMARK_SITES[name] || fallback;
@@ -694,6 +707,7 @@ const NYC_LANDMARKS = [
   return { id, name, short, x: s.x, z: s.z, district };
 });
 NYC_LANDMARKS.push(
+  { id: 'jail', name: 'Civic Detention Jail', short: 'Civic Detention', x: CIVIC_JAIL.x, z: CIVIC_JAIL.z, district: 'Civic Center' },
   { id: 'centralpark', name: 'Central Park & The Lake', short: 'Central Park', x: -560, z: -2630, district: 'Uptown' },
   { id: 'brooklynbr', name: 'Brooklyn Bridge', short: 'Brooklyn Bridge', x: EAST_RIVER_BRIDGES[3].a.x + 700, z: EAST_RIVER_BRIDGES[3].a.z + 200, district: 'East River' },
   { id: 'queensborobr', name: 'Queensboro 59th St Bridge', short: '59th St Bridge', x: 1500, z: -1410, district: 'East River' }
@@ -948,6 +962,7 @@ export {
   ROADS,
   NYC_LANDMARKS,
   LANDMARK_SITES,
+  CIVIC_JAIL,
   TELEPORT_LOCATIONS,
   ISLAND_BOUNDS,
   LANDMARK_BLOCKS,

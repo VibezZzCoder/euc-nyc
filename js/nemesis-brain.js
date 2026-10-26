@@ -7,7 +7,7 @@
 // Conventions as the city's: metres, Y up, north = -z, x += sin(heading), z += cos(heading).
 
 export const HOVER = Object.freeze({
-  cruiseSpeed: 17, // m/s (~61 km/h): the player's wheel tops out near 28 m/s, so a straight avenue run escapes him
+  cruiseSpeed: 24, // m/s (~86 km/h): closes on ordinary cruising; the player's ~28 m/s wheel can still outrun him
   accel: 9, // m/s^2, any direction in the horizontal
   turnRate: 3, // rad/s he can swing his heading
   highAltitude: 7, // m above the player's ground, following the streets
@@ -25,6 +25,7 @@ export const HOVER = Object.freeze({
   overMax: 40, // m: taller than this he does not climb over (the streets go round it)
   minHeight: 0.4, // m above whatever is under him, always
   cornerSpeed: 7, // m/s through a right-angle turn (a ~5 m radius at his acceleration: inside a cross street)
+  cornerExitAlignment: 0.9, // keep corner speed until velocity points along the new street, not just past its junction
   plannedDecel: 5, // m/s^2 he plans to slow at before a turn
   lookAheadMin: 6,
   lookAheadPerSpeed: 0.5, // s
@@ -248,6 +249,75 @@ export function pickSpawnPoint(graph, player, { minDistance = 55, maxDistance = 
   return best;
 }
 
+/** Last-seen pursuit, not wall vision. Seed once with ambush intel; thereafter hidden rider motion is never read.
+ * He checks the last known position, pauses to look, then checks nearby road segments (junctions can be 300 m apart).
+ * Returns one reusable flight target. Search candidates are built only on a transition out of sight.
+ */
+export function createPursuitMemory(graph) {
+  const target = { x: 0, y: 0, z: 0, vx: 0, vz: 0, heading: 0 };
+  const lastKnown = { ...target };
+  const state = { searching: false, lastKnown, target };
+  let points = [], point = -1, dwell = 0;
+  function remember(quarry) {
+    Object.assign(lastKnown, quarry);
+    Object.assign(target, quarry);
+    state.searching = false;
+    points.length = 0;
+    point = -1;
+    dwell = 0;
+  }
+  function aim(x, z) {
+    Object.assign(target, { x, y: lastKnown.y, z, vx: 0, vz: 0, heading: lastKnown.heading });
+    dwell = 0;
+  }
+  function searchPoints() {
+    const found = [];
+    for (const a of graph.nearestList(lastKnown.x, lastKnown.z, 200, 8)) {
+      for (const { to: b, cost } of graph.adj[a]) {
+        if (cost < 1) continue;
+        const ax = graph.xs[a], az = graph.zs[a];
+        const ux = (graph.xs[b] - ax) / cost, uz = (graph.zs[b] - az) / cost;
+        const along = (lastKnown.x - ax) * ux + (lastKnown.z - az) * uz;
+        for (const offset of [-36, 36]) {
+          const d = clamp(along + offset, 0, cost);
+          const x = ax + ux * d, z = az + uz * d;
+          const range = Math.hypot(x - lastKnown.x, z - lastKnown.z);
+          if (range < 20 || range > 80 || found.some((p) => Math.hypot(p.x - x, p.z - z) < 12)) continue;
+          found.push({ x, z });
+        }
+      }
+    }
+    // Check the direction of travel first, without chasing a hidden live position.
+    const fx = Math.sin(lastKnown.heading), fz = Math.cos(lastKnown.heading);
+    found.sort((a, b) => ((b.x - lastKnown.x) * fx + (b.z - lastKnown.z) * fz)
+      - ((a.x - lastKnown.x) * fx + (a.z - lastKnown.z) * fz));
+    return found.slice(0, 4);
+  }
+  return {
+    state,
+    seed: remember,
+    update(dt, quarry, sees, flyer) {
+      if (sees) remember(quarry);
+      else {
+        if (!state.searching) {
+          state.searching = true;
+          points = searchPoints();
+          point = -1;
+          aim(lastKnown.x, lastKnown.z);
+        }
+        if (Math.hypot(flyer.x - target.x, flyer.z - target.z) < 10) {
+          dwell += dt;
+          if (dwell >= 1.5 && points.length) {
+            point = (point + 1) % points.length;
+            aim(points[point].x, points[point].z);
+          }
+        } else dwell = 0;
+      }
+      return target;
+    },
+  };
+}
+
 /**
  * The flyer: his state and the brain that flies it.
  * @param graph  buildPursuitGraph()
@@ -428,6 +498,12 @@ export function createFlightBrain(graph, { groundAt = () => 0, clearLine = () =>
       }
 
       // 2. How fast: cruise, slowing for turns, and closing to followDistance behind the player
+      if (f.mode === 'path' && f.speed > 1) {
+        const ax = aimX - f.x, az = aimZ - f.z, length = Math.hypot(ax, az);
+        if (length > 1e-6 && (ax * f.vx + az * f.vz) / (length * f.speed) < t.cornerExitAlignment) {
+          cap = Math.min(cap, t.cornerSpeed); // crossing the waypoint must not accelerate him sideways out of the road
+        }
+      }
       const closing = distance > 1e-3 ? Math.max(0, (target.vx * dx + target.vz * dz) / distance) : 0;
       const gap = Math.max(0, remaining - t.followDistance);
       const want = clamp(closing + Math.min(Math.sqrt(2 * t.arriveDecel * gap), 2 * gap), 0, cap);

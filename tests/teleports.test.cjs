@@ -5,9 +5,9 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const read = (path) => readFileSync(join(__dirname, '..', path), 'utf8');
-let TELEPORT_LOCATIONS, LANDMARK_SITES, EAST_RIVER_BRIDGES, blockAt, nearestRoads, getIslandBoundsAtZ;
+let TELEPORT_LOCATIONS, LANDMARK_SITES, EAST_RIVER_BRIDGES, CIVIC_JAIL, blockAt, nearestRoads, getIslandBoundsAtZ;
 test.before(async () => {
-  ({ TELEPORT_LOCATIONS, LANDMARK_SITES, EAST_RIVER_BRIDGES, blockAt, nearestRoads, getIslandBoundsAtZ } = await import('../js/city-config.js'));
+  ({ TELEPORT_LOCATIONS, LANDMARK_SITES, EAST_RIVER_BRIDGES, CIVIC_JAIL, blockAt, nearestRoads, getIslandBoundsAtZ } = await import('../js/city-config.js'));
 });
 
 test('every teleport button has a finite arrival; landmark stops remain on real Manhattan roadways', () => {
@@ -46,6 +46,17 @@ test('One World Trade Center arrives on Vesey Street facing the tower', () => {
   assert.ok(distance > 100 && distance < 220, 'leave space for the tower view');
   const alignment = ((tower.x - point.x) * Math.sin(point.heading) + (tower.z - point.z) * Math.cos(point.heading)) / distance;
   assert.ok(alignment > 0.999, 'face the tower rather than the neighboring buildings');
+});
+
+test('booking exit is on the jail side facing along White Street, distinct from the sightseeing stop', () => {
+  const exit = CIVIC_JAIL.release;
+  const white = nearestRoads(exit.x, exit.z, 20).find(({ road }) => road.name === 'White St');
+  assert.ok(white?.horizontal, 'release follows the nearby east/west street');
+  assert.ok(Math.sin(exit.heading) > 0.999 && Math.abs(Math.cos(exit.heading)) < 0.001, 'ride toward Centre Street, not across to a wall');
+  assert.ok(exit.z > CIVIC_JAIL.z + 33 && exit.z < TELEPORT_LOCATIONS.jail.z, 'outside the jail, on its side of the street');
+  const main = read('js/main.js');
+  assert.match(main, /booking\.active \? CIVIC_JAIL\.release/, 'interrupted-booking checkpoint shares the corrected exit');
+  assert.match(main, /placeAtJail\(CIVIC_JAIL\.release\.z, CIVIC_JAIL\.release\.heading\)/);
 });
 
 test('preset and map teleports share arrival resets and mark the resolved landing point', () => {

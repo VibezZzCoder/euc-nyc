@@ -54,6 +54,7 @@
   <link rel="modulepreload" href="./js/solid-rects.js" />
   <link rel="modulepreload" href="./js/fire-escapes.js" />
   <link rel="modulepreload" href="./js/landmarks.js" />
+  <link rel="modulepreload" href="./js/civic-jail.js" />
   <link rel="modulepreload" href="./js/street-details.js" />
   <link rel="modulepreload" href="./js/road-network.js" />
   <link rel="modulepreload" href="./js/road-paint.js" />
@@ -122,15 +123,17 @@
   <link rel="modulepreload" href="./js/nemesis-brain.js" />
   <link rel="modulepreload" href="./js/nemesis.js" />
   <link rel="modulepreload" href="./js/nemesis-chase.js" />
+  <link rel="modulepreload" href="./js/booking.js" />
+  <link rel="modulepreload" href="./js/booking-scene.js" />
   <link rel="modulepreload" href="./js/nemesis-audio.js" />
   <link rel="modulepreload" href="./js/nemesis-swing.js" />
   <link rel="modulepreload" href="./js/main.js" />
-  <script type="module" src="./js/main.js"></script>
+  <script defer src="./js/boot.js"></script>
   <!-- Inter (UI) & Overpass (street-name signs: modelled on Highway Gothic, the US road sign typeface), from fonts/ -->
   <link rel="preload" href="./fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="./fonts/overpass-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="./css/fonts.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261024-title" />
+  <link rel="stylesheet" href="./css/style.css?v=20261025-booking" />
 </head>
 <body>
   <!-- Icon sprite (24 × 24 stroke icons, drawn in currentColor) -->
@@ -166,7 +169,13 @@
       <span class="brand-badge loader-badge" aria-hidden="true"><svg class="icon"><use href="#i-euc"/></svg></span>
       <div class="loader-title">NYC Spin-off: EUC Thrills</div>
       <div class="loader-track is-indeterminate" aria-hidden="true"><span id="loading-progress" class="loader-fill"></span></div>
-      <div id="loading-status">Initializing WebGPURenderer &amp; TSL Shaders...</div>
+      <div id="loading-status">Loading the city...</div>
+      <div id="startup-error" hidden>
+        <p id="startup-help"></p>
+        <button id="startup-retry" type="button">Retry</button>
+        <details class="startup-details"><summary>Technical details</summary><pre id="startup-detail"></pre></details>
+      </div>
+      <noscript>This game needs JavaScript. Enable it in your browser, then reload this page.</noscript>
     </div>
   </div>
 
@@ -255,6 +264,7 @@
     <button id="tp-flatiron" class="pop-item tp-btn" data-teleport="flatiron" type="button"><span class="pop-name">Flatiron Building</span><span class="pop-sub">5th Ave · Flatiron District</span></button>
     <button id="tp-centralpark" class="pop-item tp-btn" data-teleport="centralpark" type="button"><span class="pop-name">Central Park</span><span class="pop-sub">6th Ave · Central Park South</span></button>
     <button id="tp-owtc" class="pop-item tp-btn" data-teleport="owtc" type="button"><span class="pop-name">One World Trade Center</span><span class="pop-sub">Vesey St · Financial District</span></button>
+    <button id="tp-jail" class="pop-item tp-btn" data-teleport="jail" type="button"><span class="pop-name">Civic Detention Jail</span><span class="pop-sub">White St · The Tombs site</span></button>
     <div class="pop-title">Bridges &amp; waterfront</div>
     <button id="tp-brooklyn" class="pop-item tp-btn" data-teleport="brooklyn" type="button"><span class="pop-name">Brooklyn Bridge approach</span><span class="pop-sub">Manhattan · Ride onto the bridge</span></button>
     <button id="tp-manhattan" class="pop-item tp-btn" data-teleport="manhattan" type="button"><span class="pop-name">Manhattan Bridge approach</span><span class="pop-sub">Manhattan · Ride onto the bridge</span></button>
@@ -296,8 +306,11 @@
     <div class="wheel-cues" aria-live="polite">
       <div id="hud-overspeed" class="wheel-cue overspeed-cue" data-level="none" hidden><span aria-hidden="true">⚠</span> Max speed</div>
       <div id="hud-warning" class="wheel-cue power-cue" data-level="none" role="status" hidden></div>
-      <!-- Officer Dorkins on your tail (nemesis-chase.js): his distance, or how close you are to losing him -->
-      <div id="hud-chase" class="wheel-cue chase-cue" data-state="seen" hidden><span class="chase-light" aria-hidden="true"></span><span id="hud-chase-text">Officer Dorkins</span><span class="chase-meter" aria-hidden="true"><span id="hud-chase-meter"></span></span></div>
+      <!-- Dorkins: separate pursuit/escape and warning-heat feedback, retained through get-ups. -->
+      <div id="hud-chase" class="wheel-cue chase-cue" data-state="seen" hidden>
+        <span class="chase-light" aria-hidden="true"></span><span id="hud-chase-text">Officer Dorkins</span>
+        <span class="chase-detail"><span id="hud-chase-heat-text">Warnings 0/3</span><span id="hud-chase-heat" class="chase-heat" data-level="0" aria-hidden="true"><i></i><i></i><i></i></span><span class="chase-meter" aria-hidden="true"><span id="hud-chase-meter"></span></span></span>
+      </div>
     </div>
     <section id="hud-cluster" class="panel cluster" aria-label="Speed, rider and camera">
       <div class="gauge">
@@ -323,6 +336,31 @@
 
   <!-- Officer Dorkins' ambush and escape banners (nemesis-chase.js) -->
   <div id="hud-chase-banner" class="chase-banner" role="status" aria-live="assertive" hidden></div>
+  <dialog id="booking-overlay" class="booking-overlay" aria-labelledby="booking-heading" data-phase="captured">
+    <button id="booking-skip" class="booking-skip" type="button">Skip booking <span aria-hidden="true">↗</span></button>
+    <header class="booking-heading">
+      <p class="booking-kicker">Civic Detention · White Street</p>
+      <h2 id="booking-heading">Busted.</h2>
+      <p class="booking-subtitle">Vehicle processing</p>
+    </header>
+    <section class="booking-paper" aria-label="Booking receipt">
+      <div class="booking-paper-head"><span>FORM EUC-02</span><span id="booking-number">EUC-001</span></div>
+      <p class="booking-paper-title">BOOKING RECORD</p>
+      <div class="booking-dialogue" aria-live="polite" aria-atomic="true">
+        <p class="booking-speaker">Officer Dorkins</p>
+        <p id="booking-line"></p><p id="booking-reply"></p>
+      </div>
+      <div class="booking-form">
+        <dl><div><dt>Rider</dt><dd id="booking-rider">Cool Rider</dd></div><div><dt>Front wheel</dt><dd class="booking-field">1</dd></div></dl>
+        <dl class="booking-form-bottom"><div><dt>Rear wheel</dt><dd class="booking-field">?</dd></div><div><dt>Total wheels</dt><dd>1</dd></div></dl>
+        <svg class="booking-scribble" viewBox="0 0 300 100" aria-hidden="true"><path d="M14 75Q70 4 81 50T140 37T167 70T213 29L191 77L245 39L230 79L282 53"/></svg>
+        <strong id="booking-stamp" class="booking-stamp">VOID</strong>
+      </div>
+      <p id="booking-note" class="booking-note"></p>
+      <button id="booking-release" class="booking-release" type="button" disabled>Back to riding <span aria-hidden="true">→</span></button>
+      <p class="booking-pad-hint">A / Start to ride · B to skip</p>
+    </section>
+  </dialog>
   <!-- Get-up prompt after a crash (euc-hud.js). Outside the .hud blocks, so clean view never hides it. -->
   <div id="hud-getup" class="getup-prompt" role="status" aria-live="assertive" hidden>
     <span id="hud-getup-verb">Press</span><kbd id="hud-getup-key">R</kbd><span id="hud-getup-text">to get up</span>

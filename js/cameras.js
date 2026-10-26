@@ -185,7 +185,26 @@ class CameraSystem {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Temporary authored framing; never selects or saves a user camera preset. */
+  setCinematic(view) {
+    this.cinematic = view;
+    if (!view) {
+      this.camera.fov = this.getActivePreset().fov;
+      this.camera.updateProjectionMatrix();
+      this.initialized = false;
+    }
+  }
+
   update(dt, elapsed) {
+    if (this.cinematic) {
+      const { position: p, target: t, fov } = this.cinematic;
+      this.currentPos.set(p.x, p.y, p.z);
+      this.currentLookAt.set(t.x, t.y, t.z);
+      this.camera.position.copy(this.currentPos);
+      if (this.camera.fov !== fov) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
+      this.camera.lookAt(this.currentLookAt);
+      return;
+    }
     const entity = this.controllerManager.getActiveEntity();
     const desiredPos = this._desiredPos;
     const desiredLook = this._desiredLook;

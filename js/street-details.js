@@ -11,6 +11,7 @@ import {
   CENTRAL_PARK_BOUNDS as CPB,
   BLOCKS,
   LANDMARK_SITES,
+  CIVIC_JAIL,
   centralParkGateAt,
   inCentralPark
 } from './city-config.js';
@@ -1029,6 +1030,8 @@ function buildStreetDetails(scene) {
   };
   // Street trees turn in 90° steps with the crown squeezed across the sidewalk, away from the facades
   function addStreetTree(x, z, scale, species, acrossX, extra = {}) {
+    // Keep the jail's intake/release doorway and its White Street sightline clear, including the matching pit/body.
+    if (Math.abs(x - CIVIC_JAIL.x) < 8 && z > CIVIC_JAIL.z + 33 && z < CIVIC_JAIL.z + 52) return;
     if (!onSidewalk(x, z) || inPlaza(x, z, 1.5) || !isClearOfPoles(x, z, 2.2)) return;
     const q = Math.floor(hashPos(x, 8.8, z) * 3.999);
     const t = { x, y: SIDEWALK_Y, z, scale, species, yaw: q * Math.PI * 0.5, tier: acrossX ? 1 : 2, ...extra };

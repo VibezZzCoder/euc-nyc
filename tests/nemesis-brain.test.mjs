@@ -1,7 +1,7 @@
 // Officer Dorkins' pursuit (js/nemesis-brain.js): the road graph, A*, the line he flies, where he appears, and flight.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPursuitGraph, findPath, pathLine, pickSpawnPoint, createFlightBrain, HOVER } from '../js/nemesis-brain.js';
+import { buildPursuitGraph, findPath, pathLine, pickSpawnPoint, createFlightBrain, createPursuitMemory, HOVER } from '../js/nemesis-brain.js';
 
 // A 3 x 3 grid, 100 m apart (north = -z). Every road one-way (he flies them either way); the middle street is missing
 // between x=100 and x=200.
@@ -76,14 +76,38 @@ test('in clear view he flies straight at the player, never past cruise, and sett
   assert.ok(Math.abs(f.heading) < 0.1, 'faces the player (south)');
 });
 
-test('out of sight he follows the streets round a block', () => {
+test('the chaser closes an 80 m gap on a rider cruising at 72 km/h', () => {
+  const brain = createFlightBrain(buildPursuitGraph(grid()));
+  brain.place(0, 7, 0, 0);
+  const target = { ...still(0, 80), vz: 20 };
+  for (let i = 0; i < 60 * 30; i++) {
+    target.z += target.vz / 60;
+    brain.update(1 / 60, target);
+  }
+  const gap = Math.hypot(target.x - brain.state.x, target.z - brain.state.z);
+  assert.ok(gap < 10, `ordinary cruising no longer pulls away (${gap.toFixed(1)} m gap)`);
+});
+
+test('a clean near-top-speed straight still opens a gap on the faster cop', () => {
+  const brain = createFlightBrain(buildPursuitGraph(grid()));
+  brain.place(0, 7, 0, 0);
+  const target = { ...still(0, 80), vz: 28 };
+  for (let i = 0; i < 60 * 30; i++) {
+    target.z += target.vz / 60;
+    brain.update(1 / 60, target);
+  }
+  assert.ok(target.z - brain.state.z > 150, 'skilled sustained speed can still create escape distance');
+  assert.ok(brain.state.speed <= HOVER.cruiseSpeed + 1e-6, 'no unbounded catch-up boost');
+});
+
+for (const dt of [1 / 60, 1 / 20]) test(`out of sight he follows street corridors at ${1 / dt} Hz`, () => {
   const g = buildPursuitGraph(grid());
   // A building fills the missing block's corner: sight is blocked, so he takes the streets from (100, 100) to (200, 100)
   const brain = createFlightBrain(g, { clearLine: () => false });
   brain.place(100, 7, 100, 0);
   let maxOff = 0;
-  for (let i = 0; i < 60 * 40; i++) {
-    const f = brain.update(1 / 60, still(200, 100));
+  for (let time = 0; time < 40; time += dt) {
+    const f = brain.update(dt, still(200, 100));
     // off the road corridors (x or z near a multiple of 100) means through a block
     const off = Math.min(Math.abs(f.x - Math.round(f.x / 100) * 100), Math.abs(f.z - Math.round(f.z / 100) * 100));
     maxOff = Math.max(maxOff, off);
@@ -149,4 +173,44 @@ test('the swoop: he comes alongside, to the player\'s left, low, at their pace a
   target.vx = 6; // the player swerves; committed, he does not follow
   for (let i = 0; i < 10; i++) brain.swoop(1 / 60, target, { lateral: 1.64, height: 0.25, commit: true });
   assert.ok(Math.abs(f.vx - vx) < 1e-9 && Math.abs(f.vz - vz) < 1e-9);
+});
+
+test('search follows last-seen facts, not hidden live motion; sight reacquisition resumes pursuit', () => {
+  const m = createPursuitMemory(buildPursuitGraph(grid()));
+  const q = { ...still(100, 50, 12), heading: 0 };
+  m.seed(q);
+  m.update(0.1, q, true, still(100, 0));
+  const remembered = { ...m.state.lastKnown };
+  q.x = 900;
+  q.z = 800;
+  q.y = 0;
+  const out = m.update(0.1, q, false, still(100, 0));
+  assert.deepEqual(m.state.lastKnown, remembered);
+  assert.equal(out.x, 100);
+  assert.equal(out.z, 50);
+  assert.equal(out.y, 12, 'remember the last-seen floor as well');
+  assert.equal(m.state.searching, true);
+  assert.equal(out.vx, 0);
+  const next = m.update(0.1, q, true, still(100, 0));
+  assert.equal(next, out, 'one reusable target');
+  assert.equal(next.x, 900);
+  assert.equal(m.state.searching, false);
+});
+
+test('at the last known spot he pauses, then checks nearby road segments even mid-block', () => {
+  const a = { x: 0, z: 0 }, b = { x: 0, z: 300 };
+  const m = createPursuitMemory(buildPursuitGraph({ nodes: [a, b], edges: [{ from: a, to: b }] }));
+  const q = { ...still(0, 150), heading: 0 };
+  m.seed(q);
+  m.update(0.1, q, false, q);
+  assert.equal(m.state.target.z, 150, 'look at the last known spot first');
+  for (let i = 0; i < 16; i++) m.update(0.1, still(999, 999), false, q);
+  assert.equal(m.state.target.x, 0);
+  assert.equal(m.state.target.z, 186, 'check the road ahead of the remembered heading, not the live rider');
+  const visited = new Set();
+  for (let i = 0; i < 70; i++) {
+    m.update(0.1, still(999, 999), false, m.state.target);
+    visited.add(m.state.target.z);
+  }
+  assert.ok(visited.has(114), 'also checks the other direction');
 });

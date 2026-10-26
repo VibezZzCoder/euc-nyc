@@ -8,13 +8,14 @@ import {
   createBillboardMaterial
 } from './tsl-materials.js';
 import { batchStaticGroupMeshes } from './city-grid.js';
+import { buildCivicJail } from './civic-jail.js';
 
 let bryantParkLawn;
 
 // js/landmarks.js
 // Custom architectural 3D models for Midtown Manhattan's iconic landmarks
 
-function buildLandmarks(scene) {
+function buildLandmarks(scene, { rideBuilder } = {}) {
   const group = new THREE.Group();
   group.name = 'ManhattanLandmarks';
   // Two collider lists. trafficColliders: one box per landmark, the lot the road network keeps clear (unchanged, so the
@@ -1230,6 +1231,8 @@ function buildLandmarks(scene) {
     fitToSite([owtcGroup], site('One World Trade Center'), c0, { height: 541, horizontal: 1.27 }); // a 61 m square base
   }
 
+  const civicJail = buildCivicJail(group, rideBuilder);
+
   // Box-shaped facade parts (unrotated) become box-local facade boxes: every wall laid out in whole window bays between
   // solid masonry corners, like the procedural blocks, so no window is cut by a corner. Rotated & non-box parts (MetLife
   // wings, Flatiron prism, One WTC antiprism) keep the world-space window grid.
@@ -1258,10 +1261,10 @@ function buildLandmarks(scene) {
     group.add(inst);
   }
 
-  batchStaticGroupMeshes(group, new Set([stainlessSteelMat]));
+  batchStaticGroupMeshes(group, new Set([stainlessSteelMat, ...civicJail.materials]));
 
   scene.add(group);
-  return { group, colliders, trafficColliders };
+  return { group, colliders, trafficColliders, update: civicJail.update };
 }
 
 export { buildLandmarks, bryantParkLawn };

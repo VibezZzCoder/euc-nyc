@@ -3,7 +3,7 @@ import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { createPostProcessing } from './post-processing.js';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
-import { getLocationLabel, isTypingInField, ROADS, NYC_LANDMARKS, TELEPORT_LOCATIONS } from './city-config.js';
+import { getLocationLabel, isTypingInField, ROADS, NYC_LANDMARKS, TELEPORT_LOCATIONS, CIVIC_JAIL } from './city-config.js';
 import { buildCityGrid } from './city-grid.js';
 import { buildBoroughs } from './boroughs.js';
 import { buildLandmarks } from './landmarks.js';
@@ -27,11 +27,13 @@ import { TitleScreen } from './title-screen.js';
 import { createNemesis } from './nemesis.js';
 import { NemesisHud } from './nemesis-chase.js';
 import { createViewPreferences } from './view-preferences.js';
+import { createBookingDirector, BookingScreen } from './booking.js';
+import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene.js';
 
 // js/main.js
 // Main entry point for New York City (Midtown Manhattan) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
 
-async function initApp() {
+export async function initApp(startup) {
   const container = document.getElementById('canvas-container');
   const loadingOverlay = document.getElementById('loading-overlay');
   const loadingStatus = document.getElementById('loading-status');
@@ -44,6 +46,7 @@ async function initApp() {
     loadingFill.style.transform = `scaleX(${Math.min(1, Math.max(0, p))})`;
   };
 
+  startup.phase('graphics');
   if (loadingStatus) {
     loadingStatus.textContent = `Initializing Three.js r${THREE.REVISION} WebGPURenderer & TSL Shaders...`;
   }
@@ -70,7 +73,10 @@ async function initApp() {
   };
 
   await renderer.init();
+  startup.onFailure(() => renderer.setAnimationLoop(null).catch(() => {}));
+  if (startup.failed) return;
   markInit('renderer');
+  startup.phase('city');
 
   // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
   const scene = new THREE.Scene();
@@ -87,7 +93,7 @@ async function initApp() {
   markInit('cityGrid');
   const boroughs = buildBoroughs(scene, { sidewalks: cityGrid.sidewalks, rideBuilder: cityGrid.rideBuilder });
   markInit('boroughs');
-  const landmarks = buildLandmarks(scene);
+  const landmarks = buildLandmarks(scene, { rideBuilder: cityGrid.rideBuilder });
   markInit('landmarks');
   const cityBlocks = buildCityBlocks(scene);
   markInit('blocks');
@@ -129,6 +135,7 @@ async function initApp() {
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders, {
     ride, rider, dynamicWorld
   });
+  const booking = createBookingDirector();
   // Reuse teleport placement so a saved rider returns at rest, close to where they were.
   const savedPose = saved?.version === 2 ? saved.euc : saved?.version === 1 ? saved.entities?.euc : null;
   if (savedPose && [savedPose.x, savedPose.z, savedPose.heading].every(Number.isFinite)) {
@@ -138,8 +145,11 @@ async function initApp() {
   function savePlayerState() {
     try {
       const e = controllerManager.getActiveEntity();
+      // A reload during the vignette resumes outside, never in a frozen booking or its temporary desk.
+      const pose = booking.active ? CIVIC_JAIL.release
+        : { x: e.position.x, y: e.position.y, z: e.position.z, heading: e.heading };
       localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
-        version: 2, rider: e.riderId, euc: { x: e.position.x, y: e.position.y, z: e.position.z, heading: e.heading }
+        version: 2, rider: e.riderId, euc: pose
       }));
     } catch { /* Storage may be disabled or full. */ }
   }
@@ -160,6 +170,7 @@ async function initApp() {
   });
   if (nemesis) audioSystem.setChaser(nemesis);
   const nemesisHud = nemesis ? new NemesisHud(document) : null;
+  const bookingScene = nemesis ? createBookingScene(scene, nemesis) : null;
   function updateSoundButton() {
     if (!soundButton) return;
     soundButton.disabled = !audioSystem.supported;
@@ -613,6 +624,49 @@ async function initApp() {
     },
   });
 
+  // Booking is a modal lifecycle: the controller still owns every placement; held controls cannot leak across it.
+  function placeAtJail(z, heading) {
+    const x = BOOKING_SITE.x, y = BOOKING_SITE.y;
+    const e = controllerManager.getActiveEntity();
+    // Alternatives stay along the same sidewalk, never sideways into the road or the tree-pit row.
+    for (const dx of [0, -0.7, 0.7, -1.5, 1.5, -2.5, 2.5]) {
+      const p = controllerManager.findTeleportPosition(x + dx, z, heading, y);
+      if (!p || Math.hypot(p.x - x - dx, p.z - z) > 0.5) continue;
+      if (e.placeAt(p.x, p.z, heading, y)) return true; // dynamic-world placement can refuse a passing pedestrian
+    }
+    return false;
+  }
+  function finishBooking() {
+    if (!booking.active || !placeAtJail(CIVIC_JAIL.release.z, CIVIC_JAIL.release.heading)) return false;
+    booking.finish();
+    nemesis.director.release();
+    nemesis.hide();
+    trafficSystem.setPresentationClearance(null);
+    bookingScene.update(0, booking.state, cameraSystem.camera.aspect);
+    cameraSystem.setCinematic(null);
+    controllerManager.resetInput();
+    cameraSystem.resetForTeleport();
+    selectCamera('chase', true, false);
+    gamepadControls.setEnabled(true);
+    touchControls.setEnabled(true);
+    bookingScreen.update(booking.state);
+    savePlayerState();
+    return true;
+  }
+  const bookingScreen = new BookingScreen({ root: document.getElementById('booking-overlay'), onRelease: finishBooking });
+
+  function startBooking() {
+    const e = controllerManager.getActiveEntity();
+    if (!booking.start(RIDERS[e.riderId].name, nemesis.director.state.knockdowns)) return;
+    closePopovers();
+    controllerManager.resetInput();
+    touchControls.setEnabled(false);
+    gamepadControls.setEnabled(false);
+    cameraSystem._clearPointers();
+    bookingScreen.update(booking.state);
+    savePlayerState();
+  }
+
   // Restore explicit view choices; the title orbit stays temporary until Ride.
   document.body.dataset.mode = 'euc';
   document.body.dataset.input = promptDevice;
@@ -694,8 +748,10 @@ async function initApp() {
     let done = 0;
     const worker = async () => {
       while (next < jobs.length) {
+        if (startup.failed) return;
         const job = jobs[next++];
         for (const object of job) await compile(object);
+        if (startup.failed) return;
         done++;
         if (loadingStatus) {
           loadingStatus.textContent = `Compiling Shaders & Render Pipelines... ${Math.round((done / jobs.length) * 100)}%`;
@@ -709,8 +765,11 @@ async function initApp() {
     for (const o of culled) o.frustumCulled = true;
   }
 
+  startup.phase('shaders');
   await precompileShaders();
+  if (startup.failed) return;
   markInit('compile');
+  startup.phase('first-frame');
 
   // 6. Animation Loop
   let lastTime = performance.now();
@@ -723,6 +782,7 @@ async function initApp() {
   if (elFps) elFps.textContent = '60';
 
   renderer.setAnimationLoop((now) => {
+    if (startup.failed) return;
     const rawDt = (now - lastTime) * 0.001;
     lastTime = now;
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
@@ -730,9 +790,26 @@ async function initApp() {
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
     if (titleScreen.isOpen) titleScreen.update();
+    else if (booking.active) bookingScreen.updateGamepad();
     else if (titleScreen.started || !titleScreen.root) gamepadControls.update(dt);
-    controllerManager.update(dt, elapsed);
-    nemesis?.update(dt, (titleScreen.started || !titleScreen.root) && !mapSystem.isFullMapOpen); // no ambush under the map
+    if (booking.active) {
+      controllerManager.resetInput();
+      // Let the initial fall settle; at intake the rider is posed at rest, protected from world motion/input.
+      controllerManager.getActiveEntity().update(booking.state.phase === 'captured' ? dt : 0, controllerManager.keys);
+    } else controllerManager.update(dt, elapsed);
+    if (!booking.active) {
+      nemesis?.update(dt, (titleScreen.started || !titleScreen.root) && !mapSystem.isFullMapOpen && !document.hidden);
+      if (nemesis?.director.state.phase === 'captured') startBooking();
+    }
+    const bookingEvent = booking.update(dt, !document.hidden);
+    if (bookingEvent === 'transfer' && placeAtJail(BOOKING_SITE.riderZ, Math.PI)) {
+      booking.arrive();
+      cameraSystem.resetForTeleport();
+    }
+    const bookingView = bookingScene?.update(document.hidden ? 0 : dt, booking.state, cameraSystem.camera.aspect);
+    trafficSystem.setPresentationClearance(bookingView ? BOOKING_STAGE : null);
+    if (bookingView) cameraSystem.setCinematic(bookingView);
+    bookingScreen.update(booking.state);
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
     trafficSystem.update(dt, elapsed, cameraSystem.currentPos, controllerManager.getActiveEntity(), cameraSystem.camera);
@@ -746,6 +823,7 @@ async function initApp() {
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
     lightingSystem.update(cameraSystem.currentPos);
+    landmarks.update(cameraSystem.currentPos);
     mapSystem.update();
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.activePresetId === 'midnight');
     // Wheel cues and the get-up prompt (every frame: the over-speed blink and the prompt must not lag)
@@ -778,7 +856,8 @@ async function initApp() {
       // The loading screen stays up until the GPU has got through the first frame (and the pipelines its warm-up
       // compiled), i.e. until the city is actually on screen
       const device = renderer.backend.device;
-      Promise.resolve(device && device.queue.onSubmittedWorkDone()).catch(() => {}).then(() => {
+      Promise.resolve(device && device.queue.onSubmittedWorkDone()).then(() => {
+        if (startup.failed) return;
         markInit('gpu');
         console.log(`[init] ${initTimings.join(', ')}`);
         initTimings = null;
@@ -786,7 +865,8 @@ async function initApp() {
         if (loadingOverlay) loadingOverlay.classList.add('hidden');
         audioSystem.ready = true;
         setLoadingProgress(1);
-      });
+        startup.complete();
+      }).catch(startup.fail);
     }
 
     // Telemetry uses wall time, not the clamped simulation step, so slow frames and high-refresh displays report
@@ -816,5 +896,3 @@ async function initApp() {
     }
   });
 }
-
-initApp();
