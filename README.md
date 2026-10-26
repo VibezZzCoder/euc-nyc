@@ -1,5 +1,7 @@
 # NYC Spin-off: EUC Thrills (work in progress)
 
+**[▶ Play now](https://vibezzzcoder.github.io/euc-nyc/)**
+
 Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds.
 A free side project of [*EUC Thrills*](https://github.com/VibezZzCoder/EUC-thrills) by VibezZzCoder. The riding
 (the wheel's physics, the riders and the crashes) comes from *EUC Thrills*. The city is a fork of Mr.doob's
