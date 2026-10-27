@@ -67,7 +67,7 @@ function classList() {
   };
 }
 
-function mapHarness() {
+function mapHarness(landmarks = []) {
   const window = { ...eventTarget(), innerWidth: 200, innerHeight: 200 };
   const canvas = {
     ...eventTarget(), style: {}, clientWidth: 200, clientHeight: 200,
@@ -95,7 +95,7 @@ function mapHarness() {
     canvas.dispatch('lostpointercapture', { pointerId: id });
   };
   const config = {
-    ROADS: [], BLOCKS: [], NYC_LANDMARKS: [],
+    ROADS: [], BLOCKS: [], NYC_LANDMARKS: landmarks,
     ISLAND_BOUNDS: { minX: -10000, maxX: 10000, minZ: -10000, maxZ: 10000 },
     getIslandBoundsAtZ: () => ({ westX: -10000, eastX: 10000 }),
     getLocationLabel: (x, z) => `${x}, ${z}`,
@@ -105,10 +105,10 @@ function mapHarness() {
     globals: { window, document },
     imports: { './nyc-geodata.js': { GEO: { frame: {} } }, './city-config.js': config }
   });
-  const teleports = [], toggles = [];
+  const teleports = [], teleportArgs = [], toggles = [];
   const map = new NYCMapSystem({
     controllerManager: { getActiveEntity: () => ({ position: { x: 1000, z: 2000 } }) },
-    onTeleport: (x, z) => teleports.push([x, z]),
+    onTeleport: (...args) => { teleports.push(args.slice(0, 2)); teleportArgs.push(args); },
     onToggle: (open) => toggles.push(open)
   });
   // Exercise the real viewport/input state without drawing the map's geographic layers.
@@ -116,7 +116,7 @@ function mapHarness() {
   map.viewZoom = 1;
   map.toggleFullMap(true);
   return {
-    map, canvas, controls, wrapper, window, document, captured, teleports, toggles, zoomIn, zoomOut,
+    map, canvas, controls, wrapper, window, document, captured, teleports, teleportArgs, toggles, zoomIn, zoomOut,
     pointer(target, type, id, x = 110, y = 120, pointerType = 'touch', button = 0) {
       const event = { pointerId: id, clientX: x, clientY: y, pointerType, button, preventDefault() {} };
       (captured.has(id) ? canvas : target).dispatch(type, event);
@@ -155,6 +155,49 @@ test('a normal map tap teleports once and releases capture', () => {
   assert.equal(h.map.waypoint.name, '1000, 2000');
   assert.equal(h.captured.size, 0);
   assert.equal(h.map.isPanning, false);
+});
+
+test('a registered waterfront deck reaches the placement owner without being clamped back onto the mainland', () => {
+  const h = mapHarness();
+  h.map.viewCenterX = -10050;
+  h.map.controllerManager.eucSampler = {
+    topAt: (x, z, shore, referenceY) => x === -10050 && z === 2000 && shore && referenceY === Infinity,
+    isOffLimits: () => false
+  };
+  h.pointer(h.canvas, 'pointerdown', 1);
+  h.pointer(h.canvas, 'pointerup', 1);
+  assert.deepEqual(h.teleports, [[-10050, 2000]]);
+});
+
+test('water and off-limits registered surfaces retain the mainland map clamp', () => {
+  const h = mapHarness();
+  const point = { x: -10050, z: 2000 };
+  h.map.controllerManager.eucSampler = { topAt: () => null, isOffLimits: () => false };
+  assert.equal(h.map.clampToManhattan(point).x, -9988, 'unregistered river point');
+  h.map.controllerManager.eucSampler = { topAt: () => ({}), isOffLimits: () => true };
+  assert.equal(h.map.clampToManhattan(point).x, -9988, 'north boundary / unsafe support');
+});
+
+test('an authored pin arrival forwards its heading and floor while nearby ground clicks stay exact', () => {
+  const arrival = { x: 1008, z: 1995, heading: 0.4, y: 0.48 };
+  const h = mapHarness([{ id: 'skate', name: 'Skate spot', short: 'Skate', x: 1000, z: 2000, arrival }]);
+  h.pointer(h.canvas, 'pointerdown', 1);
+  h.pointer(h.canvas, 'pointerup', 1);
+  assert.deepEqual(h.teleportArgs[0], [1008, 1995, 0.4, 0.48]);
+  h.pointer(h.canvas, 'pointerdown', 2, 130, 120);
+  h.pointer(h.canvas, 'pointerup', 2, 130, 120);
+  assert.deepEqual(h.teleportArgs[1], [1020, 2000], 'outside the 8 px pin hit area');
+});
+
+test('the skateboard marker owns its wider visible hit area without claiming ordinary nearby ground', () => {
+  const arrival = { x: 1008, z: 1995, heading: 0.4, y: 0.48 };
+  const h = mapHarness([{ id: 'park', icon: 'skateboard', x: 1000, z: 2000, arrival }]);
+  h.pointer(h.canvas, 'pointerdown', 1, 120, 120);
+  h.pointer(h.canvas, 'pointerup', 1, 120, 120);
+  assert.deepEqual(h.teleportArgs[0], [1008, 1995, 0.4, 0.48], '10 px: on the board silhouette');
+  h.pointer(h.canvas, 'pointerdown', 2, 126, 120);
+  h.pointer(h.canvas, 'pointerup', 2, 126, 120);
+  assert.deepEqual(h.teleportArgs[1], [1016, 2000], '16 px: ordinary map ground');
 });
 
 for (const interruption of ['pointercancel', 'lostpointercapture', 'blur', 'hidden', 'close']) {

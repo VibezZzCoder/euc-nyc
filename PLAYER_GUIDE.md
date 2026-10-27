@@ -178,9 +178,19 @@ teleporting or changing rider from a scenic view temporarily selects Chase witho
    plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
   A click on a registered bridge deck or pier terrace selects its highest surface; reloading restores the saved
   elevation, including a lower walkway beneath an upper one.
-- **Teleport** menu (top right): sixteen stops. Alongside the eight landmarks are the Manhattan approaches to all
+- **Skate locations on the map:** search for Coleman, Tribeca / Pier 25, Pier 62, Andy Kessler / Riverside,
+  Thomas Jefferson, Brooklyn Banks or Tompkins Square. They have named map pins and nearby location labels.
+  **Pier 62 has a larger authored skatepark**, marked by a **skateboard icon** on both the map and minimap. Its connected
+  slate-blue courts have banks, two quarter-pipes, rollers, a manual pad, ledges and a low rail, with open flat riding space
+  between features. Gentle ramps connect both ends to existing paths. Search **Pier 62** and click/tap the skateboard to
+  arrive facing the seaward riding line. Clicking ordinary ground away from the icon keeps normal map placement.
+  The asphalt crossing beside it is an active traffic road.
+  The other pins identify researched locations within the existing city scenery. Tompkins is a community skate spot and
+  Brooklyn Banks a historic skate spot. Highbridge is beyond the playable north boundary.
+- **Teleport** menu (top right): seventeen stops. Alongside the eight landmarks are the Manhattan approaches to all
   four East River bridges, the FDR climb, Pier 15's lower ramp entrance, Little Island's gangway and the Hudson River
-  Greenway at Pier 84. Pier 15 deliberately arrives downstairs; ride shoreward up the ramp to reach the lawn.
+  Greenway at Pier 84, plus Civic Detention Jail. Pier 15 deliberately arrives downstairs; ride shoreward up the ramp
+  to reach the lawn.
 - **Time of day** (top right): golden hour, midday, blue hour and night. At blue hour and night the wheel's headlight
   comes on with the cars' and lights the road ahead. Your selected time of day is remembered for the next visit.
 

@@ -433,6 +433,25 @@ function drawWaypoint(ctx, x, y, r) {
 
 const overlaps = (boxes, b) => boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
 
+// A small vector skateboard keeps the completed park distinct at every DPR, without relying on emoji fonts.
+function drawSkateboardPin(ctx, x, y, scale = 1) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-0.45);
+  ctx.scale(scale, scale);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-8, -3); ctx.lineTo(-5, -1); ctx.lineTo(5, -1); ctx.lineTo(8, -3);
+  ctx.strokeStyle = MAP.halo; ctx.lineWidth = 7; ctx.stroke();
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.8; ctx.stroke();
+  for (const x of [-4, 4]) {
+    ctx.beginPath(); ctx.arc(x, 3, 1.8, 0, Math.PI * 2);
+    ctx.strokeStyle = MAP.halo; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+  }
+  ctx.restore();
+}
+
 class NYCMapSystem {
   constructor({ controllerManager, cameraSystem, trafficSystem, allBlocks = [], onTeleport, onToggle }) {
     this.controllerManager = controllerManager;
@@ -616,7 +635,13 @@ class NYCMapSystem {
               name: getLocationLabel(wPos.x, wPos.z)
             };
             if (this.onTeleport) {
-              this.onTeleport(wPos.x, wPos.z);
+              // Only a deliberate pin click uses an authored arrival; ordinary ground clicks retain their exact X/Z
+              // and highest-surface selection. The researched marker itself stays at the real-world reference point.
+              const pin = NYC_LANDMARKS.find((lm) => lm.arrival && Math.hypot(lm.x - wPos.x, lm.z - wPos.z) * this.viewZoom <= (lm.icon === 'skateboard' ? 12 : 8));
+              if (pin) {
+                const a = pin.arrival;
+                this.onTeleport(a.x, a.z, a.heading, a.y);
+              } else this.onTeleport(wPos.x, wPos.z);
             }
             this.renderFullMap();
           }
@@ -739,8 +764,10 @@ class NYCMapSystem {
     };
   }
 
-  // Teleports land on Manhattan: inside the island's extent at that latitude
+  // Preserve registered pier / bridge ground before the mainland clamp. The controller still owns clear placement.
   clampToManhattan(p) {
+    const sampler = this.controllerManager.eucSampler;
+    if (sampler?.topAt?.(p.x, p.z, true, Infinity) && !sampler.isOffLimits(p.x, p.z, Infinity)) return p;
     const z = Math.max(ISLAND_BOUNDS.minZ + 25, Math.min(ISLAND_BOUNDS.maxZ - 25, p.z));
     const shore = getIslandBoundsAtZ(z);
     return { x: Math.max(shore.westX + 12, Math.min(shore.eastX - 12, p.x)), z };
@@ -1057,6 +1084,7 @@ class NYCMapSystem {
       const lx = toX(lm.x);
       const ly = toY(lm.z);
       if (Math.abs(lx) < w * 0.48 && Math.abs(ly) < h * 0.48) {
+        if (lm.icon === 'skateboard') { drawSkateboardPin(ctx, lx, ly, 0.8); continue; }
         ctx.fillStyle = MAP.halo;
         ctx.beginPath();
         ctx.arc(lx, ly, 4.5, 0, Math.PI * 2);
@@ -1209,9 +1237,10 @@ class NYCMapSystem {
       const ly = toY(lm.z);
       if (Math.abs(lx) > w * 0.48 || Math.abs(ly) > h * 0.48) continue;
       const labelW = this.textWidth(ctx, lm.short) + 6;
-      const box = [lx + 6, ly - 8, lx + 8 + labelW, ly + 7];
+      const radius = lm.icon === 'skateboard' ? 12 : 6;
+      const box = [lx + radius, ly - 8, lx + radius + 2 + labelW, ly + 7];
       const showLabel = !overlaps(placed, box);
-      placed.push([lx - 6, ly - 6, lx + 6, ly + 6]);
+      placed.push([lx - radius, ly - radius, lx + radius, ly + radius]);
       if (showLabel) placed.push(box);
       pins.push({ lm, lx, ly, showLabel });
     }
@@ -1255,20 +1284,24 @@ class NYCMapSystem {
     ctx.font = `700 11px ${FONT}`;
     ctx.textAlign = 'left';
     for (const { lm, lx, ly, showLabel } of pins) {
-      ctx.fillStyle = MAP.halo;
-      ctx.beginPath();
-      ctx.arc(lx, ly, 6.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(lx, ly, 4.2, 0, Math.PI * 2);
-      ctx.fill();
+      if (lm.icon === 'skateboard') drawSkateboardPin(ctx, lx, ly);
+      else {
+        ctx.fillStyle = MAP.halo;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 6.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(lx, ly, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
       if (showLabel) {
+        const offset = lm.icon === 'skateboard' ? 15 : 9;
         ctx.lineWidth = 3;
         ctx.strokeStyle = MAP.halo;
-        ctx.strokeText(lm.short, lx + 9, ly + 4);
+        ctx.strokeText(lm.short, lx + offset, ly + 4);
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(lm.short, lx + 9, ly + 4);
+        ctx.fillText(lm.short, lx + offset, ly + 4);
       }
     }
 

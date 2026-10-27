@@ -268,7 +268,7 @@ const PIER_KINDS = [
   ['Pier 76', 'Pier 76 · Hudson Yards', 'shed', { roofParking: true }],
   ['Pier 66', 'Pier 66 · 26th St', 'park', { lightship: true }],
   ['Pier 64', 'Pier 64 · Hudson River Pk', 'park'],
-  ['Pier 62', 'Pier 62 · Sports Piers', 'park'],
+  ['Pier 62', 'Pier 62 · Sports Piers', 'park', { skateSection: true }],
   ['Pier 61', 'Pier 61 · Sports Piers', 'chelsea'],
   ['Pier 60', 'Pier 60 · Sports Piers', 'chelsea', { sign: true }],
   ['Pier 59', 'Pier 59 · Sports Piers', 'chelsea', { golf: true }],
@@ -711,6 +711,21 @@ NYC_LANDMARKS.push(
   { id: 'centralpark', name: 'Central Park & The Lake', short: 'Central Park', x: -560, z: -2630, district: 'Uptown' },
   { id: 'brooklynbr', name: 'Brooklyn Bridge', short: 'Brooklyn Bridge', x: EAST_RIVER_BRIDGES[3].a.x + 700, z: EAST_RIVER_BRIDGES[3].a.z + 200, district: 'East River' },
   { id: 'queensborobr', name: 'Queensboro 59th St Bridge', short: '59th St Bridge', x: 1500, z: -1410, district: 'East River' }
+);
+// Real-world skate-area reference points (research 2026-10-25), projected through tools/geo-base.mjs's calibrated
+// frame and rounded to 0.1 m like GEO. Pin positions identify locations; an optional authored arrival is separate.
+// OSM-derived positions © OpenStreetMap contributors (ODbL); sources / in-game survey: docs/SKATEPARK_SURVEY.md.
+// Highbridge is beyond the detailed city's north cut, so it is not a rideable-map POI.
+NYC_LANDMARKS.push(
+  { id: 'coleman', name: 'LES Coleman Skatepark', short: 'LES Coleman Skatepark', x: 1384.6, z: 4583.3, district: 'Lower East Side' }, // 40.71135, -73.99288
+  { id: 'tribeca-skate', name: 'Tribeca Skatepark (Pier 25)', short: 'Tribeca Skatepark', x: -527.4, z: 4602.7, district: 'Tribeca' }, // 40.71955, -74.01279
+  { id: 'pier62-skate', name: 'Pier 62 Skatepark', short: 'Pier 62 Skatepark', x: -1850.5, z: 1631.0, district: 'Chelsea', // 40.74873, -74.00942
+    icon: 'skateboard', arrival: { x: -1836.8404, z: 1640.4366, y: 0.48, heading: -1.1995 } }, // clear flat approach, facing the larger park's seaward line
+  { id: 'andy-kessler', name: 'Andy Kessler / Riverside Skatepark', short: 'Andy Kessler Skatepark', x: -2021.6, z: -5431.4, district: 'Upper West Side' }, // 40.80509, -73.97062
+  { id: 'thomas-jefferson', name: 'Thomas Jefferson Skatepark', short: 'Thomas Jefferson Skatepark', x: 1344.9, z: -5800.6, district: 'East Harlem' }, // 40.79329, -73.93364
+  // Historic / community skate spots rather than purpose-built skateparks.
+  { id: 'brooklyn-banks', name: 'Brooklyn Banks Skate Spot', short: 'Brooklyn Banks', x: 699.6, z: 5031.9, district: 'Civic Center' }, // 40.71081, -74.00255
+  { id: 'tompkins-skate', name: 'Tompkins Square Skate Spot', short: 'Tompkins Skate Spot', x: 1315.8, z: 2584.5, district: 'East Village' } // 40.72739, -73.98211
 );
 
 const ISLAND_BOUNDS = (() => {

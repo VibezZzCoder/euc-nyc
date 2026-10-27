@@ -512,6 +512,10 @@ function polygonFenceSegments(pts, gates = [], gapR = 2.0, step = 1.0) {
   return segs;
 }
 
+// The existing Pier 62 highway jog: drawing/ride clearance only, never traffic routing. Shared by pier slabs,
+// surrounding shore belts and highway divider/lamp admission.
+const PIER62_ROAD = { z0: 1500, z1: 1770, bend0: 1605, bend1: 1647, clearance: 3.6 };
+
 // Waterfront piers: shared TSL uber-materials. All static pier geometry is merged per material, so the look of each
 // structure is selected by a "variant" id packed into uv.x (uv.x = variant * 10 + u) instead of extra draw calls.
 function createWaterfrontPierMaterials() {
@@ -542,7 +546,7 @@ function createWaterfrontPierMaterials() {
   };
 
   // ---- Ground: 0 concrete deck · 1 rooftop parking · 2 sand · 3 timber boardwalk · 4 lawn · 5 sports turf (field uv) ·
-  //      6 golf turf · 7 pavers · 8 asphalt
+  //      6 golf turf · 7 pavers · 8 asphalt · 9 skate slate · 10 skate concrete
   const ground = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0.0 });
   {
     const gv = variantOf();
@@ -579,8 +583,11 @@ function createWaterfrontPierMaterials() {
     const pavers = mix(mix(color(0x8a8176), color(0xa1998d), hash(floor(wp.div(0.9)))), color(0x5b554d),
       max(lines(wp.x, 0.9, 0.02), lines(wp.y, 0.9, 0.02)));
     const asphalt = mix(color(0x323337), color(0x45464a), grain);
-    ground.colorNode = P.c([concrete, parking, sand, boards, lawn, turf, golf, pavers, asphalt]);
-    ground.roughnessNode = P.f([0.88, 0.8, 0.96, 0.78, 0.95, 0.85, 0.9, 0.8, 0.86]);
+    // Local skate palette: a slate court separates the warm riding faces without changing city exposure/lighting.
+    const skateSlate = mix(color(0x354b58), color(0x425864), grain.mul(0.45).add(0.25));
+    const skateConcrete = mix(color(0x8b8576), color(0x9d9687), grain.mul(0.35).add(0.3));
+    ground.colorNode = P.c([concrete, parking, sand, boards, lawn, turf, golf, pavers, asphalt, skateSlate, skateConcrete]);
+    ground.roughnessNode = P.f([0.88, 0.8, 0.96, 0.78, 0.95, 0.85, 0.9, 0.8, 0.86, 0.92, 0.9]);
   }
 
   // ---- Buildings: 0 cruise terminal · 1 sports piers · 2 industrial shed · 3 Pier 57 concrete · 4 Pier 40 garage ·
@@ -789,7 +796,7 @@ function pierHullGeometry(len, beam, depth, bowFrac = 0.28, sternFrac = 0.06, do
 
 // Waterfront piers: builds every WATERFRONT_PIERS entry: concrete decks on timber piles with fenders, railings and
 // lamps, plus each pier's landmark structures. All static parts go through one batcher (~1 draw call per material).
-function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, inPier57Road }) {
+function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, inPier57Road, pier62RoadCuts, inPier62Road }) {
   const M = createWaterfrontPierMaterials();
   for (const [k, m] of Object.entries(M)) if (m && m.isMaterial) m.name = 'waterfrontPier.' + k;
   const B = createPierBoxBatcher();
@@ -799,15 +806,35 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
   const trees = [];
   let seed = 1234567;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const area = poly => Math.abs(poly.reduce((sum, a, i) => {
+    const b = poly[(i + 1) % poly.length]; return sum + a.x * b.z - a.z * b.x;
+  }, 0)) / 2;
 
   // Local frame: u runs seaward from the bulkhead, s across the pier (rotation about Y as in Object3D.rotation.y)
-  const frame = (x0, z0, theta, physical = false) => {
+  const frame = (x0, z0, theta, physical = false, roadCuts = []) => {
     const c = Math.cos(theta), sn = Math.sin(theta);
     const wx = (u, s) => x0 + u * c + s * sn;
     const wz = (u, s) => z0 - u * sn + s * c;
-    const drawBox = (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => B.box(mat,
-      wx((u0 + u1) / 2, (s0 + s1) / 2), (y0 + y1) / 2, wz((u0 + u1) / 2, (s0 + s1) / 2),
-      Math.abs(u1 - u0), Math.abs(y1 - y0), Math.abs(s1 - s0), theta, v, open);
+    const cuts = roadCuts.map(({ poly }) => poly.map(p => ({ x: (p.x - x0) * c - (p.z - z0) * sn, z: (p.x - x0) * sn + (p.z - z0) * c })));
+    const drawBox = (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
+      const original = () => B.box(mat, wx((u0 + u1) / 2, (s0 + s1) / 2), (y0 + y1) / 2, wz((u0 + u1) / 2, (s0 + s1) / 2),
+        Math.abs(u1 - u0), Math.abs(y1 - y0), Math.abs(s1 - s0), theta, v, open);
+      if (!cuts.length) { original(); return null; }
+      const poly = [{ x: u0, z: s0 }, { x: u1, z: s0 }, { x: u1, z: s1 }, { x: u0, z: s1 }];
+      let pieces = null;
+      // Only Pier 62 opts into this local road reservation. Cut both the slab drawing and its support, never hide
+      // the raised lawn beneath an asphalt overlay. Under-deck timbers below the roadway remain intact.
+      if (Math.max(y0, y1) > -0.01) for (const cut of cuts) {
+        if (cut.every(p => p.x < u0) || cut.every(p => p.x > u1) || cut.every(p => p.z < s0) || cut.every(p => p.z > s1)) continue;
+        pieces = (pieces || [poly]).flatMap(p => subtractConvex(p, cut)).filter(p => area(p) > 1e-6);
+      }
+      if (pieces) for (const part of pieces) {
+        const geo = createExtrudedPolygonMesh(part, Math.min(y0, y1), Math.abs(y1 - y0), mat).geometry;
+        B.geo(mat, geo, x0, 0, z0, theta, v);
+        geo.dispose();
+      } else original();
+      return pieces;
+    };
     const bodyBox = (mat, u0, u1, y0, y1, s0, s1) => {
       const body = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
         Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, mat === BL);
@@ -815,9 +842,13 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
       return body;
     };
     const box = (...args) => {
-      drawBox(...args);
+      const pieces = drawBox(...args);
       // Paint stripes / glazing overlays do not need their own bodies. Cabin boxes already contain them.
-      if (physical && args[7] !== 11 && Math.min(Math.abs(args[2] - args[1]), Math.abs(args[4] - args[3]), Math.abs(args[6] - args[5])) >= 0.12) bodyBox(...args);
+      if (physical && args[7] !== 11 && Math.min(Math.abs(args[2] - args[1]), Math.abs(args[4] - args[3]), Math.abs(args[6] - args[5])) >= 0.12) bodyParts(args, pieces);
+    };
+    const bodyParts = (args, pieces) => {
+      if (!pieces) return bodyBox(...args);
+      for (const part of pieces) for (const r of prismSlices(part)) bodyBox(args[0], r.x0, r.x1, args[3], args[4], r.z0, r.z1);
     };
     const support = (geo, u, y, s, rot, surface, layered = physical) => {
       const mesh = new THREE.Mesh(geo, GR);
@@ -831,19 +862,21 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
       body: (u0, u1, y0, y1, s0, s1) => { const b = bodyBox(BL, u0, u1, y0, y1, s0, s1); b.support = false; return b; },
       // Suspended bodies use query elevation, so their roofs cannot lift a rider beneath them.
       solid: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
-        drawBox(mat, u0, u1, y0, y1, s0, s1, v, open);
-        bodyBox(mat, u0, u1, y0, y1, s0, s1);
+        const args = [mat, u0, u1, y0, y1, s0, s1, v, open];
+        bodyParts(args, drawBox(...args));
       },
       top: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
-        drawBox(mat, u0, u1, y0, y1, s0, s1, v, open);
-        const poly = [[u0, s0], [u1, s0], [u1, s1], [u0, s1]].map(([u, s]) => ({ x: wx(u, s), z: wz(u, s) }));
-        const t = addRideTop(poly, Math.max(y0, y1), v === 4 || v === 5 || v === 6 ? 'grass' : v === 3 ? 'wood' : v === 7 ? 'brick' : 'pavement');
-        t.shore = true; // the actual deck opens the shore wall at its mouth, including below-zero floating docks
-        t.layered = y0 > DY + 1;
-        if (t.layered) {
-          const slab = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
-            Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, true);
-          slab.support = false;
+        const pieces = drawBox(mat, u0, u1, y0, y1, s0, s1, v, open);
+        for (const part of pieces || [[{ x: u0, z: s0 }, { x: u1, z: s0 }, { x: u1, z: s1 }, { x: u0, z: s1 }]]) {
+          const poly = part.map(p => ({ x: wx(p.x, p.z), z: wz(p.x, p.z) }));
+          const t = addRideTop(poly, Math.max(y0, y1), v === 4 || v === 5 || v === 6 ? 'grass' : v === 3 ? 'wood' : v === 7 ? 'brick' : 'pavement');
+          t.shore = true; // the actual deck opens the shore wall at its mouth, including below-zero floating docks
+          t.layered = y0 > DY + 1;
+          if (t.layered) {
+            const slab = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
+              Math.abs(u1 - u0), Math.abs(s1 - s0), Math.min(y0, y1), Math.max(y0, y1), theta, true);
+            slab.support = false;
+          }
         }
       },
       geo: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0) => B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v),
@@ -860,7 +893,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
           body.support = false;
         }
       },
-      sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot, physical),
+      sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot, physical, roadCuts),
       // Thin beam between two local points [u, y, s] (rigging, masts, ramps); t thick, t2 wide
       strut: (mat, a, b, t, v = 0, t2 = t, rideSurface = null, solid = false, layered = physical) => {
         const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
@@ -908,7 +941,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
       x0 = p.cx - dx * h;
       z0 = p.cz - dz * h;
     }
-    const F = frame(x0, z0, theta);
+    const F = frame(x0, z0, theta, false, p.name.startsWith('Pier 62') ? pier62RoadCuts : []);
     const inWater = (u, s) => { const x = F.wx(u, s), sx = shoreAt(F.wz(u, s)); return west ? x < sx : x > sx; };
     let u0 = 0; // extend the deck inland until it meets the bulkhead across its whole width
     for (const s of [-p.width / 2, 0, p.width / 2]) {
@@ -984,6 +1017,110 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
   };
 
   // Hudson River Park lawn piers (84, 45, 66, 26): paver promenade, curbed lawn panels with trees, benches, shade sails
+  // A solid concrete section extruded across u, from one ordered [s, topY] profile. The same top triangles supply
+  // riding support; compact inscribed bodies supply the sides/underside without introducing a flat support lid.
+  const skateProfile = (F, u0, u1, profile, base, smooth = false) => {
+    const positions = [], normals = [], sides = [];
+    const triangle = (out, a, b, c) => out.push(...a, ...b, ...c);
+    const quad = (out, a, b, c, d) => { triangle(out, a, b, c); triangle(out, a, c, d); };
+    const slope = (i) => (profile[i + 1][1] - profile[i][1]) / (profile[i + 1][0] - profile[i][0]);
+    const normal = (m) => { const k = 1 / Math.hypot(1, m); return [0, k, -m * k]; };
+    for (let i = 0; i + 1 < profile.length; i++) {
+      const [s0, y0] = profile[i], [s1, y1] = profile[i + 1];
+      const a = [u0, y0, s0], b = [u0, y1, s1], c = [u1, y1, s1], d = [u1, y0, s0];
+      quad(positions, a, b, c, d);
+      const m = slope(i), n0 = normal(smooth && i ? (slope(i - 1) + m) / 2 : m);
+      const n1 = normal(smooth && i + 2 < profile.length ? (m + slope(i + 1)) / 2 : m);
+      normals.push(...n0, ...n1, ...n1, ...n0, ...n1, ...n0);
+      quad(sides, [u0, base, s0], [u0, base, s1], b, a);
+      quad(sides, [u1, base, s1], [u1, base, s0], d, c);
+      // Inscribe every box below the drawn profile, with at most 6 cm of missing side height at an uphill edge.
+      const count = Math.max(1, Math.ceil(Math.abs(y1 - y0) / 0.06));
+      for (let j = 0; j < count; j++) {
+        const t0 = j / count, t1 = (j + 1) / count;
+        const top = Math.min(y0 + (y1 - y0) * t0, y0 + (y1 - y0) * t1);
+        if (top > base + 0.015) F.body(u0, u1, base, top, s0 + (s1 - s0) * t0 - 1e-6, s0 + (s1 - s0) * t1 + 1e-6);
+      }
+    }
+    for (const [index, reverse] of [[0, false], [profile.length - 1, true]]) {
+      const [s, y] = profile[index];
+      const a = [u0, base, s], b = [u0, y, s], c = [u1, y, s], d = [u1, base, s];
+      if (reverse) quad(sides, d, c, b, a); else quad(sides, a, b, c, d);
+    }
+    const top = new THREE.BufferGeometry();
+    top.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    top.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    F.ground(GR, top, 0, 0, 0, 0, 10, 'pavement');
+    const walls = new THREE.BufferGeometry();
+    walls.setAttribute('position', new THREE.Float32BufferAttribute(sides, 3));
+    walls.computeVertexNormals();
+    F.geo(PA, walls, 0, 0, 0, 0, 5);
+    top.dispose(); walls.dispose();
+  };
+  // The original landward riding line, retained within the larger park. Its north portion stays clear of the
+  // existing highway sweep; the connected extension runs seaward through three more bays.
+  const pier62Section = (F, a, b, lw) => {
+    const y = DY + 0.36, entry = 4, s0 = -19, s1 = 5;
+    for (const [lo, hi] of [[-lw - 0.3, -entry], [entry, lw + 0.3]]) F.top(GR, a - 0.3, b + 0.3, DY, DY + 0.32, lo, hi, 0);
+    F.top(GR, a + 1.8, b - 1.8, DY, DY + 0.32, -entry, entry, 0);
+    for (const [lo, hi] of [[-lw, s0], [s1, lw]]) F.top(GR, a, b, DY, y, lo, hi, 4);
+    for (const [u0, u1, lo, hi] of [[a, b, s0, -entry], [a + 1.8, b, -entry, entry], [a, b, entry, s1]]) {
+      F.top(GR, u0, u1, DY, y, lo, hi, 9);
+    }
+    // Gentle landward access; the extension supplies the new seaward entrance and the continuous joining floor.
+    const across = F.sub(0, 0, Math.PI / 2);
+    skateProfile(across, -entry, entry, [[a - 1.4, DY], [a + 1.8, y]], DY);
+    // Broad banked tabletop, open flat run, and a low quarter-pipe; a separate ledge leaves the main line clear.
+    skateProfile(F, a + 7.0, b - 1.5, [[-15.5, y], [-13, y + 0.55], [-11, y + 0.55], [-8.5, y]], y);
+    const curve = [], radius = 2.4, start = 0.3;
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16 * Math.PI / 3;
+      curve.push([start + radius * Math.sin(t), y + radius * (1 - Math.cos(t))]);
+    }
+    const lip = curve[curve.length - 1];
+    skateProfile(F, a + 7.0, b - 4.1, curve, y, true);
+    F.top(GR, a + 7.0, b - 4.1, y, lip[1], lip[0], 3.6, 10);
+    F.body(a + 7.0, b - 4.1, y, lip[1], lip[0], 3.6);
+    // Flush dark coping on the deck: a projecting, shadow-casting thin bar produced teeth on the curved face.
+    F.top(GR, a + 7.0, b - 4.1, lip[1] - 0.02, lip[1] + 0.005, lip[0] + 0.02, lip[0] + 0.10, 8);
+    F.solid(PA, a + 1.2, a + 3.1, y, y + 0.32, -8.5, -4.5, 5);
+    F.top(GR, a + 1.2, a + 3.1, y + 0.30, y + 0.32, -8.5, -4.5, 10);
+    for (const u of [a + 1.2, a + 3.1]) F.solid(PA, u - 0.025, u + 0.025, y + 0.295, y + 0.335, -8.5, -4.5, 9);
+  };
+  const pier62Extension = (F, start, end) => {
+    const y = DY + 0.36, entry = 4, s0 = -21, s1 = 13;
+    // One connected court over the intervening cross-aisles, with a clear spine and a flush seaward path entrance.
+    for (const [lo, hi] of [[s0, -entry], [entry, s1]]) F.top(GR, start, end, DY, y, lo, hi, 9);
+    F.top(GR, start, end - 1.8, DY, y, -entry, entry, 9);
+    const across = F.sub(0, 0, Math.PI / 2);
+    skateProfile(across, -entry, entry, [[end - 1.8, y], [end + 1.4, DY]], DY);
+    // Two smooth rollers form a long low line; the centre of the court remains flat for bypass and turning.
+    for (const [u, height] of [[start + 9, 0.45], [start + 22, 0.65]]) {
+      const profile = [];
+      for (let i = 0; i <= 16; i++) profile.push([u + i / 16 * 8, y + height * (1 - Math.cos(i / 16 * Math.PI * 2)) / 2]);
+      skateProfile(across, 10, 18, profile, y, true);
+    }
+    // A second, taller bank line and a broad return quarter give the far court a distinct purpose and a run-up.
+    skateProfile(F, end - 16, end - 5, [[-19, y], [-16, y + 0.75], [-13, y + 0.75], [-10, y]], y);
+    const curve = [], radius = 3, from = 6.6;
+    for (let i = 0; i <= 20; i++) {
+      const angle = i / 20 * Math.PI / 3;
+      curve.push([from + radius * Math.sin(angle), y + radius * (1 - Math.cos(angle))]);
+    }
+    const lip = curve.at(-1), u0 = end - 24, u1 = end - 5;
+    skateProfile(F, u0, u1, curve, y, true);
+    F.top(GR, u0, u1, y, lip[1], lip[0], 12, 10);
+    F.body(u0, u1, y, lip[1], lip[0], 12);
+    F.top(GR, u0, u1, lip[1] - 0.02, lip[1] + 0.005, lip[0] + 0.02, lip[0] + 0.10, 8);
+    // Low manual pad, longer hop-up ledge and short flat rail alongside the open central spine.
+    for (const [a, b, height] of [[start + 9, start + 16, 0.20], [start + 23, start + 31, 0.40]]) {
+      F.solid(PA, a, b, y, y + height, 4.4, 7, 5);
+      F.top(GR, a, b, y + height - 0.02, y + height, 4.4, 7, 10);
+    }
+    const rail0 = start + 35, rail1 = start + 40, sy = 5.7;
+    F.strut(PA, [rail0, y + 0.48, sy], [rail1, y + 0.48, sy], 0.10, 9, 0.12, 'pavement', true);
+    for (const u of [rail0 + 0.3, rail1 - 0.3]) F.solid(PA, u - 0.05, u + 0.05, y, y + 0.48, sy - 0.05, sy + 0.05, 9);
+  };
   kinds.park = (F, p) => {
     const { L, hw } = F;
     deck(F, F.u0, L, -hw, hw, { lamps: 18, surface: 7 });
@@ -992,12 +1129,19 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
     const seg = (L - 22) / n;
     for (let i = 0; i < n; i++) {
       const a = 7 + i * seg + 1.2, b = 7 + (i + 1) * seg - 1.2;
-      F.top(GR, a - 0.3, b + 0.3, DY, DY + 0.32, -lw - 0.3, lw + 0.3, 0);
-      F.top(GR, a, b, DY, DY + 0.36, -lw, lw, 4);
+      if (p.skateSection && i === 1) pier62Section(F, a, b, lw);
+      else if (p.skateSection && i >= 2 && i <= 4) {
+        for (const [lo, hi] of [[-lw - 0.3, -21.3], [13.3, lw + 0.3]]) F.top(GR, a - 0.3, b + 0.3, DY, DY + 0.32, lo, hi, 0);
+        for (const [lo, hi] of [[-lw, -21.3], [13.3, lw]]) F.top(GR, a, b, DY, DY + 0.36, lo, hi, 4);
+      } else {
+        F.top(GR, a - 0.3, b + 0.3, DY, DY + 0.32, -lw - 0.3, lw + 0.3, 0);
+        F.top(GR, a, b, DY, DY + 0.36, -lw, lw, 4);
+      }
       for (let u = a + 3; u < b - 2; u += 6.5 + rnd() * 3) {
         for (const s of [-lw + 1.7, lw - 1.7]) if (rnd() < 0.8) F.tree(u, s + (rnd() - 0.5), DY + 0.36, 2.0 + rnd() * 1.4);
       }
     }
+    if (p.skateSection) pier62Extension(F, 7 + 2 * seg - 1.2, 7 + 5 * seg - 1.2);
     for (let u = 10; u < L - 16; u += 9) for (const s of [-hw + 2.1, hw - 2.1]) F.solid(PA, u - 0.9, u + 0.9, DY, DY + 0.45, s - 0.3, s + 0.3, 7);
     const su = L - 9, sw = Math.min(7, hw - 2.2);
     for (const du of [-4, 4]) for (const s of [-sw, sw]) F.solid(PA, su + du - 0.12, su + du + 0.12, DY, DY + 4.6, s - 0.12, s + 0.12, 9);
@@ -1637,10 +1781,12 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
     crownGeo.computeVertexNormals();
     for (const [x, y, z, r, ride] of trees) {
       const th = r * (0.85 + rnd() * 0.35);
+      const stretch = 0.8 + rnd() * 0.3, yaw = rnd() * 6.28, variant = 14 + Math.floor(rnd() * 3);
+      if (inPier62Road(x, z, 0.5)) continue; // retain every seeded draw, remove only trees occupying the road
       B.box(PA, x, y + th * 0.5, z, 0.3, th, 0.3, 0, 8, true);
       if (ride) addRideSolid(x, z, 0.3, 0.3, y, y + th).layered = true;
-      const g = crownGeo.clone().scale(r, r * (0.8 + rnd() * 0.3), r);
-      B.geo(PA, g, x, y + th + r * 0.6, z, rnd() * 6.28, 14 + Math.floor(rnd() * 3));
+      const g = crownGeo.clone().scale(r, r * stretch, r);
+      B.geo(PA, g, x, y + th + r * 0.6, z, yaw, variant);
     }
   }
   B.build(group, new Set([BL, PA]));
@@ -1900,6 +2046,7 @@ function buildCityGrid(scene) {
     }
   };
 
+  // Navigation keeps every original slab; local road cuts are applied to their drawing below.
   const rectSlabs = blockSidewalks.filter((s) => !s.cover);
   const swInstanced = new THREE.InstancedMesh(unitBox, sidewalkMat, rectSlabs.length);
   const curbInstanced = new THREE.InstancedMesh(unitBox, curbMat, rectSlabs.length);
@@ -1962,10 +2109,55 @@ function buildCityGrid(scene) {
     });
     return pieces;
   }
+  // Pier 62's legacy highway follows a shoreline-branch jog, across the pier and an inlet. Preserve every traffic
+  // point/speed and build the missing road around it. Square-padded hulls include car corners during the abrupt turn;
+  // this is a corridor through the whole existing landscape, not just clearance around the new skate obstacles.
+  const pier62Rows = westRows.filter(r => r.z >= PIER62_ROAD.z0 && r.z <= PIER62_ROAD.z1);
+  const pier62RoadCuts = [];
+  let roadRun = [];
+  const finishRoadRun = () => {
+    if (roadRun.length < 2) return;
+    const corners = roadRun.flatMap(r => [0, 15.2].map(o => ({ x: r.s + r.d0 + o * r.k, z: r.z })));
+    const pad = PIER62_ROAD.clearance;
+    const poly = convexHullXZ(corners.flatMap(p => [-pad, pad].flatMap(dx => [-pad, pad].map(dz => ({ x: p.x + dx, z: p.z + dz })))));
+    pier62RoadCuts.push({ poly, minX: Math.min(...poly.map(p => p.x)), maxX: Math.max(...poly.map(p => p.x)),
+      minZ: Math.min(...poly.map(p => p.z)), maxZ: Math.max(...poly.map(p => p.z)) });
+  };
+  for (const r of pier62Rows) {
+    // Merge only genuinely straight drawing rows. A convex hull around the whole inlet would pave the park interior.
+    const a = roadRun[0], b = roadRun.at(-1);
+    if (roadRun.length > 1 && [0, 15.2].some(o => {
+      const ax = a.s + a.d0 + o * a.k, bx = b.s + b.d0 + o * b.k, rx = r.s + r.d0 + o * r.k;
+      return Math.abs((rx - ax) * (b.z - a.z) - (r.z - a.z) * (bx - ax)) / Math.hypot(bx - ax, b.z - a.z) > 0.002;
+    })) { finishRoadRun(); roadRun = [b]; }
+    roadRun.push(r);
+  }
+  finishRoadRun();
+  // The nearby street-network avenue also crosses a coarse synthetic curb island. Clear its actual roadway,
+  // using the configured avenue centre/width, while retaining the original navigation covers and block identities.
+  const avenue11 = ALL_AVENUES.find(a => a.id === '11');
+  const streetCut = rectPolygon(avenue11.x - avenue11.width / 2 - 0.8, avenue11.x + avenue11.width / 2 + 0.8, 1509, 1609);
+  const streetRoadCut = { poly: streetCut, minX: streetCut[0].x, maxX: streetCut[1].x, minZ: 1509, maxZ: 1609 };
+  const localRoadCuts = [...pier62RoadCuts, streetRoadCut];
+  const inPier62Road = (x, z, margin = 0) => pier62RoadCuts.some(c => x >= c.minX - margin && x <= c.maxX + margin
+    && z >= c.minZ - margin && z <= c.maxZ + margin
+    && pointInPolygonXZ(margin ? offsetConvexPolygon(c.poly, margin) : c.poly, x, z));
+  const inWaterfrontRoad = (x, z) => inPier57Road(x, z) || inPier62Road(x, z, 0.4);
+  function clearWaterfrontRoad(poly, lawn = false) {
+    let pieces = clearPier57Road(poly, lawn);
+    for (const c of localRoadCuts) pieces = pieces.flatMap(p => {
+      if (p.every(v => v.x < c.minX) || p.every(v => v.x > c.maxX)
+        || p.every(v => v.z < c.minZ) || p.every(v => v.z > c.maxZ)) return [p];
+      return subtractConvex(p, lawn ? offsetConvexPolygon(c.poly, 0.3) : c.poly).filter(part => Math.abs(part.reduce((s, a, i) => {
+        const b = part[(i + 1) % part.length]; return s + a.x * b.z - a.z * b.x;
+      }, 0)) > 1e-5);
+    });
+    return pieces;
+  }
   // Give the river / block-side belts the same road edge. Do not alter W, d0 or k: those define the traffic paths.
-  for (const r of pier57Rows) {
+  for (const r of [...pier57Rows, ...pier62Rows]) {
     const xs = [];
-    for (const c of pier57RoadCuts) {
+    for (const c of [...pier57RoadCuts, ...pier62RoadCuts]) {
       if (r.z < c.minZ || r.z > c.maxZ) continue;
       for (let i = 0; i < c.poly.length; i++) {
         const a = c.poly[i], b = c.poly[(i + 1) % c.poly.length];
@@ -1978,12 +2170,59 @@ function buildCityGrid(scene) {
   }
 
   for (const c of pier57RoadCuts) addRideTop(c.poly, 0, 'pavement').replacesBlock = true;
+  // A real slab also spans the inlet under the retained route. Register it as shore support so crossing/get-up
+  // follows the drawn road; synthetic block ground is replaced, but higher real supports and bodies still win.
+  const pier62RoadGeos = [];
+  const drawnRoadCuts = [];
+  for (const c of localRoadCuts) {
+    let pieces = [c.poly];
+    for (const earlier of drawnRoadCuts) pieces = pieces.flatMap(p => p.every(v => v.x < earlier.minX) || p.every(v => v.x > earlier.maxX)
+      || p.every(v => v.z < earlier.minZ) || p.every(v => v.z > earlier.maxZ) ? [p] : subtractConvex(p, earlier.poly))
+      .filter(part => Math.abs(polygonCentroidArea(part)) > 1e-5);
+    for (const part of pieces) if (Math.abs(polygonCentroidArea(part)) > 1e-5) {
+      pier62RoadGeos.push(createExtrudedPolygonMesh(part, -0.8, 0.8, roadMat).geometry);
+    }
+    drawnRoadCuts.push(c);
+    const top = addRideTop(c.poly, 0, 'pavement'); top.shore = true; top.replacesBlock = true;
+  }
+  // Do not stack the new asphalt coplanar with the island's existing asphalt: tiny floating-point depth differences
+  // can produce light/dark triangle patches. Replace the footprint in that mesh too.
+  const baseRoadPositions = [], basePos = roadMesh.geometry.attributes.position, baseIndex = roadMesh.geometry.index;
+  for (let i = 0; i < (baseIndex ? baseIndex.count : basePos.count); i += 3) {
+    let pieces = [Array.from({ length: 3 }, (_, j) => {
+      const k = baseIndex ? baseIndex.getX(i + j) : i + j; return { x: basePos.getX(k), z: basePos.getZ(k) };
+    })];
+    for (const c of localRoadCuts) pieces = pieces.flatMap(p => p.every(v => v.x < c.minX) || p.every(v => v.x > c.maxX)
+      || p.every(v => v.z < c.minZ) || p.every(v => v.z > c.maxZ) ? [p] : subtractConvex(p, c.poly))
+      .filter(part => Math.abs(polygonCentroidArea(part)) > 1e-5);
+    for (const p of pieces) if (Math.abs(polygonCentroidArea(p)) > 1e-5) {
+      if (polygonCentroidArea(p) > 0) p.reverse();
+      for (let j = 1; j + 1 < p.length; j++) for (const v of [p[0], p[j], p[j + 1]]) baseRoadPositions.push(v.x, 0, v.z);
+    }
+  }
+  roadMesh.geometry.dispose();
+  roadMesh.geometry = new THREE.BufferGeometry();
+  roadMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(baseRoadPositions, 3));
+  roadMesh.geometry.computeVertexNormals();
+  mergeInto(pier62RoadGeos, roadMat);
+  // Rectangular instances need the same cut as irregular sidewalks; their original full-sized tops otherwise
+  // remain visible across a road even when the sampler has correctly replaced synthetic block ground.
+  const zeroSlab = new THREE.Matrix4().makeScale(0, 0, 0);
+  rectSlabs.forEach((blk, i) => {
+    const poly = rectPolygon(blk.cx - blk.w / 2, blk.cx + blk.w / 2, blk.cz - blk.d / 2, blk.cz + blk.d / 2);
+    if (!localRoadCuts.some(c => c.minX < blk.cx + blk.w / 2 && c.maxX > blk.cx - blk.w / 2
+      && c.minZ < blk.cz + blk.d / 2 && c.maxZ > blk.cz - blk.d / 2)) return;
+    swInstanced.setMatrixAt(i, zeroSlab); curbInstanced.setMatrixAt(i, zeroSlab);
+    for (const p of clearWaterfrontRoad(poly)) curbGeos.push(createExtrudedPolygonMesh(p, 0.01, 0.17, curbMat).geometry);
+    const inner = offsetPolygonInward(poly, 0.25);
+    if (inner) for (const p of clearWaterfrontRoad(inner)) slabGeos.push(createExtrudedPolygonMesh(p, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
+  });
   // Also notch the narrow ordinary curb island at the north entry. Only its drawing / rider floor changes;
   // roadSidewalks and blockSidewalks retain the exact original bounds for the street traffic network.
   for (const b of irregularSidewalks) {
-    for (const piece of clearPier57Road(b.poly)) curbGeos.push(createExtrudedPolygonMesh(piece, 0.0, 0.18, curbMat).geometry);
+    for (const piece of clearWaterfrontRoad(b.poly)) curbGeos.push(createExtrudedPolygonMesh(piece, 0.0, 0.18, curbMat).geometry);
     const inner = offsetPolygonInward(b.poly, 0.25);
-    if (inner) for (const piece of clearPier57Road(inner)) slabGeos.push(createExtrudedPolygonMesh(piece, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
+    if (inner) for (const piece of clearWaterfrontRoad(inner)) slabGeos.push(createExtrudedPolygonMesh(piece, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
   }
   mergeInto(curbGeos, curbMat, true);
   mergeInto(slabGeos, sidewalkMat);
@@ -2762,11 +3001,11 @@ function buildCityGrid(scene) {
   const genericParks = BLOCKS.filter((b) => b.park > 0.6 && !b.median && !SPECIAL_PARKS.has(b.parkName) && b.area > 250);
   for (const b of genericParks) {
     const slab = offsetPolygonInward(b.poly, 0.1) || b.poly;
-    for (const piece of clearPier57Road(b.poly)) {
+    for (const piece of clearWaterfrontRoad(b.poly)) {
       addRideTop(piece, PARK_Y, 'brick');
       group.add(createExtrudedPolygonMesh(piece, 0.0, PARK_Y - 0.04, curbMat, true, false));
     }
-    for (const piece of clearPier57Road(slab)) {
+    for (const piece of clearWaterfrontRoad(slab)) {
       const top = createExtrudedPolygonMesh(piece, 0.0, PARK_Y, pavingMat, true, false);
       setPavingStyle(top.geometry, 0);
       group.add(top);
@@ -2781,13 +3020,13 @@ function buildCityGrid(scene) {
       beds = beds.flatMap(bed => subtractConvex(bed, a.poly));
     }
     for (const bed of beds) {
-      for (const piece of clearPier57Road(bed)) {
+      for (const piece of clearWaterfrontRoad(bed)) {
         addRideTop(piece, BED_Y, 'grass');
         group.add(createExtrudedPolygonMesh(piece, 0.2, BED_Y - 0.21, graniteMat, true, false));
       }
       const lawnTop = offsetPolygonInward(bed, 0.3);
       // Inset before cutting: insetting every subtraction fragment leaves false granite stripes across one lawn.
-      if (lawnTop) for (const piece of clearPier57Road(lawnTop, true)) parkLawnGeos.push(createExtrudedPolygonMesh(piece, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
+      if (lawnTop) for (const piece of clearWaterfrontRoad(lawnTop, true)) parkLawnGeos.push(createExtrudedPolygonMesh(piece, 0.3, BED_Y - 0.3, cpLawnMat).geometry);
       // trees on a jittered grid inside the bed
       const SP = 11;
       for (let gx = b.minX + SP * 0.5; gx < b.maxX; gx += SP) {
@@ -2796,7 +3035,7 @@ function buildCityGrid(scene) {
           const tz = gz + (prand(gz, gx, 1) - 0.5) * SP * 0.7;
           if (prand(tx, tz, 9) < 0.3) continue; // glades
           const inner = lawnTop || bed;
-          if (!inPolygon(tx, tz, inner) || inBridgeApproach(tx, tz, 1.5) || inPier57Road(tx, tz)) continue;
+          if (!inPolygon(tx, tz, inner) || inBridgeApproach(tx, tz, 1.5) || inWaterfrontRoad(tx, tz)) continue;
           const r = prand(tx, tz, 2);
           treeSites.push({ x: tx, y: BED_Y, z: tz, scale: 0.9 + prand(tx, tz, 3) * 0.4, species: r < 0.55 ? 0 : (r < 0.75 ? 1 : 2) });
         }
@@ -2810,7 +3049,7 @@ function buildCityGrid(scene) {
       for (let t = 17; t < len - 8; t += 34) {
         const px = a.x + ((c.x - a.x) * t) / len;
         const pz = a.z + ((c.z - a.z) * t) / len;
-        if (!inBridgeApproach(px, pz, 1) && !inPier57Road(px, pz)) addLamp(px, PARK_Y, pz);
+        if (!inBridgeApproach(px, pz, 1) && !inWaterfrontRoad(px, pz)) addLamp(px, PARK_Y, pz);
       }
     }
   }
@@ -3023,12 +3262,12 @@ function buildCityGrid(scene) {
   // Concrete decks on timber piles with fenders, railings & lanterns, plus each pier's real structures:
   // cruise terminals, the Chelsea sports piers, Pier 57, Little Island, Pier 40, the Intrepid, the 79th St Boat Basin,
   // Pier 17, the Wavertree, Pier 15, Pier 11 and the Staten Island Ferry Whitehall Terminal (see buildWaterfrontPiers)
-  buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, inPier57Road });
+  buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, inPier57Road, pier62RoadCuts, inPier62Road });
 
   // 9 & 10. The East River bridges, harbor islands and the surrounding boroughs are built by boroughs.js
 
   // 11. Manhattan's waterfront edge: esplanades, shore highways & riverside park belts (see buildManhattanWaterfrontEdge)
-  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops });
+  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road: inWaterfrontRoad, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops });
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
   batchStaticGroupMeshes(group, new Set([waterMat, roadMat, cpLawnMat, cpMeadowMat]));
@@ -3326,7 +3565,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier5
     for (let zt = z0 + offset; zt <= rows[rows.length - 1].z; zt += 39) {
       const i = Math.round((zt - z0) / STEP);
       const r = rows[i];
-      if (!r || !rows[i - 1] || !rows[i + 1] || r.via || pier57Bend(r)) continue;
+      if (!r || !rows[i - 1] || !rows[i + 1] || r.via || roadBend(r) || pier62Clearance(r)) continue;
       const d = H(r, 7.6);
       if (d > r.W - 0.5 || blocked(r, d)) continue;
       const a = P(rows[i - 1], H(rows[i - 1], 7.6));
@@ -3362,7 +3601,10 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier5
   }
   const hwy = (r, o) => (r.via ? null : H(r, o));
   const pier57Bend = r => r.west && r.z >= 2247 && r.z <= 2286;
-  const divided = (r, o) => pier57Bend(r) ? null : hwy(r, o);
+  const pier62Bend = r => r.west && r.z >= PIER62_ROAD.bend0 && r.z <= PIER62_ROAD.bend1;
+  const pier62Clearance = r => r.west && r.z >= PIER62_ROAD.z0 && r.z <= PIER62_ROAD.z1;
+  const roadBend = r => pier57Bend(r) || pier62Bend(r);
+  const divided = (r, o) => roadBend(r) ? null : hwy(r, o);
   for (const rows of [westRows, eastRows]) {
     const isWest = rows[0].west;
     railing(rows, ESPLANADE_RAIL.d); // the rider's shore wall stands just inside it (euc-terrain.js)
@@ -3370,14 +3612,15 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier5
     paintLine(rows, () => -3.2, 0.1, WHITE);
     paintLine(rows, () => -1.82, 0.1, YELLOW, 6, 0.5);
     esplanade(rows);
-    paintLine(rows, (r) => hwy(r, 0.3), 0.15, WHITE);
+    paintLine(rows, (r) => pier62Bend(r) ? null : hwy(r, 0.3), 0.15, WHITE);
     paintLine(rows, (r) => divided(r, 3.7), 0.13, WHITE, 12, 0.25);
     paintLine(rows, (r) => divided(r, 7.05), 0.12, YELLOW);
     paintLine(rows, (r) => divided(r, 8.15), 0.12, YELLOW);
     paintLine(rows, (r) => divided(r, 11.5), 0.13, WHITE, 12, 0.25);
-    paintLine(rows, (r) => hwy(r, HWY_W - 0.3), 0.15, WHITE);
-    barrier(rows, (r) => divided(r, 7.6));
-    barrier(rows, (r) => (r.river || r.via || pier57Bend(r) ? null : r.d0 - 0.3));
+    paintLine(rows, (r) => pier62Bend(r) ? null : hwy(r, HWY_W - 0.3), 0.15, WHITE);
+    paintLine(rows, (r) => pier62Bend(r) ? hwy(r, 7.6) : null, 0.15, YELLOW, 6, 0.5);
+    barrier(rows, (r) => pier62Clearance(r) ? null : divided(r, 7.6));
+    barrier(rows, (r) => (r.river || r.via || roadBend(r) || pier62Clearance(r) ? null : r.d0 - 0.3));
     highwayLights(rows, isWest ? 10 : 25);
     belt(rows, 'river', false);
     belt(rows, 'land', isWest);

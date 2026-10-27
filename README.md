@@ -66,6 +66,11 @@ The Teleport menu has seventeen stops, including the four East River bridge appr
 Little Island, the Hudson River Greenway and **Civic Detention Jail** on White Street. The jail is an original fictional
 exterior on the historic Tombs site. Your camera and time-of-day choices are remembered between visits.
 
+Search **Pier 62** on the map and click its **skateboard icon** to try the larger waterfront skatepark: banks, two
+quarter-pipes, rollers, a manual pad, ledges and a low rail, joined by a clear flat riding line and gentle path entrances.
+It is the first authored skate location; the other researched skatepark pins identify places within the existing city
+scenery. The slate-blue court sits beside an active asphalt traffic crossing.
+
 Officer Dorkins ambushes you on a police hover-wheel. Paddle knockdowns add warning strikes and fill a small heat
 indicator; getting up keeps the chase going. Escape takes sustained distance **and** time out of sight, while he
 searches your last known position. The first three knockdowns are warnings; the fourth earns a short comedic booking
