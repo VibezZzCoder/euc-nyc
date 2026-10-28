@@ -3,20 +3,31 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { BODY_SPECS, carCrashProfile, carDimensions } = require('./car-profile-fixture.cjs');
+const CAR_KINDS = Object.fromEntries(Object.entries(BODY_SPECS).map(([kind, spec]) => [kind, carDimensions(spec)]));
 
 const source = readFileSync(join(__dirname, '../js/traffic.js'), 'utf8');
 // Exercise the production lane query and player snapshot without creating the WebGPU scene.
 const laneQuery = source.match(/  function playerInLane\(lane, pl\) \{[\s\S]*?\n  \}/)?.[0];
+const boxRun = source.match(/const HWY_BOX_RUN = \d+;/)?.[0];
+const laneBounds = source.match(/    lane.box = \[Infinity[^]*?(?=    lane.cars = \[\];)/)?.[0];
 const playerSnapshot = source.match(/    const pl = entity[\s\S]*?\n    \} : null;/)?.[0];
 assert.ok(laneQuery, 'traffic lane query is present');
+assert.ok(boxRun && laneBounds, 'production highway bounds construction is present');
 assert.ok(playerSnapshot, 'traffic player snapshot is present');
-const { playerInLane, snapshot } = vm.runInNewContext(`
+const { playerInLane, snapshot, prepareBounds } = vm.runInNewContext(`
+  ${boxRun}
   ${laneQuery}
+  function prepareBounds(lane) {
+    const P = lane.pts;
+    ${laneBounds}
+    return lane;
+  }
   function snapshot(entity, mode) {
     ${playerSnapshot}
     return pl;
   }
-  ({ playerInLane, snapshot });
+  ({ playerInLane, snapshot, prepareBounds });
 `);
 
 function lane(points) {
@@ -25,13 +36,101 @@ function lane(points) {
     const a = points[i - 1], b = points[i];
     cum.push(cum[i - 1] + Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z));
   }
-  return {
+  return prepareBounds({
     pts: points,
     cum,
-    box: [Math.min(...points.map((p) => p.x)), Math.max(...points.map((p) => p.x)),
-      Math.min(...points.map((p) => p.z)), Math.max(...points.map((p) => p.z))]
-  };
+  });
 }
+
+// Frozen unbounded query from accepted 618ec40, independent of the new broad phase.
+function originalPlayerInLane(lane, pl) {
+  const P = lane.pts;
+  for (let i = 0; i + 1 < P.length; i++) {
+    if (P[i].y < -1 && P[i + 1].y < -1) continue;
+    const ax = P[i].x, az = P[i].z;
+    const sx = P[i + 1].x - ax, sz = P[i + 1].z - az;
+    const horizontalLengthSq = sx * sx + sz * sz;
+    if (horizontalLengthSq === 0) continue;
+    const L = lane.cum[i + 1] - lane.cum[i];
+    const t = ((pl.x - ax) * sx + (pl.z - az) * sz) / horizontalLengthSq;
+    if (t < 0 || t > 1) continue;
+    const y = P[i].y + (P[i + 1].y - P[i].y) * t;
+    if (Math.abs(pl.y - y) >= 2.6) continue;
+    if (Math.abs((pl.z - az) * sx - (pl.x - ax) * sz) / Math.sqrt(horizontalLengthSq) < 2.0) {
+      return { u: lane.cum[i] + t * L, v: Math.max(0, ((pl.vx * sx + pl.vz * sz) / horizontalLengthSq) * L) };
+    }
+  }
+  return null;
+}
+
+test('highway run bounds preserve exact query results at seams, turns, overlaps and layered roads', () => {
+  const points = [];
+  for (let i = 0; i <= 40; i++) points.push({ x: 0, y: 0, z: i * 10 });
+  for (let i = 0; i <= 40; i++) points.push({ x: 200, y: 7.6, z: 400 - i * 10 });
+  // Repeated vertices, a vertical segment, the same XZ at another height, and an underground return.
+  points.push({ x: 200, y: 7.6, z: 0 }, { x: 200, y: 0, z: 0 });
+  for (let i = 1; i <= 40; i++) points.push({ x: 200, y: 0, z: i * 10 });
+  points.push({ x: 100, y: -4, z: 400 }, { x: 100, y: -4, z: 0 });
+  const road = lane(points);
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i], b = points[i + 1], len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    for (const t of [0, 0.5, 1]) for (const lateral of [-3.001, -2, -1.999, 0, 1.999, 2, 3.001]) {
+      for (const dy of [-2.6, 0, 2.599, 2.6]) {
+        const pl = { x: a.x + (b.x - a.x) * t + (b.z - a.z) / len * lateral,
+          z: a.z + (b.z - a.z) * t - (b.x - a.x) / len * lateral,
+          y: a.y + (b.y - a.y) * t + dy, vx: -7, vz: 11 };
+        const actual = playerInLane(road, pl), expected = originalPlayerInLane(road, pl);
+        assert.deepEqual(actual && { ...actual }, expected, `segment ${i}, t ${t}, lateral ${lateral}, dy ${dy}`);
+      }
+    }
+  }
+});
+
+test('highway query skips distant segment reads inside the whole-lane bounds', () => {
+  const points = [];
+  for (let i = 0; i <= 400; i++) points.push({ x: 0, y: 0, z: i * 10 });
+  for (let i = 0; i <= 400; i++) points.push({ x: 200, y: 0, z: 4000 - i * 10 });
+  const road = lane(points);
+  let reads = 0;
+  road.pts = new Proxy(points, { get(target, key) { if (/^\d+$/.test(String(key))) reads++; return target[key]; } });
+  assert.equal(playerInLane(road, player(100, 0, 2000)), null);
+  assert.equal(reads, 0, 'off-road rider requires no detailed segment tests');
+  const actual = playerInLane(road, player(200, 0, 55));
+  const boundedReads = reads;
+  reads = 0;
+  const expected = originalPlayerInLane(road, player(200, 0, 55));
+  assert.deepEqual({ ...actual }, expected);
+  assert.ok(boundedReads < reads / 10, `${boundedReads} vs ${reads} point reads`);
+});
+
+test('whole-lane bounds retain distant-run cars for EUC contact, ragdolls and recovery', async () => {
+  const points = Array.from({ length: 70 }, (_, i) => ({ x: 0, y: 0, z: i * 10 }));
+  const road = lane(points);
+  assert.deepEqual([...road.box], [0, 0, 0, 690]);
+  assert.ok(road.playerBoxes.length > 4);
+  const makeCar = (z, y = 0) => ({ kind: 'sedan', x: 0, z, y, yaw: 0, v: 8, placed: true, hitTimer: 0 });
+  const near = makeCar(10), far = makeCar(650), underground = makeCar(650, -2), elevated = makeCar(650, 7.6);
+  road.cars = [near, far, underground, elevated];
+  const highway = source.slice(source.indexOf('function createHighwayTraffic('));
+  const dynamicQuery = highway.match(/  function dynamicBodiesNear\([^]*?\n  \}/)?.[0];
+  assert.ok(dynamicQuery);
+  const constants = [...highway.matchAll(/  const HWY_(?:HALF_W|HEIGHT|MAX_HALF) = [^;]+;/g)].map(m => m[0]).join('\n');
+  const carLength = source.match(/const HWY_CAR_LEN = [^;]+;/)[0];
+  const bodiesNear = vm.runInNewContext(`${carLength}\n${constants}\n(${dynamicQuery.trim()})`, { lanes: [road], BODY_SPECS, carCrashProfile, CAR_KINDS });
+  const out = [];
+  bodiesNear(0, 645, 6, out);
+  assert.deepEqual(out.map(b => b.source), [far, elevated], 'late run retained; distant and underground cars omitted');
+  assert.equal(out[0].velocityZ, 8);
+  assert.equal(out[1].minY, 7.6, 'vertical separation is forwarded to the controller');
+  const { createEucDynamicWorld } = await import('../js/euc-dynamic.js');
+  const world = createEucDynamicWorld({ bodiesNear });
+  const body = { x: 0, z: 645, headingY: 0, minY: 0, maxY: 1.9,
+    halfWidthMetres: 0.35, halfLengthMetres: 0.5, velocityX: 0, velocityZ: 12 };
+  const hit = world.resolveMotion({ previous: body, proposed: { ...body, z: 649 } });
+  assert.ok(hit && hit.allowedMoveFraction < 1 && hit.closingSpeedMetresPerSecond === 4);
+  assert.equal(world.ragObstacleBodies()[0].source, far);
+  assert.equal(world.canPlace({ reason: 'recover', body: { ...body, z: 650 } }), false);
+});
 
 function player(x, y, z, mode = 'car') {
   return snapshot({ position: { x, y, z }, heading: Math.PI / 2, speed: 10 }, mode);
@@ -40,6 +139,25 @@ function player(x, y, z, mode = 'car') {
 function close(actual, expected) {
   assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} should equal ${expected}`);
 }
+
+test('highway following accounts for both vehicle lengths and stops a van at its own nose', () => {
+  const highway = source.slice(source.indexOf('function createHighwayTraffic('));
+  const motion = highway.slice(highway.indexOf('    // 1. Car following'), highway.indexOf('    // 2. Instances:'));
+  const D = { a: 1.6, b: 3, T: 1.4, s0: 2 };
+  const make = len => ({ len, u: 100, v: 8, acc: 0, seg: 0, hitTimer: 0 });
+  const step = (cars, rider = null, dt = 1/60) => vm.runInNewContext(`(function(dt,entity){${motion}})`, {
+    lanes: [{ cars, len: 1000, speed: 20 }], playerInLane: () => rider,
+    D, brakeTerm: 2*Math.sqrt(D.a*D.b), HWY_CAR_LEN: 4.6, HWY_RIDER_HALF_LEN: .5,
+    HWY_CONTACT: .4, HWY_HIT_MEMORY: .25,
+  })(dt, rider ? { position: {x:0,y:0,z:rider.u}, speed:rider.v, heading:0 } : null);
+  const short = make(4.6), long = make(CAR_KINDS.van.halfLength*2);
+  step([short,{...make(4.6),u:120}]);step([long,{...make(CAR_KINDS.van.halfLength*2),u:120}]);
+  assert.ok(long.acc < short.acc, 'longer nose/tail gap causes stronger braking at equal centres');
+  const van = make(CAR_KINDS.van.halfLength*2);
+  step([van], {u:100+van.len/2+.5+.1,v:0});
+  assert.equal(van.touching,true);assert.equal(van.v,0);assert.equal(van.hitV,8);
+  assert.equal(van.u,100,'traffic holds itself rather than pushing the rider');
+});
 
 test('street traffic recognizes players on its own road, including sidewalk height', () => {
   const road = lane([{ x: 0, y: 0, z: 0 }, { x: 100, y: 0, z: 0 }]);
@@ -280,7 +398,12 @@ test('no traffic code writes the player entity\'s position, speed, velocity or m
 test('bus destination signs carry a generic route, not a real operator\'s', () => {
   const sign = source.match(/function createBusDestinationTexture\(\) \{[\s\S]*?\n\}/)[0];
   assert.doesNotMatch(sign, /#0058b8|'M1'|HARLEM|5 AV/i);
-  assert.match(sign, /'X1'/);
+  const labels = [];
+  const ctx = { fillRect() {}, fillText(text) { labels.push(text); } };
+  vm.runInNewContext(`(${sign})()`, { document: { createElement: () => ({ getContext: () => ctx }) },
+    THREE: { CanvasTexture: class {}, SRGBColorSpace: 'srgb' } });
+  for (let i = 1; i <= 8; i++) assert.ok(labels.includes(`X${i}`));
+  assert.ok(labels.includes('UPTOWN') && labels.includes('CITY LOOP'));
 });
 
 function riderHarness() {
@@ -380,8 +503,8 @@ test('drivers yield to a rider about to cross their lane, not to one riding away
 
 test('dynamicBodiesNear reports nearby vehicles and pedestrians as reusable upright prisms', () => {
   const vehicles = [
-    { edge: {}, x: 3, z: 0, yaw: 0, yawOffset: 0.1, tx: 0, tz: 1, speed: 5, vx: 0, vz: 0, bus: false, isSUV: true, hitTimer: 0 },
-    { edge: {}, x: 2, z: 4, yaw: 0, yawOffset: 0, tx: 0, tz: 1, speed: 0, vx: 0, vz: 0, bus: false, isSUV: false, hitTimer: 0.1, hitVX: 0, hitVZ: 7 },
+    { edge: {}, x: 3, z: 0, yaw: 0, yawOffset: 0.1, tx: 0, tz: 1, speed: 5, vx: 0, vz: 0, bus: false, bodyType: 'suv', hitTimer: 0 },
+    { edge: {}, x: 2, z: 4, yaw: 0, yawOffset: 0, tx: 0, tz: 1, speed: 0, vx: 0, vz: 0, bus: false, bodyType: 'sedan', hitTimer: 0.1, hitVX: 0, hitVZ: 7 },
     { edge: {}, x: 300, z: 0, yaw: 0, yawOffset: 0, tx: 0, tz: 1, speed: 5, vx: 0, vz: 0, bus: true, isSUV: false, hitTimer: 0 },
     { edge: null, x: 0, z: 0 }
   ];
@@ -391,11 +514,13 @@ test('dynamicBodiesNear reports nearby vehicles and pedestrians as reusable upri
     { placed: true, x: 0, z: 50, ux: 1, uz: 0, dir: 1, v: 1.4 }
   ];
   const context = {
-    Math, vehicles, peds, CAR_HEIGHT: 1.5, SUV_HEIGHT: 1.8, BUS_HEIGHT: 3.2, PED_HALF: 0.3, PED_HEIGHT: 1.8,
-    vehicleHalfW: (v) => (v.bus ? 1.30 : v.isSUV ? 0.92 : 0.86),
-    vehicleHalfL: (v) => (v.bus ? 5.72 : v.isSUV ? 2.22 : 2.18),
+    Math, vehicles, peds, BODY_SPECS, carCrashProfile, CAR_KINDS, BUS_HEIGHT: 3.25, BUS_HALF_L: 6.27, PED_HALF: 0.3, PED_HEIGHT: 1.8,
     pedGround: () => 0.22
   };
+  for (const name of ['vehicleHalfW', 'vehicleHalfL']) {
+    const code = source.match(new RegExp(`  const ${name} = [^;]+;`))[0];
+    context[name] = vm.runInNewContext(`${code}\n${name}`, context);
+  }
   const dynamicBodiesNear = trafficFunction('dynamicBodiesNear', context);
   const out = [];
   dynamicBodiesNear(0, 0, 6, out);
@@ -404,9 +529,9 @@ test('dynamicBodiesNear reports nearby vehicles and pedestrians as reusable upri
   assert.equal(suv.kind, 'vehicle');
   assert.equal(suv.source, vehicles[0]);
   close(suv.headingY, 0.1);
-  assert.equal(suv.halfWidthMetres, 0.92);
-  assert.equal(suv.halfLengthMetres, 2.22);
-  assert.equal(suv.maxY, 1.8);
+  assert.equal(suv.halfWidthMetres, CAR_KINDS.suv.halfWidth);
+  assert.equal(suv.halfLengthMetres, CAR_KINDS.suv.halfLength);
+  assert.equal(suv.maxY, CAR_KINDS.suv.height);
   assert.equal(suv.velocityZ, 5);
   assert.equal(stopped.velocityZ, 7, 'a car that just hit the rider reports its impact velocity');
   assert.equal(walker.kind, 'person');

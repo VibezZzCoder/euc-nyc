@@ -27,6 +27,7 @@ import { TitleScreen } from './title-screen.js';
 import { createNemesis } from './nemesis.js';
 import { NemesisHud } from './nemesis-chase.js';
 import { createViewPreferences } from './view-preferences.js';
+import { createFrameRatePreference, createFramePacer, frameRateHealth } from './frame-rate.js';
 import { createBookingDirector, BookingScreen } from './booking.js';
 import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene.js';
 
@@ -289,6 +290,25 @@ export async function initApp(startup) {
   touchControls.onAvailabilityChange = placeRiderIndicator;
 
   const elFps = document.getElementById('hud-fps');
+  const frameRatePreference = createFrameRatePreference();
+  const framePacer = createFramePacer(frameRatePreference.value);
+  const fpsLimit = document.getElementById('fps-limit');
+  if (fpsLimit) {
+    let pointerSelection = false;
+    fpsLimit.value = frameRatePreference.value;
+    fpsLimit.addEventListener('focus', () => controllerManager.resetInput());
+    fpsLimit.addEventListener('pointerdown', () => { pointerSelection = true; });
+    fpsLimit.addEventListener('keydown', () => { pointerSelection = false; });
+    fpsLimit.addEventListener('change', () => {
+      if (frameRatePreference.set(fpsLimit.value)) {
+        framePacer.set(frameRatePreference.value);
+        resetFramePacing();
+      }
+      // Like pointer-activated HUD buttons, return riding keys to the game; retain native keyboard focus.
+      if (pointerSelection) fpsLimit.blur();
+      pointerSelection = false;
+    });
+  }
   const elMode = document.getElementById('hud-active-mode');
   const elCamera = document.getElementById('hud-active-camera');
   const elSpeed = document.getElementById('hud-speed');
@@ -543,6 +563,7 @@ export async function initApp(startup) {
     trafficSystem,
     allBlocks: cityBlocks.allBlocks,
     onToggle: (open) => {
+      resetFramePacing();
       controllerManager.resetInput();
       touchControls.setEnabled(!open);
       gamepadControls.setEnabled(!open);
@@ -637,6 +658,7 @@ export async function initApp(startup) {
     onRider: selectRider,
     getRider: () => controllerManager.getActiveEntity().riderId,
     onStart: () => {
+      resetFramePacing();
       controllerManager.resetInput();
       gamepadControls.reset();
       touchControls.setEnabled(true);
@@ -661,6 +683,7 @@ export async function initApp(startup) {
   function finishBooking() {
     if (!booking.active || !placeAtJail(CIVIC_JAIL.release.z, CIVIC_JAIL.release.heading)) return false;
     booking.finish();
+    resetFramePacing();
     nemesis.director.release();
     nemesis.hide();
     trafficSystem.setPresentationClearance(null);
@@ -680,6 +703,7 @@ export async function initApp(startup) {
   function startBooking() {
     const e = controllerManager.getActiveEntity();
     if (!booking.start(RIDERS[e.riderId].name, nemesis.director.state.knockdowns)) return;
+    resetFramePacing();
     closePopovers();
     controllerManager.resetInput();
     touchControls.setEnabled(false);
@@ -799,11 +823,26 @@ export async function initApp(startup) {
   let nextPlayerSave = 0;
   let warmedUp = false; // see the first frame below
 
-  if (elFps) elFps.textContent = '60';
+  function resetFramePacing() {
+    framePacer.reset();
+    frameCount = fpsTimer = 0;
+  }
+  function resetFrameClock() {
+    lastTime = null;
+    resetFramePacing();
+  }
+  // Resume without charging background time to gameplay or telemetry. Settings/map changes reset only rendering.
+  document.addEventListener('visibilitychange', resetFrameClock);
+  window.addEventListener('pageshow', resetFrameClock);
+  window.addEventListener('pagehide', resetFrameClock);
+  window.addEventListener('focus', resetFrameClock);
+  window.addEventListener('blur', resetFrameClock);
+
+  if (elFps) elFps.textContent = '—';
 
   renderer.setAnimationLoop((now) => {
     if (startup.failed) return;
-    const rawDt = (now - lastTime) * 0.001;
+    const rawDt = lastTime === null ? 0 : (now - lastTime) * 0.001;
     lastTime = now;
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
     elapsed += dt;
@@ -851,48 +890,53 @@ export async function initApp(startup) {
     eucHud.update(riderController, elapsed, promptDevice);
     touchControls.setDown(riderController.crashed);
     if (nemesis) nemesisHud.update(nemesis.hudView);
-    if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
+    // Gate only scene submission/culling. All updates above retain callback dt, including the rider's native
+    // 120 Hz accumulator, traffic, pursuit, booking and audio. First-frame boot must always run to completion.
+    const renderFrame = framePacer.shouldRender(now) || !warmedUp;
+    if (renderFrame) {
+      if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
 
-    // Render frame via TSL RenderPipeline (SSR + Bloom)
-    if (!warmedUp) {
-      // First frame = pipeline warm-up behind the loading screen, for what precompileShaders() can't reach (the shadow
-      // map passes): with frustum culling off, every visible material's pipelines compile now instead of stalling the
-      // first time the camera turns towards it (one chunk / shadow stand-in per shared pipeline is enough)
-      const culled = [];
-      scene.traverse((o) => {
-        if (o.frustumCulled && !o.userData.sharesPipelineWith) {
-          culled.push(o);
-          o.frustumCulled = false;
-        }
-      });
+      // Render frame via TSL RenderPipeline (SSR + Bloom)
+      if (!warmedUp) {
+        // First frame = pipeline warm-up behind the loading screen, for what precompileShaders() can't reach (the shadow
+        // map passes): with frustum culling off, every visible material's pipelines compile now instead of stalling the
+        // first time the camera turns towards it (one chunk / shadow stand-in per shared pipeline is enough)
+        const culled = [];
+        scene.traverse((o) => {
+          if (o.frustumCulled && !o.userData.sharesPipelineWith) {
+            culled.push(o);
+            o.frustumCulled = false;
+          }
+        });
+        renderPipeline.render();
+        for (const o of culled) o.frustumCulled = true;
+        markInit('warmup');
+      }
       renderPipeline.render();
-      for (const o of culled) o.frustumCulled = true;
-      markInit('warmup');
-    }
-    renderPipeline.render();
-    if (!warmedUp) {
-      warmedUp = true;
-      markInit('firstFrame');
-      // The loading screen stays up until the GPU has got through the first frame (and the pipelines its warm-up
-      // compiled), i.e. until the city is actually on screen
-      const device = renderer.backend.device;
-      if (loadingStatus) loadingStatus.textContent = 'Waiting for graphics to finish the first frame...';
-      Promise.resolve(device && device.queue.onSubmittedWorkDone()).then(() => {
-        if (startup.failed) return;
-        markInit('gpu');
-        console.log(`[init] ${initTimings.join(', ')}`);
-        initTimings = null;
-        titleScreen.show(); // under the loading screen, which fades off it
-        if (loadingOverlay) loadingOverlay.classList.add('hidden');
-        audioSystem.ready = true;
-        setLoadingProgress(1);
-        startup.complete();
-      }).catch(startup.fail);
+      if (!warmedUp) {
+        warmedUp = true;
+        markInit('firstFrame');
+        // The loading screen stays up until the GPU has got through the first frame (and the pipelines its warm-up
+        // compiled), i.e. until the city is actually on screen
+        const device = renderer.backend.device;
+        if (loadingStatus) loadingStatus.textContent = 'Waiting for graphics to finish the first frame...';
+        Promise.resolve(device && device.queue.onSubmittedWorkDone()).then(() => {
+          if (startup.failed) return;
+          markInit('gpu');
+          console.log(`[init] ${initTimings.join(', ')}`);
+          initTimings = null;
+          titleScreen.show(); // under the loading screen, which fades off it
+          if (loadingOverlay) loadingOverlay.classList.add('hidden');
+          audioSystem.ready = true;
+          setLoadingProgress(1);
+          startup.complete();
+        }).catch(startup.fail);
+      }
     }
 
     // Telemetry uses wall time, not the clamped simulation step, so slow frames and high-refresh displays report
     // their actual frame rate (updates DOM every 250ms).
-    frameCount++;
+    if (renderFrame) frameCount++;
     fpsTimer += Math.max(0, rawDt);
     if (fpsTimer >= 0.25) {
       const currentFps = Math.round(frameCount / fpsTimer);
@@ -904,7 +948,7 @@ export async function initApp(startup) {
 
       if (elFps) {
         elFps.textContent = String(currentFps);
-        elFps.className = currentFps >= 50 ? 'fps-ok' : currentFps >= 30 ? 'fps-warn' : 'fps-bad';
+        elFps.className = frameRateHealth(currentFps, frameRatePreference.value);
       }
       if (elSpeed) elSpeed.textContent = formatSpeed(activeEnt.speed, 'mph');
       if (elSpeedKmh) elSpeedKmh.textContent = formatSpeed(activeEnt.speed, 'kmh');

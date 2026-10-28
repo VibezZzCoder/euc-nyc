@@ -32,12 +32,12 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   const all = preloads.map((match) => match[1]);
   assert.deepEqual(all.slice(0, three.length).sort(), [...three].sort(), 'every vendored three.js module is preloaded first');
   const links = all.slice(three.length);
-  // 32 city modules (29 upstream + pedestrian-routes.js, fire-escapes.js (upstream 8c17250) + solid-rects.js), the 17 fork modules
-  // (EUC terrain, rider, dynamic world, audio, HUD; the title screen; the chasing cop, his brain, chase rules, paddle swing and audio;
-  // the north end's barricades; construction-time ride geometry helpers; view preferences; the civic jail; booking lifecycle/scene) and every module tools/vendor-euc.mjs copied into
+  // 32 city modules (29 upstream + pedestrian-routes.js, fire-escapes.js (upstream 8c17250) + solid-rects.js), the 19 fork modules
+  // (EUC terrain, recovery, rider, dynamic world, audio, HUD; the title screen; the chasing cop, his brain, chase rules, paddle swing and audio;
+  // the north end's barricades; construction-time ride geometry helpers; view preferences/frame pacing; the civic jail; booking lifecycle/scene) and every module tools/vendor-euc.mjs copied into
   // js/euc/ (listed in its MANIFEST.json)
   const vendored = Object.keys(JSON.parse(readFileSync(join(__dirname, '../js/euc/MANIFEST.json'), 'utf8')).files);
-  assert.equal(links.length, 32 + 17 + vendored.length);
+  assert.equal(links.length, 32 + 19 + vendored.length);
   for (const file of vendored) assert.ok(links.includes(`./js/euc/${file}`), `vendored module preloaded: ${file}`);
   assert.equal(new Set(links).size, links.length, 'each module is preloaded once');
   assert.equal(entries.length, 1);

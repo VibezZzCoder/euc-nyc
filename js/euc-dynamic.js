@@ -10,19 +10,22 @@
 //                   normal (from the obstacle toward the rider) and the closing speed along it, the obstacle's own
 //                   velocity included. The controller crashes the rider ('obstacle') when that closing speed reaches
 //                   EUC.obstacleCrashSpeed (3.5 m/s), and otherwise just blocks the move.
-//   canPlace        refuses only an automatic crash recovery onto an occupied spot (the controller retries elsewhere);
+//   canPlace        refuses manual/automatic crash recovery onto an occupied spot (the controller retries elsewhere);
 //                   teleports and resets ('reset', 'construct') always go through.
-//   ragObstacleBodies  the same nearby boxes, as the ragdoll's upright prisms, so a crashed rider lands against cars and
-//                   people instead of through them.
+//   ragObstacleBodies  nearby boxes around wheel and fallen body, as the ragdoll's upright prisms, so a crashed rider
+//                   lands against cars and people instead of through them.
 //
 // The world never moves anything: cars and pedestrians are the city's (js/traffic.js), the rider is the controller's.
 // Bodies come from a host callback, bodiesNear(x, z, radius, out), which pushes records shaped like EUC Thrills'
 // PopulationFootprint onto `out`:
 //   { x, z, headingY, halfWidthMetres, halfLengthMetres, minY, maxY, velocityX, velocityZ }
-// (heading 0 along +Z, positive toward +X; absolute heights; world m/s). Extra fields are ignored. The records may be
+// (heading 0 along +Z, positive toward +X; absolute heights; world m/s). `kind: 'vehicle'` opts into directional crash
+// launch; other bodies retain the native crash. Other extra fields are ignored. The records may be
 // reused by the host between queries. A body counts if its centre is within `radius` plus its own bounding radius.
 //
 // Allocation-light: it runs at 120 Hz, a few calls per step. No three.js: the headless tests import this file directly.
+
+import { RIDER_BLOCKOUT } from './euc/data/tuning.js';
 
 /** The rider and wheel as the city's traffic meets them, metres (js/traffic.js uses the same size). */
 export const EUC_DYNAMIC_HULL = Object.freeze({ halfWidthMetres: 0.35, halfLengthMetres: 0.5, heightMetres: 1.9 });
@@ -55,6 +58,8 @@ export function createEucDynamicWorld({
   if (version !== null && typeof version !== 'function') throw new TypeError('createEucDynamicWorld: version must be a function');
   const cache = [];
   const ragList = [];
+  const crashList = [];
+  const crashParts = new WeakMap();
   let cacheX = NaN;
   let cacheZ = NaN;
   let cacheVersion = NaN;
@@ -63,10 +68,12 @@ export function createEucDynamicWorld({
   let lastZ = 0;
   const stats = { queries: 0, resolves: 0, contacts: 0 };
 
-  function bodiesAround(x, z) {
-    lastX = x;
-    lastZ = z;
-    haveCentre = true;
+  function bodiesAround(x, z, remember = true) {
+    if (remember) {
+      lastX = x;
+      lastZ = z;
+      haveCentre = true;
+    }
     if (version) {
       const v = version();
       const dx = x - cacheX, dz = z - cacheZ;
@@ -81,7 +88,8 @@ export function createEucDynamicWorld({
     return cache;
   }
 
-  const result = { allowedMoveFraction: 1, normalX: 0, normalZ: 0, closingSpeedMetresPerSecond: 0 };
+  const result = { allowedMoveFraction: 1, normalX: 0, normalZ: 0, closingSpeedMetresPerSecond: 0,
+    vehicleImpact: false, crashVelocityX: 0, crashVelocityZ: 0 };
   const contact = { fraction: 1, nx: 0, nz: 0, closing: 0 };
 
   function resolveMotion(request) {
@@ -97,13 +105,31 @@ export function createEucDynamicWorld({
     result.normalX = contact.nx;
     result.normalZ = contact.nz;
     result.closingSpeedMetresPerSecond = contact.closing;
+    result.vehicleImpact = contact.body.kind === 'vehicle';
+    result.crashVelocityX = result.crashVelocityZ = 0;
+    if (result.vehicleImpact) {
+      // This is the separating RIDER's velocity, not a bounce of the blocked wheel. Retain incoming inertia;
+      // the ragdoll's own contacts decide when the torso/limbs actually meet the vehicle. A car moving into the
+      // rider can additionally carry them along its outward normal, but a stationary face must not reverse them.
+      const carNormal = (contact.body.velocityX || 0) * contact.nx + (contact.body.velocityZ || 0) * contact.nz;
+      const riderNormal = b.velocityX * contact.nx + b.velocityZ * contact.nz;
+      const push = Math.max(0, carNormal - Math.max(0, riderNormal));
+      const vx = b.velocityX + contact.nx * push;
+      const vz = b.velocityZ + contact.nz * push;
+      const limit = Math.min(RIDER_BLOCKOUT.ragdollMaxSpeed, Math.max(Math.hypot(b.velocityX, b.velocityZ),
+        Math.hypot(contact.body.velocityX || 0, contact.body.velocityZ || 0)));
+      const scale = Math.min(1, limit / (Math.hypot(vx, vz) || 1));
+      result.crashVelocityX = vx * scale;
+      result.crashVelocityZ = vz * scale;
+    }
     return result;
   }
 
   function canPlace(request) {
     if (request.reason !== 'recover') return true;
     const body = request.body;
-    const bodies = bodiesAround(body.x, body.z);
+    // A speculative recovery/departure query must not move the crash wheel's query centre.
+    const bodies = bodiesAround(body.x, body.z, false);
     for (let i = 0; i < bodies.length; i++) if (overlaps(body, bodies[i], PLACE_MARGIN)) return false;
     return true;
   }
@@ -114,12 +140,58 @@ export function createEucDynamicWorld({
     haveCentre = true;
   }
 
-  function ragObstacleBodies() {
+  function ragObstacleBodies(fallen) {
     if (!haveCentre) return EMPTY;
     const bodies = bodiesAround(lastX, lastZ);
     ragList.length = 0;
     for (let i = 0; i < bodies.length; i++) ragList.push(bodies[i]);
+    // The ragdoll can separate from the wheel. Keep both neighbourhoods, without moving the wheel-query centre.
+    if (fallen && Math.hypot(fallen.x - lastX, fallen.z - lastZ) > requerySlack) {
+      const extra = [];
+      bodiesNear(fallen.x, fallen.z, queryRadius, extra);
+      for (const body of extra) if (!ragList.includes(body)) ragList.push(body);
+    }
     return ragList;
+  }
+
+  // Separate from mounted/airborne and crash-WHEEL contact: only the fallen body sees the drawn car profile.
+  function crashObstacleBodies(fallen) {
+    const bodies = ragObstacleBodies(fallen);
+    crashList.length = 0;
+    for (const body of bodies) {
+      const profile = body.crashProfile;
+      if (body.kind !== 'vehicle' || !profile || !fallen || Math.hypot(body.x - fallen.x, body.z - fallen.z)
+        > 3 + Math.hypot(body.halfWidthMetres, body.halfLengthMetres)) {
+        crashList.push(body);
+        continue;
+      }
+      let parts = crashParts.get(body);
+      if (!parts || parts.length !== profile.length) {
+        parts = profile.map(() => ({}));
+        crashParts.set(body, parts);
+      }
+      const sin = Math.sin(body.headingY), cos = Math.cos(body.headingY);
+      const sp = Math.sin(body.crashPitch || 0), cp = Math.cos(body.crashPitch || 0);
+      const sr = Math.sin(body.crashRoll || 0), cr = Math.cos(body.crashRoll || 0);
+      for (let i = 0; i < profile.length; i++) {
+        const local = profile[i], part = parts[i];
+        const cy = (local.minY + local.maxY) / 2, hy = (local.maxY - local.minY) / 2;
+        // Render uses YXZ. Bound each pitched/rolled slice in the native upright-yawed contact frame.
+        const lx = -sr * cy, ly = cp * cr * cy - sp * local.z, lz = sp * cr * cy + cp * local.z;
+        const height = Math.abs(cp * sr) * local.halfWidthMetres + Math.abs(cp * cr) * hy + Math.abs(sp) * local.halfLengthMetres;
+        part.x = body.x + cos * lx + sin * lz;
+        part.z = body.z - sin * lx + cos * lz;
+        part.headingY = body.headingY;
+        part.halfWidthMetres = Math.abs(cr) * local.halfWidthMetres + Math.abs(sr) * hy;
+        part.halfLengthMetres = Math.abs(sp * sr) * local.halfWidthMetres + Math.abs(sp * cr) * hy + Math.abs(cp) * local.halfLengthMetres;
+        part.minY = body.minY + ly - height;
+        part.maxY = body.minY + ly + height;
+        part.velocityX = body.velocityX;
+        part.velocityZ = body.velocityZ;
+        crashList.push(part);
+      }
+    }
+    return crashList;
   }
 
   return {
@@ -129,6 +201,7 @@ export function createEucDynamicWorld({
     canPlace,
     didPlace,
     ragObstacleBodies,
+    crashObstacleBodies,
     /** Diagnostics: bodies queries made, resolveMotion calls, contacts reported. */
     stats,
   };
@@ -171,6 +244,7 @@ export function sweepBodies(a, b, bodies, out) {
   out.nx = 0;
   out.nz = 0;
   out.closing = 0;
+  out.body = null;
   const dx = b.x - a.x;
   const dz = b.z - a.z;
   const cosA = Math.cos(b.headingY);
@@ -195,6 +269,7 @@ export function sweepBodies(a, b, bodies, out) {
       out.nx = hit.nx;
       out.nz = hit.nz;
       out.closing = closing;
+      out.body = o;
       found = true;
     }
   }

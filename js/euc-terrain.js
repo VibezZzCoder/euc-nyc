@@ -29,6 +29,7 @@
 //
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
+import { findRecoveryTarget } from './euc-recovery.js';
 import {
   blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, CENTRAL_PARK_GATE_SIZE, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE,
   MANHATTAN_COASTLINE, SEAWALL_POLYGON, ESPLANADE_RAIL, BATTERY_RAIL, NORTH_BARRIER
@@ -305,6 +306,10 @@ export class NycTerrainSampler {
     return this.boxes.colliderCount;
   }
 
+  findRecoveryTarget(request, canPlace) {
+    return findRecoveryTarget(this, request, canPlace);
+  }
+
   /** The highest top under (x, z), or null; shoreOnly restricts the search to pier ground surfaces. */
   topAt(x, z, shoreOnly = false, referenceY = 0) {
     const list = this.topGrid.get(Math.floor(x / TOP_CELL) * 100000 + Math.floor(z / TOP_CELL));
@@ -340,8 +345,8 @@ export class NycTerrainSampler {
   }
 
   /** True where (x, z) is on a pond or the Reservoir (shore band included): not a place to stand. */
-  isWater(x, z) {
-    return !!this.topAt(x, z)?.water;
+  isWater(x, z, referenceY = 0) {
+    return !!this.topAt(x, z, false, referenceY)?.water;
   }
 
   /**
@@ -354,7 +359,7 @@ export class NycTerrainSampler {
     // not right at the edge either: a rider put back there would stand against the wall
     if (!allowed(x - 1, z) || !allowed(x + 1, z)) return true;
     if (!allowed(x, z - 1) || !allowed(x, z + 1)) return true;
-    return this.isWater(x, z);
+    return this.isWater(x, z, referenceY);
   }
 
   /** The city's own ground at (x, z): height and surface, before solids. */

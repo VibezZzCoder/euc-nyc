@@ -435,6 +435,11 @@ export class CrashRagdoll {
             }
             if (input.glance)
                 vSide += input.side * input.glance * launch * (upper ? 1 : 0.5);
+            if (input.velocityX !== undefined && input.velocityZ !== undefined) {
+                const carry = upper ? 1 : 0.9;
+                vForward = (forwardX * input.velocityX + forwardZ * input.velocityZ) * carry;
+                vSide = (leftX * input.velocityX + leftZ * input.velocityZ) * carry;
+            }
             launchSpeed = Math.max(launchSpeed, Math.sqrt((vForward) * (vForward) + (vUp) * (vUp) + (vSide) * (vSide)));
             const base = index * 3;
             this.previous[base] = pos[base] - (forwardX * vForward + leftX * vSide) * dt;

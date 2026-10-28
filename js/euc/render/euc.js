@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/euc.ts.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/euc.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import * as THREE from 'three';
 import { BLOCKOUT_COLOURS, FX, WHEEL } from '../data/tuning.js';
@@ -89,8 +89,8 @@ const STANCHION_RADIUS = 0.020;
 const STANCHION_TOP = SHELL_BOTTOM + WHEEL.suspensionTravel;
 const SLIDER_RADIUS = STANCHION_RADIUS + 0.006;
 const SLIDER_LENGTH = 0.075;
-const RIM_SHADE = 3.0;
-const HUB_SHADE = 4.6;
+const RIM_SHADE = 1.25;
+const HUB_SHADE = 0.48;
 const HANDLE_SHADE = 0.50;
 const SLIDER_SHADE = 0.55;
 const GRIP_SHADE = 0.42;
@@ -123,9 +123,67 @@ export function createBlockoutEUC(look = STANDARD_MACHINE_LOOK) {
         metalness: 0.1,
         vertexColors: true,
     }));
+    const rubberWidth = 512, rubberHeight = 256;
+    const rubberColour = new Uint8Array(rubberWidth * rubberHeight * 4);
+    const rubberHeightmap = new Uint8Array(rubberWidth * rubberHeight * 4);
+    const pulse = (distance, width, feather) => 1 - THREE.MathUtils.smoothstep(Math.abs(distance), width - feather, width + feather);
+    for (let y = 0; y < rubberHeight; y++) {
+        for (let x = 0; x < rubberWidth; x++) {
+            const u = (x + 0.5) / rubberWidth;
+            const v = (y + 0.5) / rubberHeight;
+            let colour = 210, height = 190;
+            if (v >= 0.5) {
+                const across = (v - 0.5) * 2;
+                const shoulder = Math.abs(across - 0.5) * 2;
+                const phase = u * 24 - shoulder * 0.72 + (across < 0.5 ? 0 : 0.32);
+                const slot = pulse(phase - Math.floor(phase) - 0.5, 0.105, 0.025)
+                    * THREE.MathUtils.smoothstep(shoulder, 0.06, 0.14)
+                    * (1 - THREE.MathUtils.smoothstep(shoulder, 0.80, 0.98));
+                const channel = pulse(shoulder - 0.52, 0.022, 0.010);
+                const groove = Math.max(slot, channel);
+                colour = 214 - groove * 80 - shoulder * 12;
+                height = 195 - groove * 115;
+            }
+            else {
+                const dx = (u - 0.5) * 2, dz = (v * 2 - 0.5) * 2;
+                const radius = Math.hypot(dx, dz);
+                const angle = Math.atan2(dz, dx);
+                const bead = pulse(radius - 0.91, 0.014, 0.008);
+                const phase = angle / (Math.PI * 2) * 24;
+                const rib = pulse(phase - Math.floor(phase) - 0.5, 0.09, 0.035)
+                    * THREE.MathUtils.smoothstep(radius, 0.74, 0.78)
+                    * (1 - THREE.MathUtils.smoothstep(radius, 0.85, 0.89));
+                const mark = Math.max(pulse(angle - 0.27, 0.025, 0.01), pulse(angle - 0.37, 0.025, 0.01))
+                    * pulse(radius - 0.67, 0.065, 0.01);
+                colour = 193 + bead * 13 + rib * 15 + mark * 24;
+                height = 170 + bead * 26 + rib * 30 + mark * 25;
+            }
+            const at = (y * rubberWidth + x) * 4;
+            for (let c = 0; c < 3; c++) {
+                rubberColour[at + c] = colour;
+                rubberHeightmap[at + c] = height;
+            }
+            rubberColour[at + 3] = rubberHeightmap[at + 3] = 255;
+        }
+    }
+    const rubberTexture = (data, colour) => {
+        const texture = new THREE.DataTexture(data, rubberWidth, rubberHeight);
+        texture.colorSpace = colour ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.magFilter = THREE.LinearFilter;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.generateMipmaps = true;
+        texture.anisotropy = 4;
+        texture.needsUpdate = true;
+        textures.push(texture);
+        return texture;
+    };
     const tyreMaterial = trackMaterial(new THREE.MeshStandardMaterial({
-        color: look.tyre?.colour ?? BLOCKOUT_COLOURS.tyre,
-        roughness: look.tyre?.roughness ?? 0.92,
+        color: look.tyre?.colour ?? 0x343638,
+        roughness: look.tyre?.roughness ?? 0.86,
+        map: rubberTexture(rubberColour, true),
+        bumpMap: rubberTexture(rubberHeightmap, false),
+        bumpScale: 0.002,
         metalness: 0.0,
         vertexColors: true,
     }));
@@ -213,10 +271,32 @@ export function createBlockoutEUC(look = STANDARD_MACHINE_LOOK) {
     const body = new THREE.Group();
     body.name = 'euc-body';
     group.add(body);
-    const tread = loftGeometry(TREAD, { radialSegments: 20, capBottom: false, capTop: false });
+    const tread = loftGeometry(TREAD, { radialSegments: 20, capBottom: false, capTop: false, splitSeam: true });
     const rim = shaded(new THREE.CylinderGeometry(TYRE_RADIUS * 0.828, TYRE_RADIUS * 0.828, WHEEL.tyreWidth, 20), RIM_SHADE);
-    const hub = shaded(new THREE.CylinderGeometry(TYRE_RADIUS * 0.46, TYRE_RADIUS * 0.46, WHEEL.tyreWidth + 0.016, 16), HUB_SHADE);
-    const tyreParts = [tread, rim, hub];
+    const hub = shaded(new THREE.CylinderGeometry(TYRE_RADIUS * 0.46, TYRE_RADIUS * 0.46, WHEEL.tyreWidth + 0.015, 16), HUB_SHADE);
+    const treadUV = tread.getAttribute('uv');
+    for (let i = 0; i < treadUV.count; i++)
+        treadUV.setY(i, 0.5 + treadUV.getY(i) * 0.5);
+    const sidewallUV = rim.getAttribute('uv');
+    for (let i = 0; i < sidewallUV.count; i++)
+        sidewallUV.setY(i, sidewallUV.getY(i) * 0.5);
+    const tyreParts = [tread, rim];
+    const motorParts = [hub];
+    for (const side of [-1, 1]) {
+        const faceY = side * (TYRE_HALF_WIDTH + 0.008);
+        const face = (geometry, y) => geometry.rotateX(-side * Math.PI / 2).translate(0, y, 0);
+        motorParts.push(face(shaded(new THREE.RingGeometry(TYRE_RADIUS * 0.77, TYRE_RADIUS * 0.817, 40), 0.65), side * (TYRE_HALF_WIDTH + 0.0005)));
+        motorParts.push(face(shaded(new THREE.RingGeometry(TYRE_RADIUS * 0.40, TYRE_RADIUS * 0.455, 32), 0.8), faceY));
+        for (let i = 0; i < 6; i++) {
+            const theta = i * Math.PI / 3 + 0.12;
+            motorParts.push(face(shaded(new THREE.RingGeometry(TYRE_RADIUS * 0.27, TYRE_RADIUS * 0.35, 4, 1, theta, 0.47), 0.16), faceY));
+            const screw = shaded(new THREE.CircleGeometry(0.005, 6), 0.95)
+                .translate(Math.cos(theta) * TYRE_RADIUS * 0.405, Math.sin(theta) * TYRE_RADIUS * 0.405, 0);
+            motorParts.push(face(screw, faceY));
+        }
+        motorParts.push(shaded(new THREE.BoxGeometry(0.009, 0.004, 0.020), 0.24)
+            .translate(TYRE_RADIUS * 0.69, side * (TYRE_HALF_WIDTH + 0.003), 0.031));
+    }
     const ring = look.tyre?.rimAccent;
     if (ring) {
         const tint = tintOver(look.tyre?.colour ?? BLOCKOUT_COLOURS.tyre, ring.colour);
@@ -253,6 +333,11 @@ export function createBlockoutEUC(look = STANDARD_MACHINE_LOOK) {
     tyre.receiveShadow = true;
     tyre.name = 'euc-tyre';
     group.add(tyre);
+    const motor = new THREE.Mesh(track(mergeGeometries(motorParts)), pedalMaterial);
+    motor.name = 'euc-motor-cover';
+    motor.castShadow = true;
+    motor.receiveShadow = true;
+    tyre.add(motor);
     const axle = shaded(new THREE.CylinderGeometry(0.016, 0.016, STANCHION_X * 2 + 0.018, 12)).rotateZ(Math.PI / 2).translate(0, SHELL_BOTTOM, 0);
     const stanchions = [axle];
     for (const side of [-1, 1]) {

@@ -139,6 +139,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
   let hopPendingUntil = -1;
   let hopWasHeld = false;
   let resetWasHeld = false;
+  let recoveryPending = false;
   let wasCrashed = controller.crashed;
   const events = [];
   const pushEvent = (e) => {
@@ -174,12 +175,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       hopWasHeld = hopHeld;
 
       const resetHeld = !!keys.reset;
-      if (resetHeld && !resetWasHeld && controller.crashed) {
-        // Get up where you fell, unless that is in a pond or past the shore wall: then at the last safe spot, as the
-        // auto-recovery does
-        if (sampler.isOffLimits?.(current.x, current.z, current.y)) this.placeAt(controller.safeX, controller.safeZ, controller.safeHeading, controller.safeY);
-        else this.placeAt(current.x, current.z, current.headingY, current.y);
-      }
+      if (resetHeld && !resetWasHeld && controller.crashed) recoveryPending = true;
       resetWasHeld = resetHeld;
 
       accumulator = Math.min(accumulator + dt, MAX_CATCH_UP * STEP);
@@ -191,6 +187,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
           hopPendingUntil = -1;
         }
         copyPose(current, previous);
+        const placementSerial = controller.placementSerial;
         controller.step(STEP, {
           ...NEUTRAL_ACTIONS,
           throttle: Math.max(-1, Math.min(1, throttle)),
@@ -199,7 +196,11 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
           hop,
           hopHeld,
         });
+        if (recoveryPending) controller.recover();
+        if (!controller.crashed) recoveryPending = false;
         controller.writePose(current);
+        // Recovery is one placement, not an interpolated flight from the old wheel position.
+        if (controller.placementSerial !== placementSerial) copyPose(current, previous);
         simSeconds += STEP;
         this.recordEdges();
       }
@@ -259,6 +260,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       copyPose(current, previous);
       copyPose(current, render);
       accumulator = 0;
+      recoveryPending = false;
       hopPendingUntil = -1;
       const wasDown = wasCrashed;
       wasCrashed = controller.crashed;
@@ -275,6 +277,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       hopPendingUntil = -1;
       hopWasHeld = false;
       resetWasHeld = false;
+      recoveryPending = false;
     },
 
     dispose() {

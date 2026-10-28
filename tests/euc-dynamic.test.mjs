@@ -9,6 +9,7 @@ import { SIMULATION, EUC } from '../js/euc/data/tuning.js';
 import { NycTerrainSampler } from '../js/euc-terrain.js';
 import { streetZ } from '../js/city-config.js';
 import { createEucDynamicWorld, sweepBodies, overlaps, EUC_DYNAMIC_HULL } from '../js/euc-dynamic.js';
+import profiles from './car-profile-fixture.cjs';
 
 const DT = 1 / SIMULATION.hz;
 const SPAWN_Z = streetZ(37); // controllers.js: 5th Ave at 37th St
@@ -16,6 +17,7 @@ const ROAD = { x: 5.2, z: SPAWN_Z - 8 }; // on the 5th Ave roadway, heading +Z r
 
 function car(x, z, headingY = 0, speed = 0) {
   return { kind: 'vehicle', x, z, headingY, halfWidthMetres: 0.86, halfLengthMetres: 2.18, minY: 0, maxY: 1.5,
+    crashProfile: profiles.carCrashProfile(profiles.BODY_SPECS.sedan),
     velocityX: Math.sin(headingY) * speed, velocityZ: Math.cos(headingY) * speed };
 }
 
@@ -67,6 +69,58 @@ function ride(euc, seconds, actions, bodies = []) {
 const GO = { ...NEUTRAL_ACTIONS, throttle: 1 };
 const HOLD = { ...NEUTRAL_ACTIONS, throttle: 0.15 };
 
+for (const speed of [6, 8, 12]) for (const heading of [0, Math.PI / 4, -Math.PI / 4]) {
+  test(`vehicle wipeout at ${speed} m/s, heading ${heading}: bounded directional launch and deterministic fall`, () => {
+    function run() {
+      const parked = car(ROAD.x, ROAD.z + 4);
+      const { world } = worldOf([parked]);
+      // Native flat ground isolates the car face from the avenue's nearby kerbs.
+      const euc = new EucController(new NycTerrainSampler().boxes, { dynamicWorld: world,
+        spawn: { position: { x: ROAD.x - Math.sin(heading) * 2, y: 0, z: ROAD.z }, headingY: heading } });
+      euc.reset(undefined, speed);
+      for (let i = 0; i < 120 && !euc.crashed; i++) euc.step(DT, NEUTRAL_ACTIONS);
+      assert.equal(euc.crashed, true);
+      const start = [...euc.ragdoll.positions];
+      const velocities = start.map((v, i) => (v - euc.ragdoll.previous[i]) / DT);
+      for (let i = 0; i < velocities.length; i += 3) {
+        assert.ok(Math.hypot(...velocities.slice(i, i + 3)) <= 15.00001, 'stock ragdoll launch cap');
+        if (heading) assert.ok(velocities[i] * Math.sign(heading) > speed * 0.45, 'glance retains substantial tangential carry');
+        else assert.ok(velocities[i + 2] > speed * 0.7, 'wheel stops, but the rider retains forward inertia');
+      }
+      for (let i = 0; i < 120; i++) euc.step(DT, NEUTRAL_ACTIONS);
+      const finish = [...euc.ragdoll.positions];
+      assert.ok(finish.every(Number.isFinite));
+      if (heading) assert.ok((finish[0] - start[0]) * Math.sign(heading) > 0.1, 'tangential launch survives actual contact solving');
+      return { start, velocities, finish };
+    }
+    assert.deepEqual(run(), run());
+  });
+}
+
+test('a car striking a stationary rider seeds forward body motion; a pedestrian keeps the native response', () => {
+  for (const kind of ['vehicle', 'person']) {
+    const moving = { ...car(ROAD.x, ROAD.z - 2.6, 0, 8), kind };
+    const { world } = worldOf([moving]);
+    const euc = rider(world);
+    euc.step(DT, NEUTRAL_ACTIONS);
+    assert.equal(euc.crashed, true);
+    const vz = (euc.ragdoll.positions[2] - euc.ragdoll.previous[2]) / DT;
+    if (kind === 'vehicle') assert.ok(vz > 6 && vz <= 8, `vehicle launch ${vz}`);
+    else assert.equal(vz, 0, 'non-vehicle response unchanged');
+  }
+});
+
+test('crash-body queries cover a separated rider and keep the wheel neighbourhood', () => {
+  const near = car(ROAD.x, ROAD.z), far = car(ROAD.x, ROAD.z + 20);
+  const { world } = worldOf([near, far]);
+  rider(world);
+  const bodies = world.ragObstacleBodies({ x: ROAD.x, z: ROAD.z + 20 });
+  assert.deepEqual(bodies, [near, far]);
+  assert.deepEqual(world.ragObstacleBodies(), [near], 'body query did not replace wheel centre');
+  world.canPlace({ reason: 'recover', body: { ...EUC_DYNAMIC_HULL, x: far.x, z: far.z, headingY: 0, minY: 0, maxY: 1.9 } });
+  assert.deepEqual(world.ragObstacleBodies(), [near], 'refused speculative recovery did not replace wheel centre');
+});
+
 test('the world is the controller\'s EucDynamicWorld shape, with the shared rider hull', () => {
   const { world } = worldOf([]);
   assert.deepEqual(world.hull, { ...EUC_DYNAMIC_HULL });
@@ -81,11 +135,15 @@ test('riding fast into a parked car crashes (obstacle) and never passes through 
   const parked = car(ROAD.x, ROAD.z + 12);
   const { world } = worldOf([parked]);
   const euc = rider(world, { speed: 7 });
-  let maxZ = -Infinity, crashed = false;
+  let maxZ = -Infinity, crashed = false, recovered = false;
   for (let i = 0; i < 4 * SIMULATION.hz; i++) {
     euc.step(DT, GO);
     const s = euc.snapshot();
-    maxZ = Math.max(maxZ, s.position.z);
+    recovered ||= crashed && !s.crashed;
+    if (!recovered) maxZ = Math.max(maxZ, s.position.z);
+    assert.equal(overlaps({ x: s.position.x, z: s.position.z, headingY: s.headingY,
+      ...EUC_DYNAMIC_HULL, minY: s.position.y, maxY: s.position.y + 1.9 }, parked), false,
+    'mounted/crash wheel and recovered rider never overlap the parked car');
     crashed ||= s.crashed;
   }
   const s = euc.snapshot();

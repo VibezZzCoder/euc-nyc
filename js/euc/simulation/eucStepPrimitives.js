@@ -2,7 +2,7 @@
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 /*! EUC Thrills — (c) 2026 VibezZzCoder — MIT — https://github.com/VibezZzCoder/EUC-thrills */
 export const EUC_STEP_PRIMITIVE_FIELDS = Object.freeze([
-    'dynamicImpactSpeed', 'dynamicImpactNormalX', 'dynamicImpactNormalZ', 'dynamicSpinApplied', 'dynamicStyleHeadingPrevious', 'placementSerial',
+    'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed', 'dynamicImpactNormalX', 'dynamicImpactNormalZ', 'dynamicSpinApplied', 'dynamicStyleHeadingPrevious', 'placementSerial',
     'dynamicPlacementBlocked', 'x', 'y', 'z', 'headingY', 'speed',
     'leanPitch', 'riderPitch', 'slopeLean', 'riderLookYaw', 'riderTurnTwist', 'technicalTurn',
     'longitudinalAccel', 'rollAngle', 'riderLean', 'leanSettle', 'yawRate', 'lateralAccel',
@@ -32,6 +32,10 @@ export const EUC_STEP_PRIMITIVE_FIELDS = Object.freeze([
     'airPhaseContactUpdate', 'nativePhaseRetryReserveMetres',
 ]);
 export function copyEucStepPrimitives(to, from) {
+    to.vehicleImpact = from.vehicleImpact;
+    to.crashVelocityX = from.crashVelocityX;
+    to.crashVelocityZ = from.crashVelocityZ;
+    to.recoveryRetrySeconds = from.recoveryRetrySeconds;
     to.dynamicImpactSpeed = from.dynamicImpactSpeed;
     to.dynamicImpactNormalX = from.dynamicImpactNormalX;
     to.dynamicImpactNormalZ = from.dynamicImpactNormalZ;

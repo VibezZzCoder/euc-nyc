@@ -235,10 +235,14 @@ test('riding at the Hudson goes out on the esplanade and stops at its railing, s
   const west = getIslandBoundsAtZ(ROAD.z).westX;
   // heading -pi/2 rides toward -x (x += sin(heading)), at the Hudson, on the road west of the last kerb
   const euc = new EucController(new NycTerrainSampler(), { spawn: { position: { x: west + 18, y: 0, z: ROAD.z }, headingY: -Math.PI / 2 } });
-  ride(euc, 8, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
+  let nearest = euc.x;
+  for (let i = 0; i < 8 * SIMULATION.hz; i++) {
+    euc.step(DT, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
+    nearest = Math.min(nearest, euc.x);
+  }
   const rail = ESPLANADE_RAIL.d; // m inland of the bulkhead (out on the coping)
-  assert.ok(euc.x - west < rail + 1.2, `reached the railing, x ${(euc.x - west).toFixed(2)} m inside the bulkhead`);
-  assert.ok(euc.x - west > rail + 0.2, `stopped short of it, x ${(euc.x - west).toFixed(2)} m inside the bulkhead`);
+  assert.ok(nearest - west < rail + 1.2, `reached the railing before recovery, x ${(nearest - west).toFixed(2)} m inside the bulkhead`);
+  assert.ok(nearest - west > rail + 0.2, `never crossed it, x ${(nearest - west).toFixed(2)} m inside the bulkhead`);
 });
 
 function pierTop(z, top = 0.12, offset = 0, length = 28, width = 8) {
@@ -559,9 +563,13 @@ test('the north end: a wall at the barricades along the cut, Upper Manhattan pas
   assert.equal(s.isOffLimits(x, CUT_Z + 6), false);
   // heading pi rides north (-z)
   const euc = new EucController(s, { spawn: { position: { x, y: 0, z: CUT_Z + 25 }, headingY: Math.PI } });
-  ride(euc, 8, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
-  assert.ok(euc.z < CUT_Z + 1.5, `reached the barricades, ${(euc.z - CUT_Z).toFixed(2)} m short of the cut`);
-  assert.ok(euc.z > NORTH_BARRIER.band[1], `stopped at them, ${(euc.z - CUT_Z).toFixed(2)} m short of the cut`);
+  let nearest = euc.z;
+  for (let i = 0; i < 8 * SIMULATION.hz; i++) {
+    euc.step(DT, { ...NEUTRAL_ACTIONS, throttle: 0.6 });
+    nearest = Math.min(nearest, euc.z);
+  }
+  assert.ok(nearest < CUT_Z + 1.5, `reached the barricades before recovery, ${(nearest - CUT_Z).toFixed(2)} m short of the cut`);
+  assert.ok(nearest > NORTH_BARRIER.band[1], `never crossed them, ${(nearest - CUT_Z).toFixed(2)} m short of the cut`);
 });
 
 test('an inlet in the bulkhead line is water, not the island\'s ground', () => {

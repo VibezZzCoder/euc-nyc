@@ -11,9 +11,12 @@ Status: early. Riders: Cool Rider (`1`) and Trollina (`2`). Cars, buses and pede
 speed is a crash. Real-world brands are replaced with fictional ones. Street, park and landmark names are kept as
 place names.
 
-![Cool Rider on an electric unicycle at Broadway and W 60th St during Blue Hour, with Manhattan buildings, traffic and pedestrians.](screenshots/blue-hour-broadway.png)
+<p align="center">
+  <a href="screenshots/blue-hour-times-square-pursuit.png"><img src="screenshots/blue-hour-times-square-pursuit.png" width="420" alt="Officer Dorkins pursuing Cool Rider near Times Square at Blue Hour, with illuminated billboards, taxis and a delivery van." /></a>
+  <a href="screenshots/blue-hour-pier62.png"><img src="screenshots/blue-hour-pier62.png" width="420" alt="Cool Rider exploring the ramps and riding space at Pier 62 Skatepark during Blue Hour, with Manhattan buildings and traffic beyond." /></a>
+</p>
 
-*Blue Hour at Broadway and W 60th St — screenshot from an in-game playtest.*
+*Blue Hour playtests: a Times Square pursuit and Pier 62 Skatepark. Click either image to view it full-size.*
 
 ## Run it
 

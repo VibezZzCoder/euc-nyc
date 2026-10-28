@@ -170,7 +170,122 @@ function keepThrough(source, title) {
   return source.slice(0, next);
 }
 
+// Local controller seams are exact, fail-closed replacements against EXPECTED_COMMIT.
+function replaceOnce(source, before, after) {
+  if (source.split(before).length !== 2) throw new Error(`EUC adaptation site changed: ${before.slice(0, 100)}`);
+  return source.replace(before, after);
+}
+
 const OVERRIDES = {
+  // Wheel-sidequest: original procedural rubber and motor-cover detail. Keep the existing axle/spin contract,
+  // silhouette and all stationary parts. Textures are made once per machine and owned by its disposal registry.
+  'render/euc.ts': (src) => {
+    let s = replaceOnce(src, 'const RIM_SHADE = 3.0;', 'const RIM_SHADE = 1.25;');
+    s = replaceOnce(s, 'const HUB_SHADE = 4.6;', 'const HUB_SHADE = 0.48;');
+    s = replaceOnce(s, 'const tyreMaterial = trackMaterial(', `
+  // Two small, mipmapped atlases: tread in the upper half, moulded sidewall in the lower half.
+  // The albedo is sRGB; height is non-colour data. No animated offsets, RNG, canvas or per-frame allocations.
+  const rubberWidth = 512, rubberHeight = 256;
+  const rubberColour = new Uint8Array(rubberWidth * rubberHeight * 4);
+  const rubberHeightmap = new Uint8Array(rubberWidth * rubberHeight * 4);
+  const pulse = (distance: number, width: number, feather: number): number =>
+    1 - THREE.MathUtils.smoothstep(Math.abs(distance), width - feather, width + feather);
+  for (let y = 0; y < rubberHeight; y++) {
+    for (let x = 0; x < rubberWidth; x++) {
+      const u = (x + 0.5) / rubberWidth;
+      const v = (y + 0.5) / rubberHeight;
+      let colour = 210, height = 190;
+      if (v >= 0.5) {
+        const across = (v - 0.5) * 2;
+        // Staggered diagonal drainage slots, a narrow centre rib, and rounded shoulders.
+        const shoulder = Math.abs(across - 0.5) * 2;
+        const phase = u * 24 - shoulder * 0.72 + (across < 0.5 ? 0 : 0.32);
+        const slot = pulse(phase - Math.floor(phase) - 0.5, 0.105, 0.025)
+          * THREE.MathUtils.smoothstep(shoulder, 0.06, 0.14)
+          * (1 - THREE.MathUtils.smoothstep(shoulder, 0.80, 0.98));
+        const channel = pulse(shoulder - 0.52, 0.022, 0.010);
+        const groove = Math.max(slot, channel);
+        colour = 214 - groove * 80 - shoulder * 12;
+        height = 195 - groove * 115;
+      } else {
+        const dx = (u - 0.5) * 2, dz = (v * 2 - 0.5) * 2;
+        const radius = Math.hypot(dx, dz);
+        const angle = Math.atan2(dz, dx);
+        const bead = pulse(radius - 0.91, 0.014, 0.008);
+        const phase = angle / (Math.PI * 2) * 24;
+        const rib = pulse(phase - Math.floor(phase) - 0.5, 0.09, 0.035)
+          * THREE.MathUtils.smoothstep(radius, 0.74, 0.78)
+          * (1 - THREE.MathUtils.smoothstep(radius, 0.85, 0.89));
+        // A pair of short mould marks, not a bright circumferential stripe or invented branding.
+        const mark = Math.max(pulse(angle - 0.27, 0.025, 0.01), pulse(angle - 0.37, 0.025, 0.01))
+          * pulse(radius - 0.67, 0.065, 0.01);
+        colour = 193 + bead * 13 + rib * 15 + mark * 24;
+        height = 170 + bead * 26 + rib * 30 + mark * 25;
+      }
+      const at = (y * rubberWidth + x) * 4;
+      for (let c = 0; c < 3; c++) { rubberColour[at + c] = colour; rubberHeightmap[at + c] = height; }
+      rubberColour[at + 3] = rubberHeightmap[at + 3] = 255;
+    }
+  }
+  const rubberTexture = (data: Uint8Array, colour: boolean): THREE.DataTexture => {
+    const texture = new THREE.DataTexture(data, rubberWidth, rubberHeight);
+    texture.colorSpace = colour ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = 4;
+    texture.needsUpdate = true;
+    textures.push(texture);
+    return texture;
+  };
+  const tyreMaterial = trackMaterial(`);
+    s = replaceOnce(s, 'color: look.tyre?.colour ?? BLOCKOUT_COLOURS.tyre,', 'color: look.tyre?.colour ?? 0x343638,');
+    s = replaceOnce(s, 'roughness: look.tyre?.roughness ?? 0.92,', `roughness: look.tyre?.roughness ?? 0.86,
+      map: rubberTexture(rubberColour, true),
+      bumpMap: rubberTexture(rubberHeightmap, false),
+      bumpScale: 0.002,`);
+    s = replaceOnce(s, 'loftGeometry(TREAD, { radialSegments: 20, capBottom: false, capTop: false })',
+      'loftGeometry(TREAD, { radialSegments: 20, capBottom: false, capTop: false, splitSeam: true })');
+    // Seat the cover face half a millimetre inward, leaving its detail at the original outer extent (no z-fighting).
+    s = replaceOnce(s, 'WHEEL.tyreWidth + 0.016, 16)', 'WHEEL.tyreWidth + 0.015, 16)');
+    s = replaceOnce(s, 'const tyreParts: THREE.BufferGeometry[] = [tread, rim, hub];', `
+  const treadUV = tread.getAttribute('uv');
+  for (let i = 0; i < treadUV.count; i++) treadUV.setY(i, 0.5 + treadUV.getY(i) * 0.5);
+  const sidewallUV = rim.getAttribute('uv');
+  for (let i = 0; i < sidewallUV.count; i++) sidewallUV.setY(i, sidewallUV.getY(i) * 0.5);
+  const tyreParts: THREE.BufferGeometry[] = [tread, rim];
+  // The original motor cover now uses the existing satin-metal pedal material. All details stay within
+  // the existing hub's axial extent; the hub child inherits tyre spin and cannot merge into the fixed body.
+  const motorParts: THREE.BufferGeometry[] = [hub];
+  for (const side of [-1, 1]) {
+    const faceY = side * (TYRE_HALF_WIDTH + 0.008);
+    const face = (geometry: THREE.BufferGeometry, y: number): THREE.BufferGeometry =>
+      geometry.rotateX(-side * Math.PI / 2).translate(0, y, 0);
+    motorParts.push(face(shaded(new THREE.RingGeometry(TYRE_RADIUS * 0.77, TYRE_RADIUS * 0.817, 40), 0.65),
+      side * (TYRE_HALF_WIDTH + 0.0005)));
+    motorParts.push(face(shaded(new THREE.RingGeometry(TYRE_RADIUS * 0.40, TYRE_RADIUS * 0.455, 32), 0.8), faceY));
+    for (let i = 0; i < 6; i++) {
+      const theta = i * Math.PI / 3 + 0.12;
+      // Short recessed-looking arcs in the closed motor cover, never open bicycle spokes.
+      motorParts.push(face(shaded(new THREE.RingGeometry(TYRE_RADIUS * 0.27, TYRE_RADIUS * 0.35,
+        4, 1, theta, 0.47), 0.16), faceY));
+      const screw = shaded(new THREE.CircleGeometry(0.005, 6), 0.95)
+        .translate(Math.cos(theta) * TYRE_RADIUS * 0.405, Math.sin(theta) * TYRE_RADIUS * 0.405, 0);
+      motorParts.push(face(screw, faceY));
+    }
+    // One valve per side supplies an asymmetric rotation cue at the bead, with a dark cap.
+    motorParts.push(shaded(new THREE.BoxGeometry(0.009, 0.004, 0.020), 0.24)
+      .translate(TYRE_RADIUS * 0.69, side * (TYRE_HALF_WIDTH + 0.003), 0.031));
+  }`);
+    s = replaceOnce(s, "group.add(tyre);", `group.add(tyre);
+  const motor = new THREE.Mesh(track(mergeGeometries(motorParts)), pedalMaterial);
+  motor.name = 'euc-motor-cover';
+  motor.castShadow = true;
+  motor.receiveShadow = true;
+  tyre.add(motor);`);
+    return s;
+  },
   // The city has stacked roads. Forward query height without changing the controller's tuning / contact maths.
   // Exact counts deliberately fail when the upstream query sites change.
   'simulation/EucController.ts': (src) => {
@@ -202,21 +317,98 @@ const OVERRIDES = {
     s = s.replace('return { x, z, headingY: this.safeHeading };', 'return { x, y: this.safeY, z, headingY: this.safeHeading };');
     s = s.replace('this.sampler.sampleGround(x, z, ground, this.y);', 'this.sampler.sampleGround(x, z, ground, this.safeY);');
     s = s.replace('safePosition: { x: this.safeX, y: 0, z: this.safeZ }', 'safePosition: { x: this.safeX, y: this.safeY, z: this.safeZ }');
+    s = replaceOnce(s, 'readonly chargeImpact?: boolean;', `readonly chargeImpact?: boolean;
+  readonly vehicleImpact?: boolean;
+  readonly crashVelocityX?: number;
+  readonly crashVelocityZ?: number;`);
+    s = replaceOnce(s, 'readonly ragObstacleBodies?: () => readonly PopulationFootprint[];',
+      `readonly ragObstacleBodies?: (fallen?: { x: number; z: number }) => readonly PopulationFootprint[];
+  readonly crashObstacleBodies?: (fallen: { x: number; z: number }) => readonly PopulationFootprint[];`);
+    s = s.replaceAll('ragObstacleBodies: world.ragObstacleBodies,',
+      'ragObstacleBodies: world.ragObstacleBodies, crashObstacleBodies: world.crashObstacleBodies,');
+    s = replaceOnce(s, 'bodyTuning, contactBodies, this.headingY);', `bodyTuning,
+        this.dynamicWorld?.crashObstacleBodies?.({ x: this.ragdoll.positions[RD_PELVIS * 3], z: this.ragdoll.positions[RD_PELVIS * 3 + 2] }) ?? contactBodies,
+        this.headingY);`);
+    s = replaceOnce(s, 'private dynamicImpactSpeed = 0;', `private dynamicImpactSpeed = 0;
+  private vehicleImpact = false;
+  private crashVelocityX = 0;
+  private crashVelocityZ = 0;
+  private recoveryRetrySeconds = 0;`);
+    s = s.replaceAll('this.dynamicImpactSpeed = 0;', 'this.dynamicImpactSpeed = 0; this.vehicleImpact = false;');
+    s = replaceOnce(s, 'this.dynamicImpactSpeed = result.closingSpeedMetresPerSecond;', `this.dynamicImpactSpeed = result.closingSpeedMetresPerSecond;
+        this.vehicleImpact = result.vehicleImpact === true && Number.isFinite(result.crashVelocityX) && Number.isFinite(result.crashVelocityZ);
+        this.crashVelocityX = this.vehicleImpact ? result.crashVelocityX! : 0;
+        this.crashVelocityZ = this.vehicleImpact ? result.crashVelocityZ! : 0;`);
+    s = replaceOnce(s, 'intoSolid: cause === \'obstacle\' && motion === undefined,', `intoSolid: cause === 'obstacle' && motion === undefined,
+        velocityX: vehicleLaunch ? this.crashVelocityX : undefined,
+        velocityZ: vehicleLaunch ? this.crashVelocityZ : undefined,`);
+    s = replaceOnce(s, 'const setback = highFall ? t.crashHighFallSetbackMetres : 0;', `const setback = highFall ? t.crashHighFallSetbackMetres : 0;
+      const vehicleLaunch = cause === 'obstacle' && motion === undefined && this.vehicleImpact
+        && this.dynamicImpactSpeed >= this.collisionImpact && !highFall;`);
+    s = replaceOnce(s, 'const contactBodies = this.dynamicWorld?.ragObstacleBodies?.() ?? this.dynamicWorld?.ragObstacles ?? [];',
+      `const contactBodies = this.dynamicWorld?.ragObstacleBodies?.(this.ragdolling
+      ? { x: this.ragdoll.positions[RD_PELVIS * 3], z: this.ragdoll.positions[RD_PELVIS * 3 + 2] } : undefined)
+      ?? this.dynamicWorld?.ragObstacles ?? [];`);
+    s = replaceOnce(s, 'private respawn(): boolean {', `/** Manual get-up uses the same timing and placement admission as automatic recovery. */
+  recover(): boolean {
+    if (!this.crashing || this.crashFalling || this.crashTime < this.tuning.crashRecoverEarliestSeconds) return false;
+    return this.respawn();
+  }
+
+  private respawn(): boolean {`);
+    s = replaceOnce(s, 'this.crashTime += dt;', 'this.crashTime += dt;\n    this.recoveryRetrySeconds = Math.max(0, this.recoveryRetrySeconds - dt);');
+    s = s.replaceAll('this.crashTime = 0;', 'this.crashTime = 0; this.recoveryRetrySeconds = 0;');
+    s = replaceOnce(s, 'private recoveryTarget(restored: number): { x: number; y: number; z: number; headingY: number } | null {',
+      `private recoveryTarget(restored: number): { x: number; y: number; z: number; headingY: number } | null {
+    if (this.sampler.findRecoveryTarget) {
+      if (this.recoveryRetrySeconds > 0) return null;
+      this.recoveryRetrySeconds = 0.2;
+      const safePoints = [{ x: this.safeX, y: this.safeY, z: this.safeZ, headingY: this.safeHeading }];
+      const size = POPULATION_CONTACT.recoveryRingPoints;
+      for (let age = 0; age < this.safeRingCount; age++) {
+        const slot = ((this.safeRingNext + size - 1 - age) % size) * 4;
+        if (this.safeRing[slot] === this.safeX && this.safeRing[slot + 1] === this.safeZ && this.safeRing[slot + 3] === this.safeY) continue;
+        safePoints.push({ x: this.safeRing[slot], y: this.safeRing[slot + 3], z: this.safeRing[slot + 1], headingY: this.safeRing[slot + 2] });
+      }
+      const p = this.ragdoll.positions;
+      return this.sampler.findRecoveryTarget({
+        fallen: this.ragdolling ? { x: p[RD_PELVIS * 3], y: p[RD_PELVIS * 3 + 1], z: p[RD_PELVIS * 3 + 2] } : { x: this.x, y: this.y, z: this.z },
+        safePoints, headingY: this.headingY, maxStepUp: this.tuning.maxStepUp, hull: this.dynamicWorld?.hull,
+      }, target => this.dynamicPlacementClear(target.x, target.z, target.headingY, restored, 'recover', target.y));
+    }`);
     return s;
   },
   'simulation/ragdoll.ts': (src) => {
     const ys = ['py', 'py', 'pos[RD_PELVIS * 3 + 1]', 'pos[base + 1]',
       'this.positions[RD_PELVIS * 3 + 1]', 'o[1]', 'p[b + 1]'];
     let count = 0;
-    const s = src.replace(/sampler\.sampleGround\(([^;\n]+)\);/g, (all, args) =>
+    let s = src.replace(/sampler\.sampleGround\(([^;\n]+)\);/g, (all, args) =>
       `sampler.sampleGround(${args}, ${ys[count++]});`);
     if (count !== ys.length) throw new Error(`ragdoll height query sites changed: ${count}`);
+    // Vehicle-only planar launch, still subject to the stock total-speed cap and all native contact constraints.
+    s = replaceOnce(s, 'launchSpeed = Math.max(launchSpeed, Math.sqrt((vForward) * (vForward) + (vUp) * (vUp) + (vSide) * (vSide)));', `
+      if (input.velocityX !== undefined && input.velocityZ !== undefined) {
+        const carry = upper ? 1 : 0.9;
+        vForward = (forwardX * input.velocityX + forwardZ * input.velocityZ) * carry;
+        vSide = (leftX * input.velocityX + leftZ * input.velocityZ) * carry;
+      }
+      launchSpeed = Math.max(launchSpeed, Math.sqrt((vForward) * (vForward) + (vUp) * (vUp) + (vSide) * (vSide)));`);
+    s = replaceOnce(s, 'intoSolid: boolean;', 'intoSolid: boolean;\n  velocityX?: number;\n  velocityZ?: number;');
     return s;
   },
   'simulation/world.ts': (src) => src.replace('sampleGround(x: number, z: number, out: GroundSample): GroundSample;',
-    'sampleGround(x: number, z: number, out: GroundSample, referenceY?: number): GroundSample;'),
+    'sampleGround(x: number, z: number, out: GroundSample, referenceY?: number): GroundSample;')
+    .replace('export interface TerrainSampler {', `
+type RecoveryPoint = { x: number; y: number; z: number; headingY: number };
+export interface TerrainSampler {
+  findRecoveryTarget?(request: {
+    fallen: Vec3; safePoints: RecoveryPoint[]; headingY: number; maxStepUp: number;
+    hull?: { halfWidthMetres: number; halfLengthMetres: number; heightMetres: number };
+  }, canPlace: (point: RecoveryPoint) => boolean): RecoveryPoint | null;`),
   'simulation/eucStepPrimitives.ts': (src) => src.replace("'safeX', 'safeZ'", "'safeX', 'safeY', 'safeZ'")
-    .replace('to.safeX = from.safeX;', 'to.safeX = from.safeX;\n  to.safeY = from.safeY;'),
+    .replace('to.safeX = from.safeX;', 'to.safeX = from.safeX;\n  to.safeY = from.safeY;')
+    .replace("'dynamicImpactSpeed'", "'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed'")
+    .replace('to.dynamicImpactSpeed = from.dynamicImpactSpeed;', 'to.vehicleImpact = from.vehicleImpact;\n  to.crashVelocityX = from.crashVelocityX;\n  to.crashVelocityZ = from.crashVelocityZ;\n  to.recoveryRetrySeconds = from.recoveryRetrySeconds;\n  to.dynamicImpactSpeed = from.dynamicImpactSpeed;'),
   'render/riderLook.ts': (src) => {
     let s = keepImports(src, KEEP_IMPORTS['render/riderLook.ts']);
     s = s.replace("import { COOL_RIDER_LOOK } from './coolRiderLook.ts';",

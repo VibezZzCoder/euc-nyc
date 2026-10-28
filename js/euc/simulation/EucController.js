@@ -487,6 +487,10 @@ export class EucController {
     dynamicPrevious = null;
     dynamicIntent = null;
     dynamicImpactSpeed = 0;
+    vehicleImpact = false;
+    crashVelocityX = 0;
+    crashVelocityZ = 0;
+    recoveryRetrySeconds = 0;
     dynamicImpactNormalX = 0;
     dynamicImpactNormalZ = 0;
     dynamicSpinApplied = 0;
@@ -746,7 +750,7 @@ export class EucController {
         record.didPlace = world?.didPlace;
         const motions = [], placements = [];
         working.dynamicWorld = world ? {
-            hull: { ...world.hull }, ragObstacles: world.ragObstacles, ragObstacleBodies: world.ragObstacleBodies, occupantKind: world.occupantKind,
+            hull: { ...world.hull }, ragObstacles: world.ragObstacles, ragObstacleBodies: world.ragObstacleBodies, crashObstacleBodies: world.crashObstacleBodies, occupantKind: world.occupantKind,
             resolveMotion: world.resolveMotion ? (request) => {
                 const detached = detachedMotion(request);
                 motions.push(detached);
@@ -943,6 +947,7 @@ export class EucController {
         this.dynamicPrevious = null;
         this.dynamicIntent = null;
         this.dynamicImpactSpeed = 0;
+        this.vehicleImpact = false;
         this.dynamicPlacementBlocked = false;
     }
     setLaunchPadsArmed(on) {
@@ -1722,6 +1727,7 @@ export class EucController {
         this.crashSpeed = Math.abs(speed);
         this.crashes += 1;
         this.crashTime = 0;
+        this.recoveryRetrySeconds = 0;
         this.crashBlend = 0;
         this.wheelCrashLean = 0;
         this.recoverTimer = 0;
@@ -1746,6 +1752,8 @@ export class EucController {
         this.ragdolling = t.ragdollEnabled >= 0.5;
         if (this.ragdolling) {
             const setback = highFall ? t.crashHighFallSetbackMetres : 0;
+            const vehicleLaunch = cause === 'obstacle' && motion === undefined && this.vehicleImpact
+                && this.dynamicImpactSpeed >= this.collisionImpact && !highFall;
             this.ragdoll.seed({
                 x: this.x - (highFall ? this.crashTravelX : Math.sin(this.headingY)) * setback,
                 y: bodyY ?? (highFall ? this.y : this.groundY),
@@ -1757,6 +1765,8 @@ export class EucController {
                 speed: highFall ? 0 : speed,
                 cause: this.crashMotion,
                 intoSolid: cause === 'obstacle' && motion === undefined,
+                velocityX: vehicleLaunch ? this.crashVelocityX : undefined,
+                velocityZ: vehicleLaunch ? this.crashVelocityZ : undefined,
                 side: this.crashSide,
                 glance,
             }, t, 1 / SIMULATION.hz);
@@ -1801,11 +1811,14 @@ export class EucController {
     }
     stepCrash(dt, throttle, steer, crouch) {
         const t = this.tuning;
-        const contactBodies = this.dynamicWorld?.ragObstacleBodies?.() ?? this.dynamicWorld?.ragObstacles ?? [];
+        const contactBodies = this.dynamicWorld?.ragObstacleBodies?.(this.ragdolling
+            ? { x: this.ragdoll.positions[RD_PELVIS * 3], z: this.ragdoll.positions[RD_PELVIS * 3 + 2] } : undefined)
+            ?? this.dynamicWorld?.ragObstacles ?? [];
         const contactBefore = contactBodies.length ? createPose() : null;
         if (contactBefore)
             this.writePose(contactBefore);
         this.crashTime += dt;
+        this.recoveryRetrySeconds = Math.max(0, this.recoveryRetrySeconds - dt);
         const response = this.surfaceResponse();
         const forwardX = Math.sin(this.headingY);
         const forwardZ = Math.cos(this.headingY);
@@ -1866,7 +1879,7 @@ export class EucController {
                     bodyTuning = { ...t, ragdollDamping: 0 };
                 }
             }
-            this.ragdoll.step(dt, this.crashTime - this.crashFallSeconds, this.x, this.z, this.sampler, this.softBodies, bodyTuning, contactBodies, this.headingY);
+            this.ragdoll.step(dt, this.crashTime - this.crashFallSeconds, this.x, this.z, this.sampler, this.softBodies, bodyTuning, this.dynamicWorld?.crashObstacleBodies?.({ x: this.ragdoll.positions[RD_PELVIS * 3], z: this.ragdoll.positions[RD_PELVIS * 3 + 2] }) ?? contactBodies, this.headingY);
         }
         if (this.wheelCrashPop > 0 || this.wheelCrashPopVelocity !== 0) {
             this.wheelCrashPopVelocity -= t.gravity * dt;
@@ -1996,6 +2009,11 @@ export class EucController {
         this.blocked = true;
         return true;
     }
+    recover() {
+        if (!this.crashing || this.crashFalling || this.crashTime < this.tuning.crashRecoverEarliestSeconds)
+            return false;
+        return this.respawn();
+    }
     respawn() {
         const t = this.tuning;
         const restored = this.crashSpeed * t.crashRecoverSpeedFactor;
@@ -2094,6 +2112,24 @@ export class EucController {
         this.contactHoldMaskOlder = 0;
     }
     recoveryTarget(restored) {
+        if (this.sampler.findRecoveryTarget) {
+            if (this.recoveryRetrySeconds > 0)
+                return null;
+            this.recoveryRetrySeconds = 0.2;
+            const safePoints = [{ x: this.safeX, y: this.safeY, z: this.safeZ, headingY: this.safeHeading }];
+            const size = POPULATION_CONTACT.recoveryRingPoints;
+            for (let age = 0; age < this.safeRingCount; age++) {
+                const slot = ((this.safeRingNext + size - 1 - age) % size) * 4;
+                if (this.safeRing[slot] === this.safeX && this.safeRing[slot + 1] === this.safeZ && this.safeRing[slot + 3] === this.safeY)
+                    continue;
+                safePoints.push({ x: this.safeRing[slot], y: this.safeRing[slot + 3], z: this.safeRing[slot + 1], headingY: this.safeRing[slot + 2] });
+            }
+            const p = this.ragdoll.positions;
+            return this.sampler.findRecoveryTarget({
+                fallen: this.ragdolling ? { x: p[RD_PELVIS * 3], y: p[RD_PELVIS * 3 + 1], z: p[RD_PELVIS * 3 + 2] } : { x: this.x, y: this.y, z: this.z },
+                safePoints, headingY: this.headingY, maxStepUp: this.tuning.maxStepUp, hull: this.dynamicWorld?.hull,
+            }, target => this.dynamicPlacementClear(target.x, target.z, target.headingY, restored, 'recover', target.y));
+        }
         if (this.dynamicPlacementClear(this.safeX, this.safeZ, this.safeHeading, restored, 'recover')) {
             return { x: this.safeX, y: this.safeY, z: this.safeZ, headingY: this.safeHeading };
         }
@@ -2155,6 +2191,7 @@ export class EucController {
         this.overspeedHold = 0;
         this.crashing = false;
         this.crashTime = 0;
+        this.recoveryRetrySeconds = 0;
         this.crashBlend = 0;
         this.crashSpeed = 0;
         this.crashSide = 1;
@@ -2249,6 +2286,9 @@ export class EucController {
         if (result.chargeImpact !== false) {
             if (result.closingSpeedMetresPerSecond > this.dynamicImpactSpeed) {
                 this.dynamicImpactSpeed = result.closingSpeedMetresPerSecond;
+                this.vehicleImpact = result.vehicleImpact === true && Number.isFinite(result.crashVelocityX) && Number.isFinite(result.crashVelocityZ);
+                this.crashVelocityX = this.vehicleImpact ? result.crashVelocityX : 0;
+                this.crashVelocityZ = this.vehicleImpact ? result.crashVelocityZ : 0;
                 this.dynamicImpactNormalX = result.normalX;
                 this.dynamicImpactNormalZ = result.normalZ;
             }
@@ -2274,6 +2314,7 @@ export class EucController {
         this.blocked = false;
         this.lastStepUp = 0;
         this.dynamicImpactSpeed = 0;
+        this.vehicleImpact = false;
         this.dynamicImpactNormalX = 0;
         this.dynamicImpactNormalZ = 0;
         const ceiling = airborne ? 0 : t.maxStepUp;
@@ -3129,7 +3170,7 @@ export class EucController {
         const world = this.dynamicWorld, placements = [], notifications = [];
         let placementDenied = false;
         working.dynamicWorld = world ? {
-            hull: { ...world.hull }, ragObstacles: world.ragObstacles, ragObstacleBodies: world.ragObstacleBodies, occupantKind: world.occupantKind, resolveMotion: () => null,
+            hull: { ...world.hull }, ragObstacles: world.ragObstacles, ragObstacleBodies: world.ragObstacleBodies, crashObstacleBodies: world.crashObstacleBodies, occupantKind: world.occupantKind, resolveMotion: () => null,
             canPlace: request => {
                 const detached = detachedPlacement(request);
                 placements.push(detached);

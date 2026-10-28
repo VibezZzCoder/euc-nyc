@@ -57,7 +57,7 @@
     "render/euc.js": {
       "source": "src/render/euc.ts",
       "sourceSha256": "c56888018a2a64c99593ccc7a8d3cf3336f357fa249d06b3c2ca4f5e90579f97",
-      "sliced": false
+      "sliced": true
     },
     "render/inkKit.js": {
       "source": "src/render/inkKit.ts",

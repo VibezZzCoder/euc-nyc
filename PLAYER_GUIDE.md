@@ -27,6 +27,9 @@ The title screen links to the [EUC Thrills website](https://euc.erodmen.com/). W
 
 ## Riding
 
+Both riders' wheels have rubber tread, moulded sidewalls and detailed metal hubs. These turn with the wheel's actual
+travel, including in reverse; the shell and pedals stay with the rider.
+
 You ride an electric unicycle through Manhattan, from the Battery to Harlem. A few things are specific to a real
 wheel and worth knowing before they surprise you:
 
@@ -46,12 +49,22 @@ wheel and worth knowing before they surprise you:
 
 Riding into a building, a post, a car, a bus, a person or the edge of the waterfront fast enough is a crash, and so are a
 cut-out and a landing that is too hard. After a moment a prompt shows how to get up: **R** on a keyboard, **B** on a gamepad, **GET UP** on
-a touch screen. You get up where you fell (at the last safe spot if you fell into water). If you just wait, or start leaning again, the wheel puts you back on at
-the last safe spot you rode through.
+a touch screen. Get Up, leaning again and automatic recovery all look for clear, rideable ground near where your body
+finishes falling. Water, unrideable hazards and unsafe or blocked landings send you back to a checked safe riding spot.
+Recovery keeps the correct street/deck level and may turn you toward a clear way out. If every candidate is blocked,
+it waits and checks again; an early Get Up tap is remembered until recovery is ready.
+
+When the wheel hits a vehicle, the rider keeps their incoming momentum until their body meets it. A low hood or trunk
+can catch the rider after they pitch forward; a tall cabin or bus can stop them. Moving cars can also impart a knock.
+Cars and buses remain solid; the wheel still stops at them.
 
 Slower knocks only stop you or scrub your speed.
 
 ## The city
+
+City streets and highways mix taxis, sedans, SUVs, minivans, pickups and high-roof delivery vans. City buses have
+several fictional liveries and route signs; ambient patrol vehicles include sedans and SUVs. Larger vehicles take up
+more space. During a wipeout, a low hood or covered pickup bed behaves differently from a van's tall cargo body.
 
 - **Civic Detention Jail** is an original fictional exterior on the historic north Tombs block, between Centre and
   Baxter Streets and Walker and White Streets. Find it through **Teleport → Civic Detention Jail**, or search **jail**
@@ -206,7 +219,19 @@ teleporting or changing rider from a scenic view temporarily selects Chase witho
   Greenway at Pier 84, plus Civic Detention Jail. Pier 15 deliberately arrives downstairs; ride shoreward up the ramp
   to reach the lawn.
 - **Time of day** (top right): golden hour, midday, blue hour and night. At blue hour and night the wheel's headlight
-  comes on with the cars' and lights the road ahead. Your selected time of day is remembered for the next visit.
+  comes on with the cars' and lights the road ahead. Distant haze follows the sky colour at the horizon.
+  Your selected time of day is remembered for the next visit.
+
+## Frame rate
+
+Use **Frame rate** below the upper-left header to choose **Auto**, **120**, **60** or **30** frames per second. On narrow
+touch screens the label shortens to **FPS**. Auto is uncapped and follows your display and browser; the other choices limit
+how often the city is drawn, which can reduce graphics work.
+They are limits, not guaranteed performance: 120 FPS needs a sufficiently fast display and device; on a 60 Hz display it
+cannot draw more than 60 frames per second. Riding physics, traffic speed and visual detail stay the same.
+
+Click/tap the selector, or reach it with Tab and use the arrow keys. Your choice is saved for the next visit; if browser
+storage is unavailable, it lasts for the current visit. The FPS readout reports the actual rendered rate.
 
 ## What the game saves
 
