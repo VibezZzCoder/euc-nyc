@@ -857,8 +857,10 @@ function walkSignal(time, isAvenue) {
 // the road, where a drive comes out) up to the lawn, at a real entrance. city-grid.js draws them, euc-terrain.js rides them, from this one table.
 // ---------------------------------------------------------------------------------------------------------------------
 const CENTRAL_PARK_OUTLINE = toPts(GEO.centralPark.outline);
-const CENTRAL_PARK_TOP = 1.24;
-const CENTRAL_PARK_GATE_SIZE = Object.freeze({ width: 7, length: 12 });
+// The perimeter slab actually drawn by city-grid, not the other synthetic park blocks returned by blockAt.
+const CENTRAL_PARK_SIDEWALK = BLOCKS.filter(b => b.parkName === 'Central Park').sort((a, b) => b.area - a.area)[0];
+const CENTRAL_PARK_TOP = 1.19; // the drawn lawn slab: bottom 0.85 + thickness 0.34
+const CENTRAL_PARK_GATE_SIZE = Object.freeze({ width: 7, length: 12, landing: 0.62, approach: 1.5 });
 // Ponds and the Reservoir as the wheel sees them (city-grid.js addRideWater, euc-terrain.js): a band `band` m wide
 // along the shore stands `wall` m above the water (more than a charged hop), and inside it the floor is `floorDepth` m
 // under the surface.
@@ -892,8 +894,41 @@ function wallGate(name, x, z) {
     nz = -nz;
   }
   // The ramp starts at whatever lies outside the wall: the perimeter sidewalk, or the road where a drive comes out
-  const base = blockAt(best.px - nx * 1.5, best.pz - nz * 1.5) ? ISLAND_BOUNDS.sidewalkHeight : 0;
-  return Object.freeze({ name, x: best.px, z: best.pz, tx: best.tx, tz: best.tz, nx, nz, edge: best.i, base });
+  const base = CENTRAL_PARK_SIDEWALK && pointInPoly(CENTRAL_PARK_SIDEWALK.poly,
+    best.px - nx * CENTRAL_PARK_GATE_SIZE.approach, best.pz - nz * CENTRAL_PARK_GATE_SIZE.approach)
+    ? ISLAND_BOUNDS.sidewalkHeight : 0;
+  // A road exit must clear the entire drawn sidewalk across its width, not just the centre probe.
+  // Clip its edges to the gate's lateral strip and find the outermost actual slab edge.
+  let approach = base === 0 ? CENTRAL_PARK_GATE_SIZE.approach : 0;
+  if (base === 0 && CENTRAL_PARK_SIDEWALK) for (const p of CENTRAL_PARK_SIDEWALK.poly) {
+    // Include the drawn inset too: concave mitres can extend up to 3 * its 0.25 m inset beyond a local notch.
+    // The cut stays gate-width; this longitudinal bound must reach the outer slab, including those protrusions.
+    approach = Math.max(approach, -((p.x - best.px) * nx + (p.z - best.pz) * nz) + 0.75);
+  }
+  const half = CENTRAL_PARK_GATE_SIZE.width / 2;
+  const approachSlabs = new Set([CENTRAL_PARK_SIDEWALK]);
+  for (const u of [-half, 0, half]) {
+    const b = blockAt(best.px - nx * CENTRAL_PARK_GATE_SIZE.approach + best.tx * u,
+      best.pz - nz * CENTRAL_PARK_GATE_SIZE.approach + best.tz * u);
+    if (b && !(b.park > 0.6 && !b.median)) approachSlabs.add(b);
+  }
+  if (base === 0) for (const b of approachSlabs) {
+    if (!b) continue;
+    const poly = b.poly;
+    const local = p => ({ u: (p.x - best.px) * best.tx + (p.z - best.pz) * best.tz,
+      d: (p.x - best.px) * nx + (p.z - best.pz) * nz });
+    for (let i = 0; i < poly.length; i++) {
+      const a = local(poly[i]), b = local(poly[(i + 1) % poly.length]);
+      if (Math.abs(a.u) <= half) approach = Math.max(approach, -a.d + 0.25);
+      for (const u of [-half, half]) if ((a.u < u) !== (b.u < u)) {
+        const d = a.d + (b.d - a.d) * (u - a.u) / (b.u - a.u);
+        approach = Math.max(approach, -d + 0.25);
+      }
+    }
+  }
+  // Keep the existing architectural posts in place even when a narrow approach island is opened.
+  const postBase = blockAt(best.px - nx * 1.5, best.pz - nz * 1.5) ? ISLAND_BOUNDS.sidewalkHeight : 0;
+  return Object.freeze({ name, x: best.px, z: best.pz, tx: best.tx, tz: best.tz, nx, nz, edge: best.i, base, approach, postBase });
 }
 
 // Real entrances (the named gates of the park wall), placed on the wall by snapping
@@ -912,20 +947,86 @@ const CENTRAL_PARK_GATES = Object.freeze([
   wallGate("Warriors' Gate", avenueX('7'), CENTRAL_PARK_BOUNDS.minZ),
   wallGate("Pioneers' Gate", -90, CENTRAL_PARK_BOUNDS.minZ)
 ]);
+// Physical mouths are derived from every source crossing, including the non-vehicle park paths which are
+// absent from centralPark.paths. Named gates remain identities; overlapping OSM/NYC road surveys share one cut.
+const CENTRAL_PARK_CROSSINGS = [];
+for (const [source, routes] of [['drives', GEO.centralPark.drives], ['roads', GEO.roads
+  .map((r, id) => ({ name: r[0], w: r[1] || 4, pts: r[5], id }))
+  .filter(r => r.name.startsWith('CENTRAL PARK') && !['CENTRAL PARK W', 'CENTRAL PARK S'].includes(r.name))]]) {
+  for (const [index, route] of routes.entries()) for (let segment = 0; segment < route.pts.length - 2; segment += 2) {
+    const p = route.pts, x = p[segment], z = p[segment + 1], dx = p[segment + 2] - x, dz = p[segment + 3] - z;
+    for (let edge = 0; edge < CENTRAL_PARK_OUTLINE.length; edge++) {
+      const a = CENTRAL_PARK_OUTLINE[edge], b = CENTRAL_PARK_OUTLINE[(edge + 1) % CENTRAL_PARK_OUTLINE.length];
+      const ex = b.x - a.x, ez = b.z - a.z, den = dx * ez - dz * ex;
+      if (Math.abs(den) < 1e-8) continue;
+      const rx = a.x - x, rz = a.z - z, t = (rx * ez - rz * ex) / den, u = (rx * dz - rz * dx) / den;
+      if (t < 0 || t >= 1 || u < 0 || u >= 1) continue;
+      const g = wallGate(route.name, x + dx * t, z + dz * t);
+      const across = dx * g.nx + dz * g.nz, along = dx * g.tx + dz * g.tz;
+      const pathWidth = route.transverse ? Math.max(9, route.w || 10) : route.w || 8.5;
+      const half = pathWidth * Math.hypot(dx, dz) / Math.abs(across) / 2;
+      const drift = along / across * (CENTRAL_PARK_GATE_SIZE.length + CENTRAL_PARK_GATE_SIZE.landing);
+      CENTRAL_PARK_CROSSINGS.push(Object.freeze({ ...g, source, sourceId: route.id ?? index, segment: segment / 2,
+        pathWidth, lo: -half + Math.min(0, drift) - .1, hi: half + Math.max(0, drift) + .1 }));
+    }
+  }
+}
+Object.freeze(CENTRAL_PARK_CROSSINGS);
+const CENTRAL_PARK_ENTRANCES = [];
+for (let edge = 0; edge < CENTRAL_PARK_OUTLINE.length; edge++) {
+  const a = CENTRAL_PARK_OUTLINE[edge];
+  const intervals = [...CENTRAL_PARK_GATES.map(g => ({ ...g, lo: -3.5, hi: 3.5, named: true })), ...CENTRAL_PARK_CROSSINGS]
+    .filter(g => g.edge === edge).map(g => {
+      const station = (g.x - a.x) * g.tx + (g.z - a.z) * g.tz;
+      return { g, lo: station + g.lo, hi: station + g.hi, sources: [g] };
+    }).sort((a, b) => a.lo - b.lo);
+  const merged = [];
+  for (const item of intervals) {
+    const last = merged.at(-1);
+    if (last && item.lo <= last.hi + .1) { last.hi = Math.max(last.hi, item.hi); last.sources.push(...item.sources); }
+    else merged.push(item);
+  }
+  for (const item of merged) {
+    const g = item.g, station = (item.lo + item.hi) / 2;
+    const x = a.x + station * g.tx, z = a.z + station * g.tz;
+    const road = item.sources.some(s => !s.named);
+    let approach = Math.max(...item.sources.filter(s => s.named).map(s => s.approach), 1.5);
+    if (road && CENTRAL_PARK_SIDEWALK) {
+      // Follow the local approach to its first street edge, not the farthest projection of the whole park
+      // (a diagonal corner normal otherwise clears tens of metres into an unrelated plaza).
+      for (let d = 1.5; d <= 30; d += .25) {
+        const blocked = [-.49, -.25, 0, .25, .49].some(f => pointInPoly(CENTRAL_PARK_SIDEWALK.poly,
+          x + g.tx * (item.hi - item.lo) * f - g.nx * d, z + g.tz * (item.hi - item.lo) * f - g.nz * d));
+        approach = d + .75;
+        if (!blocked) break;
+      }
+    }
+    if (!road) approach = g.approach;
+    CENTRAL_PARK_ENTRANCES.push(Object.freeze({ ...g, x, z, width: item.hi - item.lo,
+      base: road ? 0 : g.base, approach, sources: Object.freeze(item.sources) }));
+  }
+}
+Object.freeze(CENTRAL_PARK_ENTRANCES);
+const CENTRAL_PARK_GATE_REACH = Math.max(CENTRAL_PARK_GATE_SIZE.length + CENTRAL_PARK_GATE_SIZE.landing,
+  ...CENTRAL_PARK_ENTRANCES.map(g => g.approach)) + Math.max(...CENTRAL_PARK_ENTRANCES.map(g => g.width));
 
 /**
  * The gate ramp at (x, z), grown by `margin` metres all round: { gate, u (along the wall), d (inward from the wall),
- * t (0 at the sidewalk end .. 1 at the lawn) }, or null.
+ * t (0 at the sidewalk end .. 1 at the lawn) }, or null. Always include the inner landing in planting clearance;
+ * `fullEntrance` also includes the road approach for riding and drive clipping.
  */
-function centralParkGateAt(x, z, margin = 0) {
-  const { width, length } = CENTRAL_PARK_GATE_SIZE;
-  for (const g of CENTRAL_PARK_GATES) {
+function centralParkGateAt(x, z, margin = 0, fullEntrance = false) {
+  // Terrain calls this outside the park too; avoid thirteen gate projections for ordinary city queries.
+  const b = CENTRAL_PARK_BOUNDS, reach = CENTRAL_PARK_GATE_REACH + margin;
+  if (x < b.minX - reach || x > b.maxX + reach || z < b.minZ - reach || z > b.maxZ + reach) return null;
+  const { width, length, landing } = CENTRAL_PARK_GATE_SIZE;
+  for (const g of CENTRAL_PARK_ENTRANCES) {
     const rx = x - g.x;
     const rz = z - g.z;
     const d = rx * g.nx + rz * g.nz;
-    if (d < -margin || d > length + margin) continue;
+    if (d < -(fullEntrance ? g.approach : 0) - margin || d > length + landing + margin) continue;
     const u = rx * g.tx + rz * g.tz;
-    if (Math.abs(u) > width / 2 + margin) continue;
+    if (Math.abs(u) > (g.width ?? width) / 2 + margin) continue;
     return { gate: g, u, d, t: Math.max(0, Math.min(1, d / length)) };
   }
   return null;
@@ -934,10 +1035,13 @@ function centralParkGateAt(x, z, margin = 0) {
 export {
   AVENUES,
   CENTRAL_PARK_OUTLINE,
+  CENTRAL_PARK_SIDEWALK,
   CENTRAL_PARK_TOP,
   WATER_RIDE,
   CENTRAL_PARK_GATE_SIZE,
   CENTRAL_PARK_GATES,
+  CENTRAL_PARK_CROSSINGS,
+  CENTRAL_PARK_ENTRANCES,
   inCentralPark,
   centralParkGateAt,
   pointInPoly,

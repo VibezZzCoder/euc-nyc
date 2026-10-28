@@ -40,11 +40,13 @@ import {
   EAST_RIVER_BRIDGES,
   CUT_Z,
   CENTRAL_PARK_OUTLINE,
+  CENTRAL_PARK_SIDEWALK,
   CENTRAL_PARK_TOP,
   WATER_RIDE,
   CENTRAL_PARK_GATE_SIZE,
   CENTRAL_PARK_GATES,
-  centralParkGateAt,
+  CENTRAL_PARK_ENTRANCES,
+  inCentralPark,
   SEAWALL_POLYGON,
   ESPLANADE_RAIL,
   BATTERY_RAIL
@@ -1806,12 +1808,12 @@ function notchCentralParkWall(ring) {
     const len = Math.hypot(ex, ez) || 1;
     const ux = ex / len;
     const uz = ez / len;
-    const gates = CENTRAL_PARK_GATES.filter((g) => g.edge === i)
+    const gates = CENTRAL_PARK_ENTRANCES.filter((g) => g.edge === i)
       .map((g) => ({ g, t: (g.x - a.x) * ux + (g.z - a.z) * uz }))
       .sort((p, q) => p.t - q.t);
     for (const { g } of gates) {
-      const hx = ux * width / 2;
-      const hz = uz * width / 2;
+      const hx = ux * (g.width ?? width) / 2;
+      const hz = uz * (g.width ?? width) / 2;
       const nx = g.nx * length;
       const nz = g.nz * length;
       out.push({ x: g.x - hx, z: g.z - hz }, { x: g.x - hx + nx, z: g.z - hz + nz });
@@ -1819,6 +1821,55 @@ function notchCentralParkWall(ring) {
     }
   }
   return out;
+}
+
+// Cut only road-level gate corridors from the perimeter slabs, never their navigation footprints.
+const centralParkEntranceCuts = CENTRAL_PARK_ENTRANCES.map(g => {
+  const { length, landing } = CENTRAL_PARK_GATE_SIZE;
+  const width = g.width;
+  const cut = [[-width / 2, -g.approach], [width / 2, -g.approach],
+    [width / 2, length + landing], [-width / 2, length + landing]].map(([u, d]) => ({
+    x: g.x + g.tx * u + g.nx * d, z: g.z + g.tz * u + g.nz * d
+  }));
+  return { base: g.base, cut, minX: Math.min(...cut.map(p => p.x)), maxX: Math.max(...cut.map(p => p.x)),
+    minZ: Math.min(...cut.map(p => p.z)), maxZ: Math.max(...cut.map(p => p.z)) };
+});
+const centralParkRoadGateCuts = centralParkEntranceCuts.filter(c => c.base === 0);
+function cutCentralParkSidewalk(poly, cuts = centralParkRoadGateCuts) {
+  let pieces = [poly];
+  for (const { cut, minX, maxX, minZ, maxZ } of cuts) {
+    pieces = pieces.flatMap(p => p.every(v => v.x < minX) || p.every(v => v.x > maxX)
+      || p.every(v => v.z < minZ) || p.every(v => v.z > maxZ) ? [p]
+      : subtractConvex(p, cut).filter(p => Math.abs(polygonCentroidArea(p)) > 1e-6));
+  }
+  return pieces;
+}
+
+// Vertical slab edges, not a pitched box: the front top is exactly at the approach height.
+// A flat inner landing bridges the lawn's 0.6 m inset, with 2 cm of overlap at the join.
+function createCentralParkGateGeometry(g) {
+  const { length, landing } = CENTRAL_PARK_GATE_SIZE;
+  const width = g.width ?? CENTRAL_PARK_GATE_SIZE.width;
+  const vertices = [], indices = [];
+  for (const bottom of [false, true]) for (const [d, y] of [[0, g.base], [length, CENTRAL_PARK_TOP], [length + landing, CENTRAL_PARK_TOP]]) {
+    for (const x of [-width / 2, width / 2]) vertices.push(x, y - (bottom ? 0.3 : 0), d);
+  }
+  for (let i = 0; i < 4; i += 2) {
+    indices.push(i, i + 2, i + 1, i + 1, i + 2, i + 3); // top
+    indices.push(i + 6, i + 7, i + 8, i + 7, i + 9, i + 8); // bottom
+    indices.push(i, i + 6, i + 2, i + 2, i + 6, i + 8); // left
+    indices.push(i + 1, i + 3, i + 7, i + 3, i + 9, i + 7); // right
+  }
+  indices.push(0, 1, 6, 1, 7, 6, 4, 10, 5, 5, 10, 11);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(vertices.length / 3 * 2), 2));
+  geo.setIndex(indices);
+  // Separate face normals retain the original slab's crisp side cheeks.
+  const flat = geo.toNonIndexed();
+  geo.dispose();
+  flat.computeVertexNormals();
+  return flat;
 }
 
 // Shared construction data for park clearance, the drawn waterfront and its ambient lanes. Keep the original
@@ -2034,7 +2085,9 @@ function buildCityGrid(scene) {
     // Planted malls down the middle of Park Ave, Broadway (Upper West Side), Allen St...: a clipped hedge on the slab
     if (b.median && Math.min(b.maxX - b.minX, b.maxZ - b.minZ) > 2.2) {
       const hedge = offsetPolygonInward(b.poly, 1.0);
-      if (hedge) hedgeGeos.push(createExtrudedPolygonMesh(hedge, SW_TOP, 0.55, medianHedgeMat).geometry);
+      if (hedge) for (const piece of cutCentralParkSidewalk(hedge)) {
+        hedgeGeos.push(createExtrudedPolygonMesh(piece, SW_TOP, 0.55, medianHedgeMat).geometry);
+      }
     }
   }
   const mergeInto = (geos, mat, cast = false) => {
@@ -2210,19 +2263,21 @@ function buildCityGrid(scene) {
   const zeroSlab = new THREE.Matrix4().makeScale(0, 0, 0);
   rectSlabs.forEach((blk, i) => {
     const poly = rectPolygon(blk.cx - blk.w / 2, blk.cx + blk.w / 2, blk.cz - blk.d / 2, blk.cz + blk.d / 2);
-    if (!localRoadCuts.some(c => c.minX < blk.cx + blk.w / 2 && c.maxX > blk.cx - blk.w / 2
-      && c.minZ < blk.cz + blk.d / 2 && c.maxZ > blk.cz - blk.d / 2)) return;
+    const gatePieces = cutCentralParkSidewalk(poly);
+    if (gatePieces.length === 1 && gatePieces[0] === poly
+      && !localRoadCuts.some(c => c.minX < blk.cx + blk.w / 2 && c.maxX > blk.cx - blk.w / 2
+        && c.minZ < blk.cz + blk.d / 2 && c.maxZ > blk.cz - blk.d / 2)) return;
     swInstanced.setMatrixAt(i, zeroSlab); curbInstanced.setMatrixAt(i, zeroSlab);
-    for (const p of clearWaterfrontRoad(poly)) curbGeos.push(createExtrudedPolygonMesh(p, 0.01, 0.17, curbMat).geometry);
+    for (const p of gatePieces.flatMap(p => clearWaterfrontRoad(p))) curbGeos.push(createExtrudedPolygonMesh(p, 0.01, 0.17, curbMat).geometry);
     const inner = offsetPolygonInward(poly, 0.25);
-    if (inner) for (const p of clearWaterfrontRoad(inner)) slabGeos.push(createExtrudedPolygonMesh(p, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
+    if (inner) for (const p of cutCentralParkSidewalk(inner).flatMap(p => clearWaterfrontRoad(p))) slabGeos.push(createExtrudedPolygonMesh(p, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
   });
   // Also notch the narrow ordinary curb island at the north entry. Only its drawing / rider floor changes;
   // roadSidewalks and blockSidewalks retain the exact original bounds for the street traffic network.
   for (const b of irregularSidewalks) {
-    for (const piece of clearWaterfrontRoad(b.poly)) curbGeos.push(createExtrudedPolygonMesh(piece, 0.0, 0.18, curbMat).geometry);
+    for (const piece of clearWaterfrontRoad(b.poly).flatMap(p => cutCentralParkSidewalk(p))) curbGeos.push(createExtrudedPolygonMesh(piece, 0.0, 0.18, curbMat).geometry);
     const inner = offsetPolygonInward(b.poly, 0.25);
-    if (inner) for (const piece of clearWaterfrontRoad(inner)) slabGeos.push(createExtrudedPolygonMesh(piece, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
+    if (inner) for (const piece of clearWaterfrontRoad(inner).flatMap(p => cutCentralParkSidewalk(p))) slabGeos.push(createExtrudedPolygonMesh(piece, 0.03, SW_TOP - 0.03, sidewalkMat).geometry);
   }
   mergeInto(curbGeos, curbMat, true);
   mergeInto(slabGeos, sidewalkMat);
@@ -2445,43 +2500,48 @@ function buildCityGrid(scene) {
   const cpSite = (name) => CPG.sites.find((t) => t.name === name);
 
   // Perimeter sidewalk: the park's curb island (BLOCKS), with the schist wall along the real park line inside it
-  const cpBlock = BLOCKS.filter((b) => b.parkName === 'Central Park').sort((a, b) => b.area - a.area)[0];
+  const cpBlock = CENTRAL_PARK_SIDEWALK;
   if (cpBlock) {
-    group.add(createExtrudedPolygonMesh(cpBlock.poly, 0.0, 0.18, curbMat, true, true));
-    addRideTop(cpBlock.poly, 0.22); // the perimeter sidewalk: a kerb to hop like any other
+    for (const poly of cutCentralParkSidewalk(cpBlock.poly)) {
+      group.add(createExtrudedPolygonMesh(poly, 0.0, 0.18, curbMat, true, true));
+      addRideTop(poly, 0.22); // retain ordinary kerbs outside the entrance cuts
+    }
     const sw = offsetPolygonInward(cpBlock.poly, 0.25);
-    if (sw) group.add(createExtrudedPolygonMesh(sw, 0.03, 0.19, sidewalkMat));
+    if (sw) for (const poly of cutCentralParkSidewalk(sw)) group.add(createExtrudedPolygonMesh(poly, 0.03, 0.19, sidewalkMat));
     addFootprint((cpBlock.minX + cpBlock.maxX) * 0.5, (cpBlock.minZ + cpBlock.maxZ) * 0.5, cpBlock.maxX - cpBlock.minX, cpBlock.maxZ - cpBlock.minZ);
   }
   // Low coursed-schist perimeter wall (~0.8 m above the sidewalk) with the lawn a little inside it. The gates
   // (city-config.js CENTRAL_PARK_GATES, real entrances) are notches in the wall and the lawn with a paved ramp up from
   // the sidewalk: the only ways the wheel rides in
-  const cpWall = notchCentralParkWall(CENTRAL_PARK_OUTLINE);
-  group.add(createExtrudedPolygonMesh(cpWall, 0.0, 1.05, createParkWallMaterial(), true, false));
-  const cpLawnPts = offsetPolygonInward(cpWall, 0.6) || cpWall;
-  group.add(createExtrudedPolygonMesh(cpLawnPts, 0.85, 0.34, cpLawnMat, true, false));
+  const wallMat = createParkWallMaterial();
+  for (const poly of cutCentralParkSidewalk(CENTRAL_PARK_OUTLINE, centralParkEntranceCuts)) {
+    group.add(createExtrudedPolygonMesh(poly, 0.0, 1.05, wallMat, true, false));
+  }
+  // Inset the original ring before cutting: offsetting subtraction fragments invents seams, and a notch
+  // extending across a corner edge can self-intersect. The shared entrance slab bridges these exact cuts.
+  const cpLawnPts = offsetPolygonInward(CENTRAL_PARK_OUTLINE, 0.6) || CENTRAL_PARK_OUTLINE;
+  for (const poly of cutCentralParkSidewalk(cpLawnPts, centralParkEntranceCuts)) {
+    group.add(createExtrudedPolygonMesh(poly, 0.85, 0.34, cpLawnMat, true, false));
+  }
   {
-    const { width: GW, length: GL } = CENTRAL_PARK_GATE_SIZE;
-    const slab = 0.3;
-    for (const g of CENTRAL_PARK_GATES) {
-      const rise = CENTRAL_PARK_TOP - g.base;
-      const pitch = Math.atan2(rise, GL);
-      const rampGeo = new THREE.BoxGeometry(GW + 0.02, slab, Math.hypot(GL, rise));
+    for (const g of CENTRAL_PARK_ENTRANCES) {
+      const rampGeo = createCentralParkGateGeometry(g);
       setPavingStyle(rampGeo, 0);
       const ramp = new THREE.Mesh(rampGeo, pavingMat);
-      // the slab's top runs from what is outside the wall (sidewalk or road, g.base) to the lawn GL inside
-      const mid = g.base + rise / 2 - (slab / 2) / Math.cos(pitch);
-      ramp.position.set(g.x + g.nx * GL / 2, mid, g.z + g.nz * GL / 2);
-      ramp.rotation.order = 'YXZ';
-      ramp.rotation.set(-pitch, Math.atan2(g.nx, g.nz), 0);
+      ramp.position.set(g.x, 0, g.z);
+      ramp.rotation.y = Math.atan2(g.nx, g.nz);
       ramp.receiveShadow = true;
       group.add(ramp);
+      addRideMesh(ramp, 'brick');
+    }
+    for (const g of CENTRAL_PARK_GATES) {
+      const opening = CENTRAL_PARK_ENTRANCES.find(e => e.sources.some(s => s.named && s.name === g.name));
       // stone piers either side of the opening, as at the real gates
       for (const side of [-1, 1]) {
-        const px = g.x + g.tx * side * (GW / 2 + 0.45) - g.nx * 0.1;
-        const pz = g.z + g.tz * side * (GW / 2 + 0.45) - g.nz * 0.1;
-        addBox(cpWallMat, px, g.base, pz, 0.9, 1.65, 0.9, Math.atan2(g.nx, g.nz));
-        addRideSolid(px, pz, 0.9, 0.9, 0, g.base + 1.65, Math.atan2(g.nx, g.nz));
+        const px = opening.x + g.tx * side * (opening.width / 2 + 0.45) - g.nx * 0.1;
+        const pz = opening.z + g.tz * side * (opening.width / 2 + 0.45) - g.nz * 0.1;
+        addBox(cpWallMat, px, g.postBase, pz, 0.9, 1.65, 0.9, Math.atan2(g.nx, g.nz));
+        addRideSolid(px, pz, 0.9, 0.9, 0, g.postBase + 1.65, Math.atan2(g.nx, g.nz));
       }
     }
   }
@@ -2516,43 +2576,12 @@ function buildCityGrid(scene) {
   // The loop drives (East, West, Center & Terrace Drives, car-free) and the four transverse roads crossing the park
   const cpDrives = [];
   const cpTransverses = [];
-  // A drive reaching a gate stops where the ramp begins, so it never floats over the cut in the wall
-  function clipAtGates(waypoints, width) {
-    const margin = width * 0.5 + 0.5;
-    const reach = CENTRAL_PARK_GATE_SIZE.length + CENTRAL_PARK_GATE_SIZE.width + margin;
-    const runs = [];
-    let run = [];
-    // samples on one source segment are collinear: keep only the run's ends on it
-    const add = (x, z, seg) => {
-      if (centralParkGateAt(x, z, margin)) {
-        if (run.length > 1) runs.push(run.map(([px, pz]) => [px, pz]));
-        run = [];
-        return;
-      }
-      const n = run.length;
-      if (n >= 2 && run[n - 1][2] === seg && run[n - 2][2] === seg) run[n - 1] = [x, z, seg];
-      else run.push([x, z, seg]);
-    };
-    add(waypoints[0][0], waypoints[0][1], 0);
-    for (let i = 0; i < waypoints.length - 1; i++) {
-      const [x1, z1] = waypoints[i];
-      const [x2, z2] = waypoints[i + 1];
-      const dx = x2 - x1;
-      const dz = z2 - z1;
-      const near = CENTRAL_PARK_GATES.some((g) => {
-        const cx = g.x + g.nx * CENTRAL_PARK_GATE_SIZE.length * 0.5;
-        const cz = g.z + g.nz * CENTRAL_PARK_GATE_SIZE.length * 0.5;
-        const t = Math.max(0, Math.min(1, ((cx - x1) * dx + (cz - z1) * dz) / (dx * dx + dz * dz || 1)));
-        return Math.hypot(cx - x1 - dx * t, cz - z1 - dz * t) < reach;
-      });
-      const n = near ? Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.5)) : 1;
-      for (let k = 1; k <= n; k++) add(x1 + (dx * k) / n, z1 + (dz * k) / n, i);
-    }
-    if (run.length > 1) runs.push(run.map(([px, pz]) => [px, pz]));
-    return runs;
-  }
+  // Exact clipping of the drawn ribbon footprint, not just its centreline. The source surveys extend onto
+  // surrounding streets; those ends must not become 1.24 m platforms outside the raised park.
+  const parkTriangles = THREE.ShapeUtils.triangulateShape(CENTRAL_PARK_OUTLINE.map(p => new THREE.Vector2(p.x, p.z)), [])
+    .map(ids => ids.map(i => CENTRAL_PARK_OUTLINE[i]));
   function buildParkDriveRibbon(waypoints, width, y) {
-    for (const run of clipAtGates(waypoints, width)) buildParkDriveRibbonRun(run, width, y);
+    buildParkDriveRibbonRun(waypoints, width, y);
   }
   function buildParkDriveRibbonRun(waypoints, width, y) {
     for (let i = 0; i < waypoints.length - 1; i++) {
@@ -2562,12 +2591,23 @@ function buildCityGrid(scene) {
       const dz = z2 - z1;
       const len = Math.hypot(dx, dz) + Math.min(2.5, width * 0.3);
       if (len < 0.5) continue;
-      const seg = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, len), cpDriveMat);
-      seg.position.set((x1 + x2) * 0.5, y, (z1 + z2) * 0.5);
-      seg.rotation.y = Math.atan2(dx, dz);
-      seg.receiveShadow = true;
-      group.add(seg);
-      addRideMesh(seg, 'pavement');
+      const distance = Math.hypot(dx, dz), nx = -dz / distance, nz = dx / distance;
+      const cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
+      const poly = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, d]) => ({
+        x: cx + nx * width / 2 * u + dx / distance * len / 2 * d,
+        z: cz + nz * width / 2 * u + dz / distance * len / 2 * d
+      }));
+      let pieces = poly.every(p => inCentralPark(p.x, p.z)) ? [poly]
+        : parkTriangles.map(t => clipPolygonToConvex(poly, t)).filter(p => p.length >= 3 && Math.abs(polygonCentroidArea(p)) > 1e-6);
+      pieces = pieces.flatMap(p => cutCentralParkSidewalk(p, centralParkEntranceCuts));
+      for (const p of pieces) {
+        const unchanged = p === poly;
+        const seg = unchanged ? new THREE.Mesh(new THREE.BoxGeometry(width, .08, len), cpDriveMat)
+          : createExtrudedPolygonMesh(p, y - .04, .08, cpDriveMat);
+        if (unchanged) { seg.position.set(cx, y, cz); seg.rotation.y = Math.atan2(dx, dz); seg.receiveShadow = true; }
+        group.add(seg);
+        addRideMesh(seg, 'pavement');
+      }
     }
   }
   for (const d of CPG.drives) {

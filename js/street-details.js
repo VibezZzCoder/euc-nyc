@@ -200,7 +200,7 @@ function buildStreetDetails(scene) {
       new THREE.CylinderGeometry(LENS_R + 0.03, LENS_R + 0.03, 0.24, 14, 1, true, Math.PI / 2, Math.PI)
         .rotateX(Math.PI / 2).translate(0, ly, HEAD_D / 2 + 0.12)
     ))
-  ].map((g) => g.toNonIndexed()));
+  ]);
   const signalLensGeo = mergeGeometries(LENS_Y.flatMap((ly) => bothFaces(new THREE.CircleGeometry(LENS_R, 18).translate(0, ly, HEAD_D / 2 + 0.004))));
   // Pedestrian signal: housing with the WALK / hand face lit on both sides (+-z, toward the crosswalk's far end)
   const walkHousingGeo = new THREE.BoxGeometry(0.34, 0.4, 0.24);
@@ -215,7 +215,7 @@ function buildStreetDetails(scene) {
     pedLampBaseGeo,
     pedLampShaftGeo,
     new THREE.CylinderGeometry(0.14, 0.07, 0.16, 10).translate(0, 3.62, 0)
-  ].map((g) => g.toNonIndexed()));
+  ]);
   const pedGlobeGeo = new THREE.SphereGeometry(0.23, 12, 10).translate(0, 3.84, 0);
 
   // =========================================================================

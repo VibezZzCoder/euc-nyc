@@ -39,6 +39,7 @@ import {
   createCurtainWallMaterial,
   createFacadeBoxes,
   createBillboardMaterial,
+  filteredPulse,
   WALL_KINDS
 } from './tsl-materials.js';
 import { GEO } from './nyc-geodata.js';
@@ -1422,28 +1423,6 @@ function buildCityBlocks(scene) {
     }
   }
 
-  // Low-rise waterfront blocks: warehouses, garages and small walk-ups (keeps the East River skyline view open)
-  function lowriseBlock(blk, cfg, x0, x1) {
-    const { minZ, maxZ } = blk;
-    const halfD = (maxZ - minZ) * 0.5;
-    let x = x0;
-    while (x1 - x > 0.5) {
-      let w = range(10, 26);
-      if (x1 - x - w < 8) w = x1 - x;
-      const lots = chance(0.6)
-        ? [rect(x, x + w, minZ, maxZ)]
-        : [rect(x, x + w, minZ, minZ + halfD), rect(x, x + w, maxZ - halfD, maxZ)];
-      for (const lot of lots) {
-        const mat = pickW([[1, 4], [0, 3], [3, 1]]);
-        const f = irange(cfg.floors[0], cfg.floors[1]);
-        const b = building(blk, mat, lot);
-        mass(b, [lot], 0, f);
-        commit(blk, b, { cornice: mat <= 2 && chance(0.6), corniceH: 0.6, roof: f >= 5 ? 'walkup' : 'none', wtP: 0.3 });
-      }
-      x += w;
-    }
-  }
-
   // East River lots between 1st Ave and the FDR Drive (23rd–58th St), too narrow for regular lots: a 2-4 storey podium
   // with a slab rising from it, as tall as the lot is wide allows (Kips Bay & NYU Langone hospital slabs, glass towers
   // on the old power-plant site at 35th–41st St, Beekman & Sutton Place apartment towers). On the 42nd–45th St superblock
@@ -1505,7 +1484,6 @@ function buildCityBlocks(scene) {
     loft: loftBlock,
     office: officeBlock,
     projects: projectsBlock,
-    lowrise: lowriseBlock,
     river: riverfrontBlock
   };
 
@@ -1741,7 +1719,6 @@ function buildCityBlocks(scene) {
 
   const PROJECTS = { kind: 'projects', floors: [12, 20], mats: [[1, 8], [0, 2]] };
   const PROJECTS_STUY_TOWN = { ...PROJECTS, floors: [12, 14], mats: [[1, 1]] };
-  const LOWRISE = { kind: 'lowrise', floors: [2, 7] };
   const RIVERFRONT = { kind: 'river' };
 
   const CPB = CENTRAL_PARK_BOUNDS;
@@ -1812,7 +1789,7 @@ function buildCityBlocks(scene) {
    * architectural features (stone cornices, water towers, rooftop bulkheads, fire escapes, awnings, storefront
    * fascia signs, and scaffolding sheds) into the Quadtree.
    */
-  function populateBlock(minX, maxX, minZ, maxZ, colIndex, rowIndex, isOuter = false, lowRiseEsplanade = false, district = 'midtown', civicJail = false) {
+  function populateBlock(minX, maxX, minZ, maxZ, district = 'midtown', civicJail = false) {
     const bw = maxX - minX;
     const bd = maxZ - minZ;
     if (bw < (district === 'riverfront' ? 9 : minLot) || bd < minLot) return;
@@ -1848,7 +1825,7 @@ function buildCityBlocks(scene) {
     // Times Square's billboards hang on the walls of the lots fronting the bowtie (section B7), so a sheer wall rises
     // flush there
     const flush = { w: false, e: false };
-    if (TS && !isOuter && (xf || (maxZ > TS.zN && minZ < TS.zS))) {
+    if (TS && (xf || (maxZ > TS.zN && minZ < TS.zS))) {
       const za = xf ? minZ : Math.max(minZ, TS.zN);
       const zb = xf ? maxZ : Math.min(maxZ, TS.zS);
       flush.w = frontsBowtie(minX, -1, za, zb);
@@ -1866,7 +1843,7 @@ function buildCityBlocks(scene) {
       else x1 -= w;
     }
     if (x1 - x0 > 0.5) {
-      const profile = lowRiseEsplanade ? LOWRISE : blockProfile(blockDetail, district);
+      const profile = blockProfile(blockDetail, district);
       LAYOUTS[profile.kind](blockDetail, profile, x0, x1);
     }
     openOntoVoidLots(blockDetail);
@@ -2026,7 +2003,7 @@ function buildCityBlocks(scene) {
         for (const part of minusReserves(r)) {
           for (const [x0, x1, z0, z1] of splitDeep(part)) {
             if (x1 - x0 < minLot || z1 - z0 < minLot) continue;
-            populateBlock(x0, x1, z0, z1, 0, 0, false, false, b.district, b.id === CIVIC_JAIL.blockId);
+            populateBlock(x0, x1, z0, z1, b.district, b.id === CIVIC_JAIL.blockId);
           }
         }
       }
@@ -2225,10 +2202,12 @@ function buildCityBlocks(scene) {
   const woodMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.78 });
   woodMat.colorNode = Fn(() => {
     const u = uv();
-    const staveSeam = smoothstep(0.08, 0.0, abs(fract(u.x.mul(28.0)).sub(0.5)));
+    // Preserve the average width of seams and hoops when they become smaller than a pixel.
+    const staveCoord = u.x.mul(28.0);
+    const staveSeam = filteredPulse(fract(staveCoord), 0.46, 0.54, fwidth(staveCoord));
     const staveTone = mix(color(0x8e6343), color(0x5c3e26), staveSeam.mul(0.55));
-    const bandY = fract(u.y.mul(5.0));
-    const isHoop = smoothstep(0.11, 0.05, abs(bandY.sub(0.5)));
+    const bandCoord = u.y.mul(5.0);
+    const isHoop = filteredPulse(fract(bandCoord), 0.42, 0.58, fwidth(bandCoord));
     return mix(staveTone, color(0x1f2328), isHoop);
   })();
   const roofCapMat = new THREE.MeshStandardNodeMaterial({ color: 0x3b4045, roughness: 0.65, metalness: 0.3 });
@@ -2289,11 +2268,14 @@ function buildCityBlocks(scene) {
     const fan2 = length(u.sub(vec2(0.7, 0.5)));
     const fanDist = min(fan1, fan2);
     const inFanWell = smoothstep(0.19, 0.17, fanDist);
-    const fanRing = smoothstep(0.025, 0.008, abs(fract(fanDist.mul(16.0)).sub(0.5))).mul(inFanWell);
+    // Average subpixel slats and fan rings instead of letting them shimmer at a distance.
+    const fanCoord = fanDist.mul(16.0);
+    const fanRing = filteredPulse(fract(fanCoord), 0.4835, 0.5165, fwidth(fanCoord)).mul(inFanWell);
     const topCol = mix(color(0x889098), color(0x1b2026), inFanWell.mul(0.82).sub(fanRing.mul(0.45)));
 
     const inLouverBox = step(0.12, u.x).mul(step(u.x, 0.88)).mul(step(0.18, u.y)).mul(step(u.y, 0.82));
-    const louverSlat = step(0.45, fract(u.y.mul(14.0))).mul(inLouverBox);
+    const slatCoord = u.y.mul(14.0);
+    const louverSlat = filteredPulse(fract(slatCoord), 0.45, 1.0, fwidth(slatCoord)).mul(inLouverBox);
     const panelSeam = smoothstep(0.03, 0.0, abs(fract(u.x.mul(3.0)).sub(0.5)));
     const sideCol = mix(color(0x7c848c), color(0x282e36), max(louverSlat.mul(0.72), panelSeam.mul(0.35)));
     return mix(sideCol, topCol, isTop);
@@ -2491,7 +2473,7 @@ function buildCityBlocks(scene) {
         awningInst.setMatrixAt(awningCount, dummy.matrix);
         awningInst.setColorAt(awningCount, awningPalette[a.colorIdx % awningPalette.length]);
 
-        const themeIdx = awningCount % signInsts.length;
+        const themeIdx = a.colorIdx % signInsts.length;
         if (signCounts[themeIdx] < MAX_SIGNS_PER_THEME) {
           dummy.position.set(a.x, 4.68, a.z);
           dummy.scale.set(0.28, 0.86, a.d * 0.92);

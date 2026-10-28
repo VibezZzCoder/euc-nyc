@@ -14,6 +14,9 @@ WebGPU is unavailable. Keyboard, gamepad and touch controls work. Sound starts a
 After loading, the title screen shows the city with your rider in it. Pick **Cool Rider** or **Trollina**, then
 press **Ride** (or Enter, or A on a gamepad). You can still change rider at any time while riding.
 
+The loader names the current stage and counts completed shader batches. After shader compilation, it prepares shadows
+and waits for the first graphics frame before showing the title.
+
 If the game cannot start, the loading screen shows an explanation and a **Retry** button. A graphics failure includes
 browser and hardware-acceleration tips; a failed download suggests checking your connection. **Technical details** can
 be expanded to help troubleshoot. Retry reloads the page and keeps your saved settings. If a link opened inside another
@@ -58,11 +61,13 @@ Slower knocks only stop you or scrub your speed.
   hitting you at speed knocks you down.
 - **People are solid too.** They step aside if they see you coming. Bump one and they stumble out of the way and let
   you know what they think of it.
-- **Central Park** sits behind its low stone wall, a metre above the street. Ride in by its gates, which are the real
+- **Central Park** sits behind its low stone wall, a metre above the street. All 13 gates have ramped entrances and
+  inner landings for riding in or out without hopping; ordinary kerbs elsewhere still need a hop. These are the real
   entrances: on Central Park South at 6th Ave, 7th Ave, 8th Ave and near 5th Ave; on 5th Ave at 72nd, 90th and 102nd
   St; on Central Park West at 72nd, 85th and 100th St; and on 110th St. Inside, the ponds and the Reservoir are water,
   not ground: the wheel stops at the shore, and hit it fast and you go in. The Reservoir's running track is a raised
-  loop you can hop onto.
+  loop you can hop onto. Ramped openings also serve the park-road mouths near W65, W81, E79 and W106/Great Hill;
+  the W106 ramps meet grass inside the park rather than a continuous paved path.
 - **Bryant Park** stands on a raised terrace. Ride up by the two ramps on its 6th Ave side, either side of the
   fountain; the lawn is a kerb higher again.
 - **The squares** (Madison, Union, Washington and Tompkins Square Parks) have iron fences: ride in by their gates.
@@ -76,6 +81,10 @@ Slower knocks only stop you or scrub your speed.
   Low objects stop at their visible heights, rather than having tall invisible walls over them.
 - **Buildings are solid exactly where they stand.** Plazas, the lawns round housing towers, gaps between buildings and
   the open ground under raised buildings (601 Lexington Avenue's stilts, the tram station) can be ridden.
+- **Storefronts keep their identity:** a shop's sign and matching light colour stay the same as nearby architectural
+  details load while you ride around it.
+- **Rooftop detail:** water-tower bands and ventilation grilles use filtered patterns to reduce shimmer at a distance.
+  Thin park and waterfront railings also use filtered coverage while keeping their physical bodies and entrances.
 - **The waterfront** can be ridden out to the river: along the Hudson and the East River you go all the way to the
   esplanade's iron railing, round the Battery to its railing, and where there is no railing to the edge of the quay.
   Ride through open pier entrances onto their promenades. Pier decks, raised lawns, benches, posts, railings and
@@ -122,11 +131,15 @@ siren gets louder the closer he is, his blip flashes on the radar, and at night 
 - **Fourth knockdown: captured.** The next successful paddle hit takes you to **Civic Detention** for a short,
   slightly incompetent booking at the White Street intake desk. The first three hits always remain warnings.
 - **Back to riding:** the booking reaches its release button in about nine seconds. Click/tap **Back to riding**,
-  press **Enter / Space**, or use gamepad **A / Start**. You return upright on the jail-side pavement, facing along
+  press a fresh **Enter / Space** on the focused button, or use a fresh gamepad **A** after returning the controls to
+  neutral. You return upright on the jail-side pavement, facing along
   **White Street toward Centre Street**, with heat cleared and a quiet spell before Dorkins ambushes again.
   There is no fine or wheel penalty.
-- **Skip:** use **Skip booking**, **Esc**, or gamepad **B** at any point. A busy exit is checked before releasing you;
-  if asked to try again, the scene stays safely open. Held gamepad controls need releasing before they ride again.
+- **Skip:** click/tap **Skip booking** at any point. Capture initially focuses the heading, so keyboard users press
+  **Tab** to select Skip, then a fresh **Enter / Space**. On a controller, release the buttons/triggers and centre both
+  sticks, select Skip with the **D-pad / left stick**, then press a fresh **A**. Selecting and pressing A together only
+  selects the button. **Esc, B and Start do not skip or confirm booking.** A busy exit is checked before releasing you;
+  if asked to try again, the scene stays safely open. Release held keys/gamepad controls before riding again.
 - Booking suspends riding/map/camera/rider input. It preserves your saved view preferences, then automatically frames
   release in Chase. Backgrounding pauses the booking; reloading during it resumes outside the jail.
 - `?cop=0` at the end of the address leaves him out.
@@ -168,6 +181,7 @@ Three follow cameras (*3rd-Person Chase*, *Low-Angle Action*, *First-Person*); t
 wall rather than into it. And scenic views around the city: Central
 Park, 5th Ave and the Empire State Building, Times Square, 42nd St, the Empire State observatory deck, Bryant Park, the
 East River, and an aerial auto-director. Pick one from the camera menu (bottom right; top right on touch screens).
+**Central Park Oasis** looks from above the southern canopy toward the park and skyline.
 Your chosen camera returns when you press **Ride** on your next visit. The title screen still circles the rider;
 teleporting or changing rider from a scenic view temporarily selects Chase without replacing your saved choice.
 

@@ -1482,8 +1482,11 @@ body.title-open .chase-banner { visibility: hidden; }
 .booking-release { width: 100%; min-height: 48px; padding: 12px; border: 0; border-radius: 6px; color: #f5eddb; background: #235843; font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; }
 .booking-release:disabled { opacity: .35; cursor: default; }
 .booking-pad-hint { display: none; margin: 8px 0 0; font-size: 11px; }
-body[data-input='gamepad'] .booking-pad-hint { display: block; }
-.booking-skip:focus-visible, .booking-release:focus-visible { outline: 3px solid #d19c18; outline-offset: 3px; }
+body[data-input='gamepad'] .booking-pad-hint,
+.booking-overlay[data-pad-focus='true'] .booking-pad-hint { display: block; }
+.booking-skip:focus-visible, .booking-release:focus-visible,
+.booking-overlay[data-pad-focus='true'] .booking-skip:focus,
+.booking-overlay[data-pad-focus='true'] .booking-release:focus { outline: 3px solid #d19c18; outline-offset: 3px; }
 .booking-overlay[data-phase='captured'] { background: #081119b3; }
 .booking-overlay[data-phase='captured'] .booking-heading { top: 36%; left: 50%; transform: translate(-50%, -50%); width: 90%; text-align: center; }
 .booking-overlay[data-phase='captured'] .booking-heading h2 { font-size: clamp(60px, 10vw, 120px); }

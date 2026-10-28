@@ -396,7 +396,7 @@ test('an ordinary raised top cannot open the shoreline, and a pier cannot open t
 });
 
 // ---- Central Park: raised behind its real wall, ridden in by the gates (city-config.js CENTRAL_PARK_GATES) ----------
-import { CENTRAL_PARK_GATES, CENTRAL_PARK_GATE_SIZE, CENTRAL_PARK_TOP, inCentralPark } from '../js/city-config.js';
+import { CENTRAL_PARK_GATES, CENTRAL_PARK_ENTRANCES, CENTRAL_PARK_GATE_SIZE, CENTRAL_PARK_TOP, inCentralPark } from '../js/city-config.js';
 
 const probe = () => ({ height: NaN, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: true });
 
@@ -424,7 +424,10 @@ test('every gate is a ramp from the sidewalk or road outside to the lawn, gentle
       assert.ok(h - prev < 0.06 && h >= prev - 1e-9, `${g.name}: smooth climb at d=${d}`);
       prev = h;
     }
-    assert.equal(at(length / 2, width / 2 + 0.6), CENTRAL_PARK_TOP, `${g.name}: the wall either side stays a wall`);
+    const opening = CENTRAL_PARK_ENTRANCES.find(e => e.sources.some(s => s.named && s.name === g.name));
+    const side = { x: opening.x + opening.nx * length / 2 + opening.tx * (opening.width / 2 + .6),
+      z: opening.z + opening.nz * length / 2 + opening.tz * (opening.width / 2 + .6) };
+    assert.equal(s.sampleGround(side.x, side.z, probe()).height, CENTRAL_PARK_TOP, `${g.name}: the wall beside the shared opening stays raised`);
   }
 });
 

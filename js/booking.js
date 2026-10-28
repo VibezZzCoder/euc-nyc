@@ -57,23 +57,72 @@ export class BookingScreen {
     this.last = {};
     this.phase = 'idle';
     this.padPrevious = null;
+    this.padIdentity = null;
+    this.padReady = false;
+    this.padNavigationReady = false;
+    this.keysDown = new Set();
+    this.blockedUntilUp = new Set();
+    this.keyActivation = new Map();
+    this.keyboardResync = false;
+    this.heading = root.querySelector('#booking-heading');
+    this.heading.tabIndex = -1; // safe initial focus, not an action or an extra Tab stop
+    // Put the non-action focus target before Skip in the native sequential focus order.
+    root.prepend(root.querySelector('.booking-heading'));
     this.skip = root.querySelector('#booking-skip');
     this.release = root.querySelector('#booking-release');
+    const hint = root.querySelector('.booking-pad-hint');
+    hint.textContent = 'D-pad / left stick: select · A: activate';
+    root.querySelector('.booking-heading').append(hint); // visible even during the captured phase
     this.skip.addEventListener('click', () => this.finish());
     this.release.addEventListener('click', () => this.finish());
-    root.addEventListener('cancel', (e) => { e.preventDefault(); this.finish(); });
+    root.addEventListener('cancel', (e) => { e.preventDefault(); });
+    root.addEventListener('pointerdown', () => { root.dataset.padFocus = 'false'; });
     this.onKey = (e) => {
-      if (this.phase === 'idle' || e.code === 'Tab' || e.code === 'KeyN') return;
-      e.preventDefault();
+      const down = e.type === 'keydown', held = this.keysDown.has(e.code);
+      if (down && !e.repeat) this.keysDown.add(e.code);
+      else if (!down) this.keysDown.delete(e.code);
+      if (this.phase === 'idle') {
+        // A held booking/riding key must be released before it can affect the ride again.
+        // After focus loss, an orphan repeat/key-up cannot substitute for an observed fresh press.
+        if (this.blockedUntilUp.has(e.code) || (this.keyboardResync && !held && (e.repeat || !down))) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if (!down) this.blockedUntilUp.delete(e.code);
+        }
+        return;
+      }
+      root.dataset.padFocus = 'false';
+      if (e.code === 'Tab') return; // native modal focus traversal
       e.stopImmediatePropagation();
-      if (e.type !== 'keydown' || e.repeat) return;
-      if (e.code === 'Escape' || ((e.code === 'Enter' || e.code === 'Space' || e.code === 'NumpadEnter')
-        && (this.phase === 'released' || document.activeElement === this.skip))) this.finish();
+      const target = document.activeElement;
+      const action = target === this.skip || (target === this.release && !this.release.disabled);
+      const confirm = ['Enter', 'NumpadEnter', 'Space'].includes(e.code);
+      const fresh = down && !held && !e.repeat;
+      // Keep the button's native Enter/Space click, but only for a fresh press begun on that button.
+      const activate = confirm && action && (down ? fresh : this.keyActivation.get(e.code) === target);
+      if (down && activate) this.keyActivation.set(e.code, target);
+      else if (!down) this.keyActivation.delete(e.code);
+      if (!activate) e.preventDefault();
     };
     window.addEventListener('keydown', this.onKey, true);
     window.addEventListener('keyup', this.onKey, true);
-    window.addEventListener('blur', () => { this.padPrevious = null; });
-    document.addEventListener('visibilitychange', () => { this.padPrevious = null; });
+    const reset = () => {
+      this.resetPad();
+      this.keyActivation.clear();
+      // Key-up may happen in another tab/window. Forget stale holds, not the fresh-press requirement.
+      this.keysDown.clear();
+      this.blockedUntilUp.clear();
+      this.keyboardResync = true;
+    };
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', reset);
+  }
+
+  resetPad() {
+    this.padPrevious = null;
+    this.padIdentity = null;
+    this.padReady = false;
+    this.padNavigationReady = false;
   }
 
   set(key, value, write) {
@@ -92,6 +141,9 @@ export class BookingScreen {
   update(state) {
     if (state.phase === 'idle') {
       if (this.phase !== 'idle') {
+        this.blockedUntilUp = new Set(this.keysDown);
+        this.keyActivation.clear();
+        this.resetPad();
         this.root.close();
         document.body.classList.remove('booking-open');
       }
@@ -102,10 +154,12 @@ export class BookingScreen {
     this.phase = state.phase;
     if (opening) {
       this.last = {};
-      this.padPrevious = null;
+      this.resetPad();
+      this.keyActivation.clear();
+      this.root.dataset.padFocus = 'false';
       document.body.classList.add('booking-open');
       this.root.showModal();
-      this.skip.focus({ preventScroll: true });
+      this.heading.focus({ preventScroll: true });
     }
     this.set('phase', state.phase, (phase) => {
       this.root.dataset.phase = phase;
@@ -116,7 +170,10 @@ export class BookingScreen {
       this.root.querySelector('#booking-note').textContent = phase === 'released'
         ? 'Heat cleared. No fine. Keep rolling.' : 'Please remain at the desk.';
       this.release.disabled = phase !== 'released';
-      if (phase === 'released') this.release.focus({ preventScroll: true });
+      if (phase === 'released') {
+        this.keyActivation.clear();
+        this.release.focus({ preventScroll: true });
+      }
     });
     this.set('rider', state.rider, (name) => { this.root.querySelector('#booking-rider').textContent = name; });
     this.set('number', state.number, (n) => { this.root.querySelector('#booking-number').textContent = `EUC-${String(n).padStart(3, '0')}`; });
@@ -126,17 +183,43 @@ export class BookingScreen {
     this.set('signing', signing, (value) => { this.root.dataset.signing = String(value); });
   }
 
-  /** Own pad edges while the riding poll is suspended. A already held at capture never skips the scene. */
+  /** Neutral first, then navigate to a visible button and confirm on a separate fresh A edge. */
   updateGamepad() {
-    if (this.phase === 'idle' || document.hidden || !document.hasFocus()) { this.padPrevious = null; return; }
+    if (this.phase === 'idle' || document.hidden || !document.hasFocus()) { this.resetPad(); return; }
     let pad = null;
     try { pad = [...navigator.getGamepads?.() ?? []].find((p) => p?.connected && p.mapping === 'standard'); } catch { /* optional */ }
-    if (!pad) { this.padPrevious = null; return; }
-    const pressed = [0, 1, 9].map((i) => !!pad.buttons[i]?.pressed);
+    if (!pad) { this.resetPad(); return; }
+    if (pad.index !== this.padIdentity?.index || pad.id !== this.padIdentity?.id) {
+      this.resetPad();
+      this.padIdentity = { index: pad.index, id: pad.id };
+    }
+    const pressed = Array.from({ length: 17 }, (_, i) => !!pad.buttons[i]?.pressed || pad.buttons[i]?.value > 0.5);
     const before = this.padPrevious;
     this.padPrevious = pressed;
+    const axes = [0, 1, 2, 3].map((i) => Number.isFinite(pad.axes?.[i]) ? pad.axes[i] : 0);
+    if (!this.padReady) {
+      // Include partial triggers and both sticks, not just digital buttons used by this UI.
+      this.padReady = !pressed.some(Boolean) && !pad.buttons.some((b) => b.value > 0.01)
+        && Math.hypot(axes[0], axes[1]) <= 0.15 && Math.hypot(axes[2], axes[3]) <= 0.15;
+      this.padNavigationReady = this.padReady;
+      return;
+    }
     if (!before) return;
-    if (pressed[1] && !before[1]) this.finish();
-    else if (this.phase === 'released' && ((pressed[0] && !before[0]) || (pressed[2] && !before[2]))) this.finish();
+    const target = document.activeElement;
+    const direction = pressed[13] || pressed[15] || axes[0] > 0.5 || axes[1] > 0.5 ? 1
+      : pressed[12] || pressed[14] || axes[0] < -0.5 || axes[1] < -0.5 ? -1 : 0;
+    if (!pressed.slice(12, 16).some(Boolean) && Math.hypot(axes[0], axes[1]) <= 0.15) this.padNavigationReady = true;
+    if (direction && this.padNavigationReady) {
+      this.padNavigationReady = false;
+      this.root.dataset.padFocus = 'true';
+      const actions = this.release.disabled ? [this.skip] : [this.skip, this.release];
+      const index = actions.indexOf(target);
+      const next = index < 0 ? (direction > 0 ? 0 : actions.length - 1)
+        : (index + direction + actions.length) % actions.length;
+      actions[next].focus({ preventScroll: true });
+      return; // navigation and confirmation in the same sample cannot select AND activate Skip
+    }
+    if (pressed[0] && !before[0]
+      && (target === this.skip || (target === this.release && !this.release.disabled))) target.click();
   }
 }

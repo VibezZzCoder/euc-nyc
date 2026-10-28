@@ -30,7 +30,7 @@
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
 import {
-  blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE,
+  blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, CENTRAL_PARK_GATE_SIZE, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE,
   MANHATTAN_COASTLINE, SEAWALL_POLYGON, ESPLANADE_RAIL, BATTERY_RAIL, NORTH_BARRIER
 } from './city-config.js';
 
@@ -382,16 +382,22 @@ export class NycTerrainSampler {
     }
     const lawn = this.lawn;
     let blockBase = false;
-    if (inCentralPark(x, z)) {
-      // Inside the wall: the lawn, except in a gate's cut, where a ramp climbs from the sidewalk to the lawn
-      const gate = centralParkGateAt(x, z);
-      if (gate) {
-        out.height = gate.gate.base + (CENTRAL_PARK_TOP - gate.gate.base) * gate.t;
-        out.surface = 'brick';
-      } else {
-        out.height = CENTRAL_PARK_TOP;
-        out.surface = 'grass';
-      }
+    const gate = centralParkGateAt(x, z, 0, true);
+    if (gate) {
+      // Fallback for construction-free samplers. The actual registered entrance facets win below,
+      // including Float32 endpoint heights; never let the formula raise the wheel above the drawn slab.
+      const rise = CENTRAL_PARK_TOP - gate.gate.base;
+      out.height = gate.gate.base + rise * gate.t;
+      out.surface = gate.d < 0 ? 'pavement' : 'brick';
+      if (gate.t > 0 && gate.t < 1) out.plane = {
+        x: gate.gate.x, y: gate.gate.base, z: gate.gate.z,
+        dx: gate.gate.nx * rise / CENTRAL_PARK_GATE_SIZE.length,
+        dz: gate.gate.nz * rise / CENTRAL_PARK_GATE_SIZE.length
+      };
+    } else if (inCentralPark(x, z)) {
+      // The lawn remains raised behind the wall; its base matches the drawn 0.85 + 0.34 m slab.
+      out.height = CENTRAL_PARK_TOP;
+      out.surface = 'grass';
     } else if (lawn && x > lawn.minX && x < lawn.maxX && z > lawn.minZ && z < lawn.maxZ) {
       out.height = lawn.top;
       out.surface = 'grass';
@@ -421,7 +427,7 @@ export class NycTerrainSampler {
     const top = this.topAt(x, z, false, referenceY);
     // A drawn road cut can replace a block's synthetic kerb / grass base. Higher registered geometry and native
     // solid bodies still win normally; this is not an override of the shore, a terrace or Central Park's terrain.
-    if (top && ((top.replacesBlock && blockBase) || topHeight(top, x, z) > out.height)) {
+    if (top && (gate || (top.replacesBlock && blockBase) || topHeight(top, x, z) > out.height)) {
       out.height = topHeight(top, x, z);
       out.surface = top.surface;
       out.plane = top.plane ?? null;

@@ -1028,8 +1028,9 @@ function createLoftedCarMaterial(spec, fixedColorHex = null) {
   // Glasshouse: side windows (minus the B / C pillars), windshield & backlight, their black seals, chrome sill strip
   let sideG = polygonDistance(p.z, p.y, sideGlassPlanes, 0.07);
   for (const zp of cab.pillars) sideG = max(sideG, float(0.036).sub(abs(p.z.sub(zp))));
-  const backlight = coverage(polygonDistance(ax, p.z, rearGlassPlanes, 0.09)).mul(isWindow);
-  const glass = max(max(coverage(sideG), coverage(polygonDistance(ax, p.z, frontGlassPlanes, 0.09))), backlight.div(max(isWindow, 1e-4)))
+  const rearGlass = coverage(polygonDistance(ax, p.z, rearGlassPlanes, 0.09));
+  const backlight = rearGlass.mul(isWindow);
+  const glass = max(max(coverage(sideG), coverage(polygonDistance(ax, p.z, frontGlassPlanes, 0.09))), rearGlass)
     .mul(isWindow);
   const seal = max(
     coverage(polygonDistance(p.z, p.y, sideSealPlanes, 0.07)),
