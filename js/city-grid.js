@@ -25,6 +25,7 @@ import {
   screenCoordinate
 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { JEFFERSON_SKATEPARK, buildJeffersonSkatepark } from './jefferson-skatepark.js';
 import {
   ISLAND_BOUNDS,
   CENTRAL_PARK_BOUNDS,
@@ -813,7 +814,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
   }, 0)) / 2;
 
   // Local frame: u runs seaward from the bulkhead, s across the pier (rotation about Y as in Object3D.rotation.y)
-  const frame = (x0, z0, theta, physical = false, roadCuts = []) => {
+  const frame = (x0, z0, theta, physical = false, roadCuts = [], shore = true) => {
     const c = Math.cos(theta), sn = Math.sin(theta);
     const wx = (u, s) => x0 + u * c + s * sn;
     const wz = (u, s) => z0 - u * sn + s * c;
@@ -856,7 +857,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
       const mesh = new THREE.Mesh(geo, GR);
       mesh.position.set(wx(u, s), y, wz(u, s));
       mesh.rotation.y = theta + rot;
-      addRideMesh(mesh, surface, true, layered);
+      addRideMesh(mesh, surface, shore, layered);
     };
     return {
       theta, wx, wz,
@@ -872,7 +873,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
         for (const part of pieces || [[{ x: u0, z: s0 }, { x: u1, z: s0 }, { x: u1, z: s1 }, { x: u0, z: s1 }]]) {
           const poly = part.map(p => ({ x: wx(p.x, p.z), z: wz(p.x, p.z) }));
           const t = addRideTop(poly, Math.max(y0, y1), v === 4 || v === 5 || v === 6 ? 'grass' : v === 3 ? 'wood' : v === 7 ? 'brick' : 'pavement');
-          t.shore = true; // the actual deck opens the shore wall at its mouth, including below-zero floating docks
+          if (shore) t.shore = true; // actual pier decks open the shore wall; inland skate surfaces do not
           t.layered = y0 > DY + 1;
           if (t.layered) {
             const slab = addRideSolid(wx((u0 + u1) / 2, (s0 + s1) / 2), wz((u0 + u1) / 2, (s0 + s1) / 2),
@@ -895,9 +896,9 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
           body.support = false;
         }
       },
-      sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot, physical, roadCuts),
+      sub: (u, s, rot = 0) => frame(wx(u, s), wz(u, s), theta + rot, physical, roadCuts, shore),
       // Thin beam between two local points [u, y, s] (rigging, masts, ramps); t thick, t2 wide
-      strut: (mat, a, b, t, v = 0, t2 = t, rideSurface = null, solid = false, layered = physical) => {
+      strut: (mat, a, b, t, v = 0, t2 = t, rideSurface = null, solid = false, layered = physical, wheelSweep = false) => {
         const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
         const g = new THREE.BoxGeometry(t, d.length(), t2);
         g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(Y_AXIS, d.normalize()));
@@ -906,7 +907,9 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
         if (rideSurface) support(g, 0, 0, 0, 0, rideSurface, layered);
         if (solid || (physical && t >= 0.18)) railBodies(
           { x: wx(a[0], a[2]), y: a[1], z: wz(a[0], a[2]) },
-          { x: wx(b[0], b[2]), y: b[1], z: wz(b[0], b[2]) }, t2, t, addRideSolid);
+          { x: wx(b[0], b[2]), y: b[1], z: wz(b[0], b[2]) }, t2, t, wheelSweep ? (...args) => {
+            const body = addRideSolid(...args); body.wheelSweep = true; return body;
+          } : addRideSolid);
         g.dispose();
       },
       tree: (u, s, y, r, ride = true) => trees.push([wx(u, s), y, wz(u, s), r, ride]),
@@ -1791,6 +1794,8 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
       B.geo(PA, g, x, y + th + r * 0.6, z, yaw, variant);
     }
   }
+  // Inland court shares the existing concrete/paint batches, without opening the shoreline or changing any pier.
+  buildJeffersonSkatepark(frame(JEFFERSON_SKATEPARK.x, JEFFERSON_SKATEPARK.z, 0, false, [], false), M, skateProfile, netWall);
   B.build(group, new Set([BL, PA]));
 }
 

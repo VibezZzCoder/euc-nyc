@@ -29,6 +29,7 @@
 //
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
+import { WHEEL, TERRAIN } from './euc/data/tuning.js';
 import { findRecoveryTarget } from './euc-recovery.js';
 import {
   blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, CENTRAL_PARK_GATE_SIZE, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE,
@@ -300,6 +301,19 @@ export class NycTerrainSampler {
     };
     this.boxes = new PlanTerrainSampler(this.plan);
     indexCitySolids(this.boxes);
+    // A thin elevated bar can sit above the stock pedal-height ray while intersecting the wheel's shell.
+    // This separate configuration-space index extends only explicitly tagged bars down by the shell's reach
+    // above that ray. Actual ground, camera, recovery and ragdoll geometry remains the original drawn boxes.
+    const reach = WHEEL.shellHeight - WHEEL.pedalHeight * TERRAIN.stepUpPedalFactor;
+    const wheelSolids = boxes.filter(b => b.wheelSweep).map(b => ({ ...b,
+      centre: { ...b.centre, y: b.centre.y - reach / 2 },
+      halfExtents: { ...b.halfExtents, y: b.halfExtents.y + reach / 2 }, support: false
+    }));
+    this.wheelBoxes = wheelSolids.length ? new PlanTerrainSampler({ ...this.plan, solids: wheelSolids }) : null;
+    this.wheelBounds = this.wheelBoxes ? this.wheelBoxes.colliders.reduce((b, c) => ({
+      minX: Math.min(b.minX, c.minX), maxX: Math.max(b.maxX, c.maxX),
+      minZ: Math.min(b.minZ, c.minZ), maxZ: Math.max(b.maxZ, c.maxZ)
+    }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity }) : null;
   }
 
   get colliderCount() {
@@ -487,5 +501,17 @@ export class NycTerrainSampler {
 
   raycastObstacle(origin, direction, maxDistance, sweepHalfWidth, sweepLateral, out, initialExit, limb) {
     return this.boxes.raycastObstacle(origin, direction, maxDistance, sweepHalfWidth, sweepLateral, out, initialExit, limb);
+  }
+
+  // Controller-only mounted/wheel clearance, including its lateral standoff. Do not use for camera or ragdolls.
+  raycastWheelObstacle(origin, direction, maxDistance, sweepHalfWidth, sweepLateral, out) {
+    const ordinary = this.raycastObstacle(origin, direction, maxDistance, sweepHalfWidth, sweepLateral, out);
+    const b = this.wheelBounds, reach = maxDistance + Math.max(0, sweepHalfWidth ?? 0);
+    if (!b || origin.x + reach < b.minX || origin.x - reach > b.maxX
+      || origin.z + reach < b.minZ || origin.z - reach > b.maxZ) return ordinary;
+    const rail = this.wheelBoxes?.raycastObstacle(origin, direction, maxDistance, sweepHalfWidth, sweepLateral) ?? null;
+    if (rail === null || (ordinary !== null && ordinary <= rail)) return ordinary;
+    if (out) this.wheelBoxes.raycastObstacle(origin, direction, maxDistance, sweepHalfWidth, sweepLateral, out);
+    return rail;
   }
 }

@@ -71,8 +71,13 @@ exterior on the historic Tombs site. Your camera and time-of-day choices are rem
 
 Search **Pier 62** on the map and click its **skateboard icon** to try the larger waterfront skatepark: banks, two
 quarter-pipes, rollers, a manual pad, ledges and a low rail, joined by a clear flat riding line and gentle path entrances.
-It is the first authored skate location; the other researched skatepark pins identify places within the existing city
-scenery. The slate-blue court sits beside an active asphalt traffic crossing.
+The slate-blue court sits beside an active asphalt traffic crossing.
+
+**Thomas Jefferson Skatepark** in East Harlem is a compact second venue inspired by the real park's street features:
+banks, a low quarter-pipe, a platform with steps and a smooth bypass, two skate benches and rails. Its northern extension
+adds a lower banked platform and two rollers, with a low manual pad beside the original line. Search **Thomas
+Jefferson** and click its skateboard icon to arrive on the clear central riding line. The other researched skate pins
+identify places within the existing city scenery.
 
 Officer Dorkins ambushes you on a police hover-wheel. Paddle knockdowns add warning strikes and fill a small heat
 indicator; getting up keeps the chase going. Escape takes sustained distance **and** time out of sight, while he

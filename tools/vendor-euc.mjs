@@ -298,6 +298,10 @@ const OVERRIDES = {
       return `this.sampler.sampleGround(${args}, ${y});`;
     });
     if (count !== 20) throw new Error(`controller height query sites changed: ${count}`);
+    let wheelSites = 0;
+    s = s.replace(/(private (?:applyWallStandoff|obstacleWithinWheelRadius)\([^]*?const raycastObstacle = )this\.sampler\.raycastObstacle;/g,
+      (_all, prefix) => { wheelSites++; return prefix + 'this.sampler.raycastWheelObstacle ?? this.sampler.raycastObstacle;'; });
+    if (wheelSites !== 2) throw new Error(`controller wheel clearance sites changed: ${wheelSites}`);
     s = s.replace('private safeX = 0;', 'private safeX = 0;\n  private safeY = 0;');
     s = s.replace('this.x = this.spawn.position.x;', 'this.y = this.spawn.position.y;\n    this.x = this.spawn.position.x;');
     s = s.replace('destination.headingY, initialSpeed, placementReason)', 'destination.headingY, initialSpeed, placementReason, destination.position.y)');
@@ -401,6 +405,7 @@ const OVERRIDES = {
     .replace('export interface TerrainSampler {', `
 type RecoveryPoint = { x: number; y: number; z: number; headingY: number };
 export interface TerrainSampler {
+  raycastWheelObstacle?: TerrainSampler['raycastObstacle'];
   findRecoveryTarget?(request: {
     fallen: Vec3; safePoints: RecoveryPoint[]; headingY: number; maxStepUp: number;
     hull?: { halfWidthMetres: number; halfLengthMetres: number; heightMetres: number };

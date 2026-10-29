@@ -1,4 +1,5 @@
 import { GEO } from './nyc-geodata.js';
+import { JEFFERSON_SKATEPARK } from './jefferson-skatepark.js';
 
 // js/city-config.js
 // New York City spatial configuration & street database at true 1:1 scale, derived from the real geography in
@@ -722,7 +723,8 @@ NYC_LANDMARKS.push(
   { id: 'pier62-skate', name: 'Pier 62 Skatepark', short: 'Pier 62 Skatepark', x: -1850.5, z: 1631.0, district: 'Chelsea', // 40.74873, -74.00942
     icon: 'skateboard', arrival: { x: -1836.8404, z: 1640.4366, y: 0.48, heading: -1.1995 } }, // clear flat approach, facing the larger park's seaward line
   { id: 'andy-kessler', name: 'Andy Kessler / Riverside Skatepark', short: 'Andy Kessler Skatepark', x: -2021.6, z: -5431.4, district: 'Upper West Side' }, // 40.80509, -73.97062
-  { id: 'thomas-jefferson', name: 'Thomas Jefferson Skatepark', short: 'Thomas Jefferson Skatepark', x: 1344.9, z: -5800.6, district: 'East Harlem' }, // 40.79329, -73.93364
+  { id: 'thomas-jefferson', name: 'Thomas Jefferson Skatepark', short: 'Thomas Jefferson Skatepark', x: 1344.9, z: -5800.6, district: 'East Harlem', // 40.79329, -73.93364
+    icon: 'skateboard', arrival: JEFFERSON_SKATEPARK.arrival },
   // Historic / community skate spots rather than purpose-built skateparks.
   { id: 'brooklyn-banks', name: 'Brooklyn Banks Skate Spot', short: 'Brooklyn Banks', x: 699.6, z: 5031.9, district: 'Civic Center' }, // 40.71081, -74.00255
   { id: 'tompkins-skate', name: 'Tompkins Square Skate Spot', short: 'Tompkins Skate Spot', x: 1315.8, z: 2584.5, district: 'East Village' } // 40.72739, -73.98211

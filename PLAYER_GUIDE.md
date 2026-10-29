@@ -212,6 +212,13 @@ teleporting or changing rider from a scenic view temporarily selects Chase witho
   between features. Gentle ramps connect both ends to existing paths. Search **Pier 62** and click/tap the skateboard to
   arrive facing the seaward riding line. Clicking ordinary ground away from the icon keeps normal map placement.
   The asphalt crossing beside it is an active traffic road.
+  **Thomas Jefferson Skatepark** in East Harlem is a compact street-style interpretation of the real venue, also marked
+  with a skateboard icon. Its slate court has a double bank, low quarter-pipe, banked platform, four steps with a smooth
+  side bypass, two skate benches and rails. A wide central line and open ends give you room to turn or bypass obstacles.
+  The northern bay adds a lower banked platform and two smooth rollers; a low manual pad sits beside the original rail.
+  The elevated rails stop the wheel as drawn—use a well-timed charged hop for clearance, or ride around them.
+  Search **Thomas Jefferson** and click/tap its icon for a clear arrival inside the court, just inland of the researched
+  pin. Existing street/highway traffic and the surrounding trees remain outside the course.
   The other pins identify researched locations within the existing city scenery. Tompkins is a community skate spot and
   Brooklyn Banks a historic skate spot. Highbridge is beyond the playable north boundary.
 - **Teleport** menu (top right): seventeen stops. Alongside the eight landmarks are the Manhattan approaches to all

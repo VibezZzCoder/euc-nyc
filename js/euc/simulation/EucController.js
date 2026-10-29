@@ -2417,7 +2417,7 @@ export class EucController {
             return;
         const t = this.tuning;
         const standoff = t.wallStandoff;
-        const raycastObstacle = this.sampler.raycastObstacle;
+        const raycastObstacle = this.sampler.raycastWheelObstacle ?? this.sampler.raycastObstacle;
         if (airborne || standoff <= 0 || raycastObstacle === undefined)
             return;
         const originY = this.y + t.maxStepUp + 1e-6;
@@ -2466,7 +2466,7 @@ export class EucController {
         this.blocked = true;
     }
     obstacleWithinWheelRadius(deltaX, deltaZ, envelopeDeltaX = deltaX, envelopeDeltaZ = deltaZ) {
-        const raycastObstacle = this.sampler.raycastObstacle;
+        const raycastObstacle = this.sampler.raycastWheelObstacle ?? this.sampler.raycastObstacle;
         this.lastObstacleNarrow = false;
         if (raycastObstacle === undefined)
             return false;
