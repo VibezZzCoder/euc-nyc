@@ -3,6 +3,7 @@
   "commit": "5f45fff19b258e140833841ba2473069af751a12",
   "generatedBy": "tools/vendor-euc.mjs",
   "entries": [
+    "app/oneFootPose.ts",
     "simulation/EucController.ts",
     "simulation/planSampler.ts",
     "simulation/world.ts",
@@ -14,6 +15,11 @@
   ],
   "removedColourEntries": 106,
   "files": {
+    "app/oneFootPose.js": {
+      "source": "src/app/oneFootPose.ts",
+      "sourceSha256": "c5f70bd5e52f9e07ace049932101829ce0e89427e313f608a684d2beefe7dcb4",
+      "sliced": false
+    },
     "data/rideStyles.js": {
       "source": "src/data/rideStyles.ts",
       "sourceSha256": "3bb3fadfb1cd032ef6d51035e385824bd32d54bec1606ab35ff15266d29b0ccd",

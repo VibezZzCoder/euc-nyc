@@ -41,6 +41,7 @@ const EXPECTED_COMMIT = '5f45fff19b258e140833841ba2473069af751a12';
 
 // The runtime entry points the fork imports. Everything else comes in through their imports.
 const ENTRIES = [
+  'app/oneFootPose.ts',
   'simulation/EucController.ts',
   'simulation/planSampler.ts',
   'simulation/world.ts',

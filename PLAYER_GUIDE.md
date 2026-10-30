@@ -52,6 +52,32 @@ wheel and worth knowing before they surprise you:
 - **Top speed is about 66 mph** (107 km/h). From about 58 mph the wheel **beeps**, faster as you go faster, and *Max
   speed* blinks with the beeps. Hold more than about 62 mph and it cuts out: you crash.
 
+### Simple tricks
+
+The same **Hop** button handles ordinary jumps, one-foot airs and 180s:
+
+| Trick | Keyboard | Gamepad | Touch |
+|---|---|---|---|
+| Normal hop | Tap **Space** | Tap **A** | Tap **HOP** |
+| One-foot air | Hold **Space** through takeoff | Hold **A** | Hold **HOP** |
+| 180 | Hop, release, then press **Space** again while rising | Release and press **A** again while rising | Release and tap **HOP** again while rising |
+| One-foot 180 | Keep that second **Space** press held | Keep that second **A** press held | Keep that second **HOP** press held |
+| Air tuck | Hold **Shift** in the air | Hold **X** in the air | Hold **CHARGE** in the air |
+| Fakie ride-out | Land a 180 and keep rolling backward | Same | Same |
+
+The jump starts on the first press; it never waits for a double-tap decision. A held airborne pose needs a brief
+hold and enough airtime to enter and return for landing. Charge a bigger hop first to give yourself more room.
+Keeping crouch/charge held after takeoff adds the tuck; holding Hop too combines tuck and one-foot. Release a
+control to return from its pose. Very late holds or short drops may not have enough air to show a trick.
+
+A successful landing briefly shows **Landed · One-foot air**, **One-foot 180**, **Air tuck**, or their combination.
+After a landed 180, rolling backward continuously for at least **0.8 seconds and 1.5 metres**, above about
+**1.7 mph / 2.7 km/h**, adds **→ Fakie**. Stopping, leaving the ground again or crashing breaks that ride-out.
+Ordinary reversing from a standstill does not count. These are trick labels, not a points/leaderboard mode.
+
+Try the clear central line at **Thomas Jefferson Skatepark** or the flat run-ups at **Pier 62**. **Action** and
+**Side Tracking** are useful for watching the foot lift and tuck. Both playable riders support the same tricks.
+
 ### Crashes
 
 Riding into a building, a post, a car, a bus, a person or the edge of the waterfront fast enough is a crash, and so are a

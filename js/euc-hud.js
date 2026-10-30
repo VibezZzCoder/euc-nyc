@@ -99,6 +99,7 @@ export class EucHud {
     this.model = createHudModel();
     this.el = {
       warning: doc.getElementById('hud-warning'),
+      trick: doc.getElementById('hud-trick'),
       overspeed: doc.getElementById('hud-overspeed'),
       getUp: doc.getElementById('hud-getup'),
       getUpVerb: doc.getElementById('hud-getup-verb'),
@@ -116,7 +117,7 @@ export class EucHud {
   }
 
   /** One frame. `controller` is the vendored EucController; `device` is 'keyboard' | 'gamepad' | 'touch'. */
-  update(controller, now, device) {
+  update(controller, now, device, trickLabel = '') {
     const crashed = !!controller.crashed;
     const view = this.model.update({
       crashed,
@@ -125,6 +126,12 @@ export class EucHud {
       overspeed: controller.overspeed
     }, now);
     const { warning, overspeed, getUp } = this.el;
+    if (this.el.trick) {
+      this.set('trick', crashed ? '' : trickLabel, (label) => {
+        this.el.trick.textContent = label ? `Landed · ${label}` : '';
+        this.el.trick.hidden = !label;
+      });
+    }
     if (warning) {
       this.set('warning', view.warning, (w) => {
         warning.textContent = WARNING_LABELS[w];

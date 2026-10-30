@@ -19,6 +19,7 @@ import { SIMULATION, INPUT } from './euc/data/tuning.js';
 import { createRidingRig } from './euc/render/ridingRig.js';
 import { riderLook } from './euc/render/riderLook.js';
 import { machineLook } from './euc/render/machineLook.js';
+import { RiderTricks } from './euc-tricks.js';
 import { cityUniforms } from './tsl-materials.js';
 import { EUC_HEADLIGHT, headlightBeamScale, createEucHeadlight, placeEucHeadlight } from './vehicle-lights.js';
 
@@ -125,6 +126,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
   const previous = createPose();
   const current = createPose();
   const render = createPose();
+  const tricks = new RiderTricks();
   controller.writePose(current);
   copyPose(current, previous);
   copyPose(current, render);
@@ -154,6 +156,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     mesh: rig.group,
     rig,
     controller,
+    tricks,
     events,
     position: new THREE.Vector3(x, ground.height, z),
     heading,
@@ -200,14 +203,18 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
         if (!controller.crashed) recoveryPending = false;
         controller.writePose(current);
         // Recovery is one placement, not an interpolated flight from the old wheel position.
-        if (controller.placementSerial !== placementSerial) copyPose(current, previous);
+        if (controller.placementSerial !== placementSerial) {
+          copyPose(current, previous);
+          tricks.reset();
+        }
+        tricks.step(STEP, controller, current, hopHeld, !!keys.boost);
         simSeconds += STEP;
         this.recordEdges();
       }
 
       lerpPose(previous, current, accumulator / STEP, render);
       rig.applySwing(null, 0, 0);
-      rig.setTrickPose(0, 0);
+      tricks.apply(render, accumulator / STEP, rig);
       rig.apply(render);
       rig.applyStatus(render.alert ?? 0, simSeconds, 1 - (render.recoverBlend ?? 0));
       headlight.update();
@@ -242,6 +249,8 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       rig.dispose();
       riderId = id;
       rig = buildRig(scene, riderId);
+      tricks.reset();
+      lerpPose(previous, current, accumulator / STEP, render);
       rig.apply(render);
       headlight.attach(rig);
       headlight.update();
@@ -259,6 +268,8 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       controller.writePose(current);
       copyPose(current, previous);
       copyPose(current, render);
+      tricks.reset();
+      rig.setTrickPose(0, 0);
       accumulator = 0;
       recoveryPending = false;
       hopPendingUntil = -1;
@@ -274,6 +285,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     },
 
     clearInput() {
+      tricks.cancel();
       hopPendingUntil = -1;
       hopWasHeld = false;
       resetWasHeld = false;

@@ -61,6 +61,8 @@ covered by automated Chromium checks; physical foldable/Safari validation is sti
   forward, down to brake or reverse, and sideways to carve.
 - **Hop:** tap **HOP** under your right thumb to jump over kerbs.
 - **Charge a bigger hop:** hold **CHARGE** to crouch and charge the jump, then use **HOP**.
+- **Tricks:** hold **HOP** for a one-foot air; release and press again while rising for a 180, holding the second
+  press to combine them. Hold **CHARGE** in the air for a tuck. Land a 180 and roll backward for a **Fakie** label.
 - **Recover:** **GET UP** appears on the right after a crash.
 - **Look around:** drag outside the controls to orbit the camera; pinch to zoom.
 
@@ -69,6 +71,10 @@ covered by automated Chromium checks; physical foldable/Safari validation is sti
 The speed shows in mph and km/h. When the wheel works hard, tilts back or nears its top speed, a warning appears
 above the gauge. Central Park sits behind its wall: ride in by one of its gates (the real entrances, such as 6th Ave
 or 7th Ave at 59th St, or 5th Ave at 72nd or 90th St).
+
+One-foot airs, one-foot 180s and held air tucks now have brief landing feedback, with **→ Fakie** for a sustained
+backward ride-out after a 180. Keyboard **Space / Shift**, gamepad **A / X**, and touch **HOP / CHARGE** use the
+same press/hold rules. See [Simple tricks](PLAYER_GUIDE.md#simple-tricks) for timing and combinations.
 
 The Teleport menu has seventeen stops, including the four East River bridge approaches, the FDR climb, Pier 15,
 Little Island, the Hudson River Greenway and **Civic Detention Jail** on White Street. The jail is an original fictional

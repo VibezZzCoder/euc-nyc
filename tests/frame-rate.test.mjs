@@ -150,7 +150,7 @@ const loop = main.slice(main.indexOf('  // 6. Animation Loop'), main.lastIndexOf
 function loopFixture(choice, gpu = Promise.resolve()) {
   const noop = () => {}, calls = {}, events = {}, order = [];
   const record = (key) => (...args) => { (calls[key] ??= []).push(args); order.push(key); };
-  const entity = { position: { x: 0, z: 0 }, speed: 0, controller: {}, update: record('entity') };
+  const entity = { position: { x: 0, z: 0 }, speed: 0, controller: {}, tricks: { label: '' }, update: record('entity') };
   const camera = { position: { x: 0, y: 0, z: 0 }, aspect: 1 };
   // Keep currentPos deliberately distinct: trees must use the actual rendered camera, not its follow target.
   const currentPos = { x: -10000, y: -10000, z: -10000 };
@@ -194,7 +194,7 @@ function loopFixture(choice, gpu = Promise.resolve()) {
     highwayTraffic: { update: record('highway') }, savePlayerState: noop,
     boroughs: {}, cityBlocks: { update: noop }, lightingSystem: { update: noop }, landmarks: { update: noop },
     mapSystem: { update: noop, isFullMapOpen: false }, audioSystem: { update: record('audio') },
-    eucHud: { update: noop }, touchControls: { setDown: noop }, promptDevice: 'keyboard',
+    eucHud: { update: record('hud') }, touchControls: { setDown: noop }, promptDevice: 'keyboard',
     updateSceneCulling: record('culling'), scene: { traverse: noop }, renderPipeline: { render() {
       record('render')();
       renderViews.push({ ...camera.position });
@@ -206,6 +206,23 @@ function loopFixture(choice, gpu = Promise.resolve()) {
   const reset = new Function(...Object.keys(env), `${loop}\nreturn resetFramePacing;`)(...Object.values(env));
   return { step: (now) => callback(now), calls, events, order, treeViews, renderViews, cameraViews, reset, framePacer, elFps, env };
 }
+
+test('a cached pre-tricks rider still renders the first frame and completes startup', async () => {
+  const f = loopFixture('auto');
+  const rider = f.env.controllerManager.getActiveEntity();
+  delete rider.tricks;
+  f.step(0);
+  await Promise.resolve();
+  assert.equal(f.calls.complete.length, 1);
+  assert.equal(f.calls.hud[0][3], '', 'missing optional feedback is empty');
+  assert.equal(f.calls.render.length, 2, 'warm-up and first visible frame render');
+  rider.tricks = { label: 'One-foot 180' };
+  f.step(17);
+  assert.equal(f.calls.hud.at(-1)[3], 'One-foot 180');
+  delete rider.tricks;
+  f.step(34);
+  assert.equal(f.calls.hud.at(-1)[3], '', 'an absent channel also clears stale HUD text');
+});
 
 test('production loop throttles renders/culling/tree presentation, preserving gameplay callback dts and actual FPS', async () => {
   for (const hz of [60, 120, 144, 240]) {

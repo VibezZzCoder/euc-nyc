@@ -1260,6 +1260,15 @@ body.is-overspeed #hud-speed-meter {
   display: none;
 }
 
+.trick-cue {
+  max-width: 230px;
+  white-space: normal;
+  text-align: right;
+  color: var(--text);
+  border: 1px solid rgba(255, 194, 26, 0.55);
+  pointer-events: none;
+}
+
 .power-cue::before {
   content: '';
   width: 8px;
@@ -2202,6 +2211,16 @@ body.touch-enabled .map-controls .icon-btn { width: 44px; height: 44px; }
 /* Keep Safari's search-focus zoom from changing the game's presentation; leave user zoom available. */
 body.touch-enabled .fullmap-search { font-size: 16px; }
 body.touch-enabled .pop-item { min-height: 44px; }
+
+@media (min-height: 501px) {
+  /* Street signs end 254px above the safe bottom; the hop button starts below
+     this two-line slot. Keep completed tricks out of both the signs and warnings. */
+  body.touch-enabled .trick-cue {
+    position: fixed;
+    right: max(var(--edge), env(safe-area-inset-right));
+    bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 210px);
+  }
+}
 
 @media (min-width: 382px) and (max-width: 410px) {
   /* Eight 44px actions fit the compact window when decorative gaps/chevrons step aside. */

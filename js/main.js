@@ -908,8 +908,11 @@ export async function initApp(startup) {
     mapSystem.update();
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.activePresetId === 'midnight');
     // Wheel cues and the get-up prompt (every frame: the over-speed blink and the prompt must not lag)
-    const riderController = controllerManager.getActiveEntity().controller;
-    eucHud.update(riderController, elapsed, promptDevice);
+    const riderEntity = controllerManager.getActiveEntity();
+    const riderController = riderEntity.controller;
+    // A cached pre-tricks rider can outlive the app module during a local update.
+    // Optional feedback must not prevent the first frame/title from starting.
+    eucHud.update(riderController, elapsed, promptDevice, riderEntity.tricks?.label ?? '');
     touchControls.setDown(riderController.crashed);
     if (nemesis) nemesisHud.update(nemesis.hudView);
     // Gate only scene submission/culling. All updates above retain callback dt, including the rider's native

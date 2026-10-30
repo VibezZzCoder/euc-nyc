@@ -66,10 +66,12 @@
   <link rel="modulepreload" href="./js/euc-recovery.js" />
   <link rel="modulepreload" href="./js/barricades.js" />
   <link rel="modulepreload" href="./js/euc-rider.js" />
+  <link rel="modulepreload" href="./js/euc-tricks.js" />
   <link rel="modulepreload" href="./js/euc-dynamic.js" />
   <link rel="modulepreload" href="./js/euc-audio.js" />
   <link rel="modulepreload" href="./js/euc-hud.js" />
   <!-- euc:preload:start (tools/vendor-euc.mjs) -->
+  <link rel="modulepreload" href="./js/euc/app/oneFootPose.js" />
   <link rel="modulepreload" href="./js/euc/data/rideStyles.js" />
   <link rel="modulepreload" href="./js/euc/data/surfaces.js" />
   <link rel="modulepreload" href="./js/euc/data/tuning.js" />
@@ -317,6 +319,7 @@
   <div class="hud hud-bottom-right">
     <!-- The wheel's warnings (euc-hud.js, from EUC Thrills): over-speed beeps, then the power ladder / tilt-back -->
     <div class="wheel-cues" aria-live="polite">
+      <div id="hud-trick" class="wheel-cue trick-cue" role="status" aria-atomic="true" hidden></div>
       <div id="hud-overspeed" class="wheel-cue overspeed-cue" data-level="none" hidden><span aria-hidden="true">⚠</span> Max speed</div>
       <div id="hud-warning" class="wheel-cue power-cue" data-level="none" role="status" hidden></div>
       <!-- Dorkins: separate pursuit/escape and warning-heat feedback, retained through get-ups. -->
@@ -392,9 +395,9 @@
     </div>
     <p class="touch-look-hint"><span class="touch-look-hint-full">Drag elsewhere to look · Pinch to zoom</span><span class="touch-look-hint-short">Drag<br>to look<br>Pinch<br>to zoom</span></p>
     <div class="touch-actions" role="group" aria-label="Wheel actions">
-      <button class="touch-btn touch-btn--hop" data-touch="up" type="button" aria-label="Hop, like Space on a keyboard">HOP</button>
+      <button class="touch-btn touch-btn--hop" data-touch="up" type="button" aria-label="Hop: tap to jump, hold for one-foot air, press again while rising for a 180">HOP</button>
       <button class="touch-btn touch-btn--getup" data-touch="reset" type="button" aria-label="Get up after a crash, like R on a keyboard">GET UP</button>
-      <button class="touch-btn touch-btn--charge" data-touch="boost" type="button" aria-label="Crouch and charge a bigger hop, like Shift on a keyboard">CHARGE</button>
+      <button class="touch-btn touch-btn--charge" data-touch="boost" type="button" aria-label="Crouch and charge a bigger hop; hold in the air to tuck">CHARGE</button>
     </div>
   </section>
 
