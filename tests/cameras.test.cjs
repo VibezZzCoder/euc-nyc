@@ -129,13 +129,14 @@ test('extra fingers are ignored and coincident pinch points keep zoom finite', (
   assert.equal(h.camera.isDragging, true);
 });
 
-for (const interruption of ['pointercancel', 'lostpointercapture', 'blur', 'hidden']) {
+for (const interruption of ['pointercancel', 'lostpointercapture', 'blur', 'hidden', 'resize', 'host-resize']) {
   test(`${interruption} ends capture without a stuck drag or jump on the next gesture`, () => {
     const h = cameraHarness();
     h.pointer(h.canvas, 'pointerdown', 1, 0);
     h.pointer(h.canvas, 'pointermove', 1, 10);
-    if (interruption === 'blur' || interruption === 'hidden') h.pointer(h.canvas, 'pointerdown', 3, 100);
-    if (interruption === 'blur') h.window.dispatch('blur');
+    if (['blur', 'hidden', 'resize', 'host-resize'].includes(interruption)) h.pointer(h.canvas, 'pointerdown', 3, 100);
+    if (interruption === 'blur' || interruption === 'resize') h.window.dispatch(interruption);
+    else if (interruption === 'host-resize') h.camera.onResize(669, 867);
     else if (interruption === 'hidden') {
       h.document.hidden = true;
       h.document.dispatch('visibilitychange');

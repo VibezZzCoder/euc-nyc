@@ -52,6 +52,11 @@ The [player guide](PLAYER_GUIDE.md) has everything else: how the wheel rides, cr
 Phones and tablets use *EUC Thrills*' touch controls in **both portrait and landscape**. The layout adjusts when you
 rotate the device.
 
+The game follows the available browser area when rotating or resizing a window. A size change keeps the city and
+your session running and releases held riding, camera and map gestures; lift and touch again to continue. Map controls
+use a horizontal row in short windows, and map search uses larger touch-friendly text. Foldable-sized layouts are
+covered by automated Chromium checks; physical foldable/Safari validation is still pending.
+
 - **Ride and steer:** put your left thumb down in the bottom-left to bring up the floating stick. Push up to lean
   forward, down to brake or reverse, and sideways to carve.
 - **Hop:** tap **HOP** under your right thumb to jump over kerbs.

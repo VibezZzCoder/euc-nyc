@@ -113,6 +113,7 @@ class CameraSystem {
     };
     this._clearPointers = clearPointers;
     window.addEventListener('blur', clearPointers);
+    window.addEventListener('resize', clearPointers);
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) clearPointers();
     });
@@ -181,6 +182,8 @@ class CameraSystem {
   }
 
   onResize(width, height) {
+    if (!(width > 0 && height > 0)) return;
+    this._clearPointers();
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }

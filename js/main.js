@@ -74,7 +74,9 @@ export async function initApp(startup) {
     reversedDepthBuffer: true
   });
   renderer.setPixelRatio(1.0);
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  let renderWidth = Math.max(1, container.clientWidth || window.innerWidth);
+  let renderHeight = Math.max(1, container.clientHeight || window.innerHeight);
+  renderer.setSize(renderWidth, renderHeight);
   renderer.shadowMap.enabled = true;
   renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
   container.appendChild(renderer.domElement);
@@ -639,15 +641,36 @@ export async function initApp(startup) {
     }
   });
 
-  window.addEventListener('resize', () => {
-    cameraSystem.onResize(window.innerWidth, window.innerHeight);
-    renderer.setSize(window.innerWidth, window.innerHeight);
+  // One resize path for toolbar, rotation and host-size changes. Keep the scene/session alive;
+  // never allocate a zero-size target or reallocate repeatedly during the same layout frame.
+  let resizePending = false;
+  function applyViewportSize() {
+    resizePending = false;
+    const width = container.clientWidth, height = container.clientHeight;
+    if (!(width > 0 && height > 0)) return;
+    if (width !== renderWidth || height !== renderHeight) {
+      touchControls.reset();
+      cameraSystem.onResize(width, height);
+      mapSystem.cancelPan();
+      renderer.setSize(width, height);
+      renderWidth = width;
+      renderHeight = height;
+    }
     placeRiderIndicator();
     if (mapSystem.isFullMapOpen) {
       mapSystem.resizeFullCanvas();
       mapSystem.renderFullMap();
     }
-  });
+  }
+  function scheduleViewportResize() {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(applyViewportSize);
+  }
+  window.addEventListener('resize', scheduleViewportResize);
+  window.addEventListener('pageshow', scheduleViewportResize);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(scheduleViewportResize).observe(container);
+  scheduleViewportResize();
 
   // The title screen, shown once the city is on screen (see the loop). Until Ride, the camera circles the rider and no
   // input reaches the ride: the overlay covers the canvas and touch layer, it takes the keys first, and the gamepad is

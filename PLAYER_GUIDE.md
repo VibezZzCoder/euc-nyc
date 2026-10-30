@@ -9,6 +9,13 @@ of Mr.doob's three.js New York.
 An up-to-date browser with hardware acceleration. WebGPU is preferred; the renderer automatically tries WebGL2 if
 WebGPU is unavailable. Keyboard, gamepad and touch controls work. Sound starts after your first click, key or tap.
 
+### Changing screen size
+
+Rotating or resizing the browser keeps the same riding session and adjusts the view to the available space. If you
+are holding the stick, dragging the camera or panning the map, lift and touch again after the change. On short screens,
+map controls form a horizontal row below the search bar so Close stays reachable. The booking receipt can be scrolled
+to reach **Back to riding**. Foldable-sized layouts have automated coverage; physical foldable/Safari testing is pending.
+
 ## Starting
 
 After loading, the title screen shows the city with your rider in it. Pick **Cool Rider** or **Trollina**, then

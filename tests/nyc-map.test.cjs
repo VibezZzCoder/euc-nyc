@@ -200,11 +200,11 @@ test('the skateboard marker owns its wider visible hit area without claiming ord
   assert.deepEqual(h.teleportArgs[1], [1016, 2000], '16 px: ordinary map ground');
 });
 
-for (const interruption of ['pointercancel', 'lostpointercapture', 'blur', 'hidden', 'close']) {
+for (const interruption of ['pointercancel', 'lostpointercapture', 'blur', 'hidden', 'close', 'resize']) {
   test(`${interruption} cancels a map tap without teleporting or leaving a drag active`, () => {
     const h = mapHarness();
     h.pointer(h.canvas, 'pointerdown', 1);
-    if (interruption === 'blur') h.window.dispatch('blur');
+    if (interruption === 'blur' || interruption === 'resize') h.window.dispatch(interruption);
     else if (interruption === 'hidden') {
       h.document.hidden = true;
       h.document.dispatch('visibilitychange');
@@ -246,4 +246,25 @@ test('mouse hover and zoom buttons remain available without a pan', () => {
   assert.equal(h.map.viewZoom, 1.45);
   h.zoomOut.dispatch('click');
   assert.equal(h.map.viewZoom, 1);
+});
+
+test('map resizing preserves its view, skips unchanged backing stores and ignores hidden dimensions', () => {
+  const h = mapHarness();
+  let writes = 0;
+  for (const field of ['width', 'height']) {
+    let value = h.canvas[field];
+    Object.defineProperty(h.canvas, field, { get: () => value, set: (v) => { value = v; writes++; } });
+  }
+  const center = [h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom];
+  h.map.resizeFullCanvas();
+  assert.equal(writes, 0);
+  h.canvas.clientWidth = 669;
+  h.canvas.clientHeight = 867;
+  h.map.resizeFullCanvas();
+  assert.equal(writes, 2);
+  assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], center);
+  h.canvas.clientHeight = 0;
+  h.map.resizeFullCanvas();
+  assert.equal(writes, 2);
+  assert.equal(h.canvas.height, 867);
 });

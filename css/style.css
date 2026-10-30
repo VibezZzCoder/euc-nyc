@@ -28,6 +28,10 @@
 
   /* Shape & motion */
   --edge: 20px;
+  --safe-top: max(var(--edge), env(safe-area-inset-top, 0px));
+  --safe-right: max(var(--edge), env(safe-area-inset-right, 0px));
+  --safe-bottom: max(var(--edge), env(safe-area-inset-bottom, 0px));
+  --safe-left: max(var(--edge), env(safe-area-inset-left, 0px));
   --bar-h: 50px;
   --r-panel: 16px;
   --r-ctl: 10px;
@@ -118,8 +122,8 @@ kbd {
 #canvas-container {
   position: fixed;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
+  /* Match the fixed HUD's actual viewport instead of imposing the large (100vh) viewport.
+     main.js observes this host and sizes the drawing buffer/camera from its layout rectangle. */
   z-index: 1;
   cursor: grab;
 }
@@ -1568,10 +1572,10 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
   .booking-note { margin: 10px 0; font-size: 11px; }
 }
 @media (max-height: 500px) and (orientation: landscape) {
-  .booking-heading { top: 16px; left: 16px; max-width: calc(100% - 360px); }
+  .booking-heading { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); max-width: calc(100% - 360px); }
   .booking-heading h2 { font-size: 25px; }
   .booking-kicker { font-size: 10px; }
-  .booking-paper { top: 64px; bottom: 12px; right: max(12px, env(safe-area-inset-right)); width: 300px; padding: 14px; max-height: none; }
+  .booking-paper { top: calc(max(12px, env(safe-area-inset-top)) + 52px); bottom: max(12px, env(safe-area-inset-bottom)); right: max(12px, env(safe-area-inset-right)); width: 300px; padding: 14px; max-height: none; }
   .booking-paper-title { margin: 6px 0 9px; padding-bottom: 6px; font-size: 16px; }
   .booking-dialogue { min-height: 66px; }
   #booking-line { font-size: 17px; }
@@ -1682,9 +1686,9 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
 
 .fullmap-header {
   position: absolute;
-  top: var(--edge);
-  left: var(--edge);
-  right: var(--edge);
+  top: var(--safe-top);
+  left: var(--safe-left);
+  right: var(--safe-right);
   display: flex;
   align-items: stretch;
   gap: 10px;
@@ -1777,7 +1781,7 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
 .map-controls {
   position: absolute;
   top: 50%;
-  right: var(--edge);
+  right: var(--safe-right);
   translate: 0 -50%;
   display: flex;
   flex-direction: column;
@@ -1814,7 +1818,7 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
 .fullmap-footer {
   position: absolute;
   left: 50%;
-  bottom: var(--edge);
+  bottom: var(--safe-bottom);
   translate: -50% 0;
   display: flex;
   max-width: min(560px, calc(100% - 2 * var(--edge) - 2 * 200px));
@@ -1833,8 +1837,8 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
 
 .fullmap-legend {
   position: absolute;
-  right: var(--edge);
-  bottom: var(--edge);
+  right: var(--safe-right);
+  bottom: var(--safe-bottom);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1894,8 +1898,8 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
 /* Licence credits on the full map (OpenStreetMap's ODbL asks for them where the map is shown) */
 .fullmap-credits {
   position: absolute;
-  left: var(--edge);
-  bottom: var(--edge);
+  left: var(--safe-left);
+  bottom: var(--safe-bottom);
   margin: 0;
   max-width: min(440px, calc(50% - var(--edge) - 300px));
   padding: 8px 12px;
@@ -1956,9 +1960,9 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
   #hud-speed { font-size: 34px; }
   .fullmap-title > div { display: none; }
   .fullmap-title { padding: 9px; }
-  .fullmap-footer { max-width: calc(100% - 2 * var(--edge)); bottom: calc(var(--edge) + 52px); }
-  .map-controls { top: auto; bottom: calc(var(--edge) + 114px); translate: none; }
-  .fullmap-credits { max-width: calc(100% - 2 * var(--edge)); bottom: var(--edge); padding: 6px 10px; font-size: 10px; }
+  .fullmap-footer { left: var(--safe-left); right: var(--safe-right); translate: none; width: fit-content; margin-inline: auto; max-width: calc(100% - var(--safe-left) - var(--safe-right)); bottom: calc(var(--safe-bottom) + 52px); }
+  .map-controls { top: auto; bottom: calc(var(--safe-bottom) + 114px); translate: none; }
+  .fullmap-credits { max-width: calc(100% - var(--safe-left) - var(--safe-right)); bottom: var(--safe-bottom); padding: 6px 10px; font-size: 10px; }
 }
 
 @media (max-width: 620px) {
@@ -2195,9 +2199,21 @@ body.touch-enabled .hud-bottom-left { left: max(var(--edge), env(safe-area-inset
 body.touch-enabled .hud-bottom-left > * { pointer-events: none; } /* street signs never block the stick zone */
 body.touch-enabled .fullmap-header { top: max(var(--edge), env(safe-area-inset-top)); left: max(var(--edge), env(safe-area-inset-left)); right: max(var(--edge), env(safe-area-inset-right)); }
 body.touch-enabled .map-controls .icon-btn { width: 44px; height: 44px; }
+/* Keep Safari's search-focus zoom from changing the game's presentation; leave user zoom available. */
+body.touch-enabled .fullmap-search { font-size: 16px; }
 body.touch-enabled .pop-item { min-height: 44px; }
 
-@media (max-width: 360px) {
+@media (min-width: 382px) and (max-width: 410px) {
+  /* Eight 44px actions fit the compact window when decorative gaps/chevrons step aside. */
+  body.touch-enabled .toolbar { gap: 0; padding: 2px; }
+  body.touch-enabled .time-switch { gap: 0; }
+  body.touch-enabled #btn-teleport .icon-sm { display: none; }
+  body.touch-enabled .brand { padding-inline: 6px; }
+  body.touch-enabled .brand-heading { gap: 6px; }
+  body.touch-enabled .repo-link, body.touch-enabled .website-link { font-size: 11px; }
+}
+
+@media (max-width: 381px) {
   body.touch-enabled .toolbar { width: 194px; height: auto; flex-wrap: wrap; justify-content: center; }
   body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 114px); }
   body.touch-enabled .touch-look-hint {
@@ -2212,6 +2228,9 @@ body.touch-enabled .pop-item { min-height: 44px; }
 }
 
 @media (max-height: 500px) {
+  /* A vertical map stack overlaps Close on short windows. Keep every action below the header. */
+  .map-controls { top: calc(var(--safe-top) + 62px); bottom: auto; flex-direction: row; translate: none; }
+  .map-controls .map-zoom { flex-direction: row; }
   body.touch-enabled .hud-bottom-left { display: none; }
   body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 58px); }
   body.touch-enabled .gauge-meter { display: none; }

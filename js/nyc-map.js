@@ -653,6 +653,7 @@ class NYCMapSystem {
         });
       }
       window.addEventListener('blur', () => this.cancelPan());
+      window.addEventListener('resize', () => this.cancelPan());
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) this.cancelPan();
       });
@@ -742,12 +743,15 @@ class NYCMapSystem {
   resizeFullCanvas() {
     if (!this.fullCanvas) return;
     // Layout size (the opening animation's transforms don't change it), at most ~6 megapixels however large the screen
-    const w = this.fullCanvas.clientWidth || window.innerWidth;
-    const h = this.fullCanvas.clientHeight || window.innerHeight;
+    const w = this.fullCanvas.clientWidth;
+    const h = this.fullCanvas.clientHeight;
+    if (!(w > 0 && h > 0)) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(6e6 / Math.max(1, w * h)));
+    const width = Math.max(1, Math.floor(w * dpr)), height = Math.max(1, Math.floor(h * dpr));
+    if (this.fullDpr === dpr && this.fullCanvas.width === width && this.fullCanvas.height === height) return;
     this.fullDpr = dpr;
-    this.fullCanvas.width = Math.max(1, Math.floor(w * dpr));
-    this.fullCanvas.height = Math.max(1, Math.floor(h * dpr));
+    this.fullCanvas.width = width;
+    this.fullCanvas.height = height;
   }
 
   // Full map size in CSS pixels
