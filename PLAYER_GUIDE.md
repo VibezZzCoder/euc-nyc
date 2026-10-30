@@ -95,7 +95,8 @@ more space. During a wipeout, a low hood or covered pickup bed behaves different
 - **Buildings are solid exactly where they stand.** Plazas, the lawns round housing towers, gaps between buildings and
   the open ground under raised buildings (601 Lexington Avenue's stilts, the tram station) can be ridden.
 - **Storefronts keep their identity:** a shop's sign and matching light colour stay the same as nearby architectural
-  details load while you ride around it.
+  details load while you ride around it. Display windows now show shallow simulated interiors with shelves and counters,
+  generic fascia signs and framed shop doors; residential fronts have their own detailed entrances. These remain scenery.
 - **Rooftop detail:** water-tower bands and ventilation grilles use filtered patterns to reduce shimmer at a distance.
   Thin park and waterfront railings also use filtered coverage while keeping their physical bodies and entrances.
 - **The waterfront** can be ridden out to the river: along the Hudson and the East River you go all the way to the

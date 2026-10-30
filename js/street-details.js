@@ -1136,8 +1136,7 @@ function buildStreetDetails(scene) {
     return s - Math.floor(s);
   }
 
-  // Procedural trees (js/trees.js): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
-  // level of detail, each tree's level following the camera
+  // Procedural trees (js/trees.js): unchanged skeletons/cards; CPU spatial LOD cells feed global render pools.
   const treeField = createTreeField(scene, treePositions);
   group.add(treeField.group);
   // All gate / park / waterfront removals have happened before the field is created: no colliders for removed trees.
@@ -1288,7 +1287,7 @@ function buildStreetDetails(scene) {
   }
 
   scene.add(group);
-  return { group, footprints, ride, signalClock, audioSignals, update };
+  return { group, footprints, ride, signalClock, audioSignals, treeField, update };
 }
 
 export { buildStreetDetails };

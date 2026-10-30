@@ -11,31 +11,88 @@ const WHITE = new THREE.Color(0xe6e2d6);
 const YELLOW = new THREE.Color(0xe8ad22);
 const GREEN = new THREE.Color(0x2a8a4e);
 const HEIGHT = 0.012; // above the asphalt
+const PAINT_CELL_SIZE = 1200;
+const MAX_WIDEN = 16; // must cover createRoadPaintMaterial's screen-space widening clamp
 
-function buildRoadPaint(scene, network) {
-  const position = [];
-  const side = [];
-  const paint = [];
-  const colors = [];
-  const index = [];
-  const lines = [];
-  const bends = new Map();
+// Spatial batching adapted from mrdoob/slop-newyork 997185d5817b6b64730dedf40817dabe78f77469 (MIT).
+// Frustum-only: retain the fork's unlimited marking reach and each original quad, including its exact dash phase.
+// Long quads can span cells; their actual bounds, rather than the cell's nominal extent, decide visibility.
+function createRoadPaintChunkBuilder(name = 'RoadMarkings', { cellSize = PAINT_CELL_SIZE } = {}) {
+  if (!(cellSize > 0) || !Number.isFinite(cellSize)) throw new Error('Road paint cell size must be positive and finite');
+  const cells = new Map();
+  let built = null;
 
-  // Flat strip w wide from a to b, with a dash pattern (period, duty cycle) running along it
-  function strip(ax, az, bx, bz, w, col, period = 1, duty = 1, phase = 0, flow = 1) {
+  // phaseLength lets the viaduct retain its original 3D distance without a lossy len / flat * flat round trip.
+  function strip3D(ax, ay, az, bx, by, bz, w, col, period = 1, duty = 1, phase = 0, flow = 1, phaseLength = null) {
+    if (built) throw new Error('Road paint builder already finalized');
     const len = Math.hypot(bx - ax, bz - az);
-    if (len < 0.05) return;
+    if (len === 0) return;
     const sx = ((az - bz) / len) * w * 0.5;
     const sz = ((bx - ax) / len) * w * 0.5;
+    const key = Math.floor((ax + bx) * 0.5 / cellSize) + ',' + Math.floor((az + bz) * 0.5 / cellSize);
+    let cell = cells.get(key);
+    if (!cell) cells.set(key, (cell = { position: [], side: [], paint: [], colors: [], index: [] }));
+    const { position, side, paint, colors, index } = cell;
     const i = position.length / 3;
-    const end = phase + len * flow;
-    for (const [x, z, s, u] of [[ax, az, -1, phase], [ax, az, 1, phase], [bx, bz, 1, end], [bx, bz, -1, end]]) {
-      position.push(x + sx * s, HEIGHT, z + sz * s);
+    const end = phase + (phaseLength === null ? len : phaseLength) * flow;
+    for (const [x, y, z, s, u] of [[ax, ay, az, -1, phase], [ax, ay, az, 1, phase], [bx, by, bz, 1, end], [bx, by, bz, -1, end]]) {
+      position.push(x + sx * s, y, z + sz * s);
       side.push(sx * s, sz * s);
       paint.push(u, period, duty);
       colors.push(col.r, col.g, col.b);
     }
     index.push(i, i + 1, i + 2, i, i + 2, i + 3);
+  }
+
+  function build() {
+    if (built) return built; // one geometry allocation/finalization, even if a caller requests the group again
+    built = new THREE.Group();
+    built.name = name;
+    const material = createRoadPaintMaterial();
+    let first = null;
+    for (const { position, side, paint, colors, index } of cells.values()) {
+      const normal = new Float32Array(position.length);
+      for (let i = 1; i < normal.length; i += 3) normal[i] = 1;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+      geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setAttribute('side', new THREE.Float32BufferAttribute(side, 2));
+      geometry.setAttribute('paint', new THREE.Float32BufferAttribute(paint, 3));
+      geometry.setIndex(index);
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      // Use the uploaded Float32 side vectors. Crosswalks can widen by more than the upstream fixed 16 m pad.
+      let pad = 0;
+      const sides = geometry.attributes.side.array;
+      for (let i = 0; i < sides.length; i += 2) pad = Math.max(pad, Math.hypot(sides[i], sides[i + 1]) * (MAX_WIDEN - 1));
+      pad += 0.01; // conservative GPU arithmetic allowance at Manhattan's world coordinates
+      geometry.boundingBox.expandByScalar(pad);
+      geometry.boundingSphere.radius += pad;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `${name}Chunk`;
+      mesh.receiveShadow = true;
+      mesh.renderOrder = -1; // under contact shadows and headlight beams
+      mesh.userData.roadPaintChunk = true;
+      if (first) mesh.userData.sharesPipelineWith = first;
+      else first = mesh;
+      built.add(mesh);
+    }
+    cells.clear(); // construction arrays need not live as long as cityGrid.roadPaint
+    return built;
+  }
+  return { strip3D, build };
+}
+
+function buildRoadPaint(scene, network, sharedBuilder = null) {
+  const builder = sharedBuilder || createRoadPaintChunkBuilder();
+  const lines = [];
+  const bends = new Map();
+
+  // Keep the street builder's original short-strip rejection; shore and viaduct runs retain their own lengths.
+  function strip(ax, az, bx, bz, w, col, period = 1, duty = 1, phase = 0, flow = 1) {
+    if (Math.hypot(bx - ax, bz - az) < 0.05) return;
+    builder.strip3D(ax, HEIGHT, az, bx, HEIGHT, bz, w, col, period, duty, phase, flow);
   }
 
   // Edges run between stop lines; s is measured from the start one and o to the right of the centre line
@@ -184,23 +241,9 @@ function buildRoadPaint(scene, network) {
     }
   }
 
-  const normal = new Float32Array(position.length);
-  for (let i = 1; i < normal.length; i += 3) normal[i] = 1;
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setAttribute('side', new THREE.Float32BufferAttribute(side, 2));
-  geometry.setAttribute('paint', new THREE.Float32BufferAttribute(paint, 3));
-  geometry.setIndex(index);
-
-  const mesh = new THREE.Mesh(geometry, createRoadPaintMaterial());
-  mesh.name = 'RoadMarkings';
-  mesh.receiveShadow = true;
-  mesh.renderOrder = -1; // under the other see-through ground effects (contact shadows, headlight beams)
-  scene.add(mesh);
-  return mesh;
+  const group = builder.build();
+  scene.add(group);
+  return group;
 }
 
-export { buildRoadPaint };
+export { buildRoadPaint, createRoadPaintChunkBuilder };

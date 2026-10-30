@@ -113,7 +113,7 @@ test('preferences persist validated choices, avoid per-frame storage and tolerat
 });
 
 // Execute the production loop with counted collaborators. A correct pacer alone cannot prove that the
-// application's dt/traffic/input updates are outside its render gate, or preserve GPU boot rejection.
+// application's dt/traffic/input updates are outside its render gate, tree presentation is inside it, or preserve GPU boot rejection.
 const main = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
 test('selector restores persistence, clears held input, resets pacing and preserves keyboard focus', () => {
   const handlers = {}, writes = [];
@@ -148,9 +148,14 @@ test('selector restores persistence, clears held input, resets pacing and preser
 
 const loop = main.slice(main.indexOf('  // 6. Animation Loop'), main.lastIndexOf('\n}'));
 function loopFixture(choice, gpu = Promise.resolve()) {
-  const noop = () => {}, calls = {}, events = {};
-  const record = (key) => (...args) => { (calls[key] ??= []).push(args); };
+  const noop = () => {}, calls = {}, events = {}, order = [];
+  const record = (key) => (...args) => { (calls[key] ??= []).push(args); order.push(key); };
   const entity = { position: { x: 0, z: 0 }, speed: 0, controller: {}, update: record('entity') };
+  const camera = { position: { x: 0, y: 0, z: 0 }, aspect: 1 };
+  // Keep currentPos deliberately distinct: trees must use the actual rendered camera, not its follow target.
+  const currentPos = { x: -10000, y: -10000, z: -10000 };
+  const treeViews = [], renderViews = [], cameraViews = [];
+  let cameraSerial = 0, cinematic = null;
   let callback;
   const framePacer = createFramePacer(choice), elFps = {};
   const env = {
@@ -161,28 +166,48 @@ function loopFixture(choice, gpu = Promise.resolve()) {
     renderer: { setAnimationLoop: (fn) => { callback = fn; }, backend: { device: { queue: { onSubmittedWorkDone: () => gpu } } } },
     framePacer, frameRateHealth, frameRatePreference: { value: choice },
     elFps, elSpeed: null, elSpeedKmh: null, elSpeedMeter: null,
-    titleScreen: { isOpen: false, started: true, root: {}, show: record('title') },
-    booking: { active: false, state: {}, update: record('booking') },
-    bookingScreen: { update: noop }, bookingScene: null,
+    titleScreen: { isOpen: false, started: true, root: {}, show: record('title'), update: record('titleUpdate') },
+    booking: { active: false, state: {}, update: record('booking') }, BOOKING_STAGE: {},
+    bookingScreen: { update: noop, updateGamepad: record('bookingInput') },
+    bookingScene: { view: null, update() { return this.view; } },
     gamepadControls: { update: record('input') },
-    controllerManager: { update: record('rider'), getActiveEntity: () => entity },
+    controllerManager: { update: record('rider'), getActiveEntity: () => entity, resetInput: record('resetInput') },
     nemesis: { update: record('pursuit'), director: { state: {} } }, nemesisHud: { update: noop },
-    cameraSystem: { update: record('camera'), camera: { position: {} }, currentPos: {}, getActivePreset: () => ({ category: 'follow' }) },
-    streetDetails: { signalClock: { value: 0 } },
+    cameraSystem: {
+      update(...args) {
+        record('camera')(...args);
+        cameraSerial++;
+        Object.assign(camera.position, cinematic || { x: cameraSerial * 11, y: cameraSerial % 50, z: -cameraSerial * 7 });
+        cameraViews.push({ ...camera.position });
+      },
+      setCinematic(view) { record('cinematic')(view); cinematic = view.position; },
+      camera, currentPos, getActivePreset: () => ({ category: 'follow' })
+    },
+    streetDetails: { signalClock: { value: 0 }, update: record('streetLights'), treeField: {
+      update(position) {
+        record('trees')(position);
+        assert.equal(position, camera.position, 'tree update receives actual view object');
+        treeViews.push({ ...position }); // snapshot now; retained references would hide stale-camera regressions
+      }
+    } },
     trafficSystem: { update: record('traffic'), setPresentationClearance: noop },
     highwayTraffic: { update: record('highway') }, savePlayerState: noop,
     boroughs: {}, cityBlocks: { update: noop }, lightingSystem: { update: noop }, landmarks: { update: noop },
     mapSystem: { update: noop, isFullMapOpen: false }, audioSystem: { update: record('audio') },
     eucHud: { update: noop }, touchControls: { setDown: noop }, promptDevice: 'keyboard',
-    updateSceneCulling: record('culling'), scene: { traverse: noop }, renderPipeline: { render: record('render') },
+    updateSceneCulling: record('culling'), scene: { traverse: noop }, renderPipeline: { render() {
+      record('render')();
+      renderViews.push({ ...camera.position });
+      assert.deepEqual(treeViews.at(-1), camera.position, 'each submission uses trees selected for this final camera');
+    } },
     markInit: noop, initTimings: [], loadingStatus: {}, loadingOverlay: null, setLoadingProgress: noop,
     renderLocation: noop, getLocationLabel: noop
   };
   const reset = new Function(...Object.keys(env), `${loop}\nreturn resetFramePacing;`)(...Object.values(env));
-  return { step: (now) => callback(now), calls, events, reset, framePacer, elFps, env };
+  return { step: (now) => callback(now), calls, events, order, treeViews, renderViews, cameraViews, reset, framePacer, elFps, env };
 }
 
-test('production loop throttles only renders/culling, preserving all gameplay callback dts and actual FPS', async () => {
+test('production loop throttles renders/culling/tree presentation, preserving gameplay callback dts and actual FPS', async () => {
   for (const hz of [60, 120, 144, 240]) {
     const fixtures = ['auto', '120', '60', '30'].map((choice) => loopFixture(choice));
     for (let i = 1; i <= hz * 3; i++) for (const f of fixtures) {
@@ -193,18 +218,72 @@ test('production loop throttles only renders/culling, preserving all gameplay ca
     }
     const base = fixtures[0].calls;
     for (const [index, f] of fixtures.entries()) {
-      for (const key of ['input', 'rider', 'pursuit', 'booking', 'camera', 'traffic', 'highway', 'audio']) {
+      for (const key of ['input', 'rider', 'pursuit', 'booking', 'camera', 'traffic', 'highway', 'audio', 'streetLights']) {
         assert.equal(f.calls[key].length, hz * 3, key);
         assert.deepEqual(f.calls[key].map((args) => args.slice(0, 2)), base[key].map((args) => args.slice(0, 2)), key);
       }
       const target = [hz, Math.min(hz, 120), 60, 30][index];
       assert.equal(f.calls.render.length, target * 3 + 1, 'one extra startup warm-up submission');
       assert.equal(f.calls.culling.length, target * 3 - 1);
+      assert.equal(f.calls.trees.length, target * 3, 'one tree update per admitted frame, including boot');
+      assert.deepEqual(f.treeViews, f.renderViews.slice(1), 'boot submissions share one tree update; every later view has its own');
       assert.ok(Math.abs(Number(f.elFps.textContent) - target) <= 3, 'telemetry counts renders, not callbacks');
       await Promise.resolve();
       assert.equal(f.calls.complete.length, 1);
     }
   }
+});
+
+test('tree admission follows the final title, riding, booking and map-return camera, never skipped callbacks', () => {
+  const f = loopFixture('30');
+  let admit = true;
+  f.framePacer.shouldRender = () => admit;
+  const step = (now, rendered, first = false) => {
+    const trees = f.treeViews.length, submissions = f.renderViews.length;
+    f.order.length = 0;
+    f.step(now);
+    assert.equal(f.treeViews.length, trees + Number(rendered));
+    assert.equal(f.renderViews.length, submissions + (rendered ? first ? 2 : 1 : 0));
+    if (rendered) {
+      assert.deepEqual(f.treeViews.at(-1), f.cameraViews.at(-1));
+      assert.notDeepEqual(f.treeViews.at(-1), f.env.cameraSystem.currentPos);
+      assert.ok(f.order.indexOf('camera') < f.order.indexOf('trees'));
+      assert.ok(f.order.indexOf('trees') < f.order.indexOf('render'));
+      if (!first) assert.ok(f.order.indexOf('trees') < f.order.indexOf('culling'));
+    } else {
+      assert.ok(!f.order.includes('trees') && !f.order.includes('culling'));
+      assert.ok(f.order.includes('camera') && f.order.includes('streetLights'), 'callback updates remain live');
+    }
+  };
+  f.env.titleScreen.isOpen = true;
+  step(1, true, true);
+  assert.ok(f.order.indexOf('titleUpdate') < f.order.indexOf('camera'));
+  admit = false;
+  step(2, false);
+  f.env.titleScreen.isOpen = false;
+  admit = true;
+  step(40, true); // riding after title
+  f.env.booking.active = true;
+  f.env.booking.state.phase = 'signing';
+  const bookingPosition = { x: 73, y: 2.75, z: -812 };
+  f.env.bookingScene.view = { position: bookingPosition };
+  admit = false;
+  step(41, false);
+  admit = true;
+  step(80, true);
+  assert.deepEqual(f.treeViews.at(-1), bookingPosition);
+  assert.ok(f.order.includes('bookingInput'));
+  assert.ok(f.order.indexOf('cinematic') < f.order.indexOf('camera'), 'booking framing precedes final camera and tree selection');
+  f.env.booking.active = false;
+  f.env.bookingScene.view = null;
+  f.env.cameraSystem.setCinematic({ position: null });
+  f.env.mapSystem.isFullMapOpen = true;
+  admit = false;
+  step(81, false);
+  f.env.mapSystem.isFullMapOpen = false;
+  admit = true;
+  step(120, true);
+  assert.notDeepEqual(f.treeViews.at(-1), bookingPosition);
 });
 
 test('production lifecycle resets discard background dt and render deadline; settings reset leaves gameplay dt intact', () => {
@@ -215,11 +294,14 @@ test('production lifecycle resets discard background dt and render deadline; set
     f.events[event]();
     now += 10000;
     const before = f.calls.render.length;
+    const beforeTrees = f.calls.trees.length;
     f.step(now);
     assert.equal(f.calls.render.length, before + 1, event);
+    assert.equal(f.calls.trees.length, beforeTrees + 1, event);
     assert.equal(f.calls.rider.at(-1)[0], 0.001, 'resume uses minimum safe dt, not hidden time');
     f.step(now + 5);
     assert.equal(f.calls.render.length, before + 1, 'no catch-up render burst');
+    assert.equal(f.calls.trees.length, beforeTrees + 1, 'no tree work on skipped resume callback');
     now += 5;
   }
   f.framePacer.set('60');
@@ -234,9 +316,12 @@ test('first frame bypasses admission and retains GPU completion/rejection boot p
   f.framePacer.shouldRender = () => false;
   f.step(1);
   assert.equal(f.calls.render.length, 2);
+  assert.equal(f.calls.trees.length, 1, 'forced boot updates trees once before both warm-up submissions');
+  assert.deepEqual(f.treeViews[0], f.cameraViews[0]);
   assert.equal(f.calls.complete, undefined);
   f.step(2);
   assert.equal(f.calls.render.length, 2);
+  assert.equal(f.calls.trees.length, 1, 'pending GPU completion does not bypass pacing again');
   resolve();
   await Promise.resolve();
   assert.equal(f.calls.complete.length, 1);
@@ -249,4 +334,8 @@ test('first frame bypasses admission and retains GPU completion/rejection boot p
   assert.deepEqual(failed.calls.fail, [[error]]);
   assert.equal(failed.calls.complete, undefined);
   assert.equal(failed.calls.title, undefined);
+  assert.equal(failed.calls.trees.length, 1);
+  failed.env.startup.failed = true;
+  failed.step(1000);
+  assert.equal(failed.calls.trees.length, 1, 'failed startup stops further tree presentation');
 });

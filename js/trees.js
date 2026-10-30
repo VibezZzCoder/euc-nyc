@@ -836,8 +836,12 @@ function buildTreeGeometries(speciesIndex, variant, tileMeters) {
 }
 
 // =====================================================================================================================
-// 5. TREE FIELD: per-tree level of detail, regrouped into one instanced mesh per species / variant / level
+// 5. TREE FIELD: CPU cell-hierarchical LOD selection feeding 15 global species / variant / level render pools
 // =====================================================================================================================
+// Cell hierarchy / explicit updates adapted from mrdoob/slop-newyork@e35c06c0d896052a80ff117aefe8b99e978913d4.
+// Hybrid verified in the Oct 29 global-pools QA prototype: GPU cell batches cost more draws/frame time despite fewer
+// triangles. Keep the accepted geometry, planting, trunk bodies and shadow/LOD policy with baseline global batching.
+const TREE_CELL_SIZE = 200;
 const LOD_NEAR = 105; // full detail within (m)
 const LOD_MID = 420; // coarse cards & branches within; whole-crown cards beyond
 const LOD_HYSTERESIS = 6;
@@ -852,12 +856,12 @@ function hashPos(x, y, z) {
 }
 
 /**
- * Builds the instanced tree field for `sites` ({ x, y, z, scale, species, yaw?, sx?, sz?, tier? }) and keeps each
- * tree's level of detail up to date from the camera of every view pass (scene.onBeforeRender). Returns
+ * Builds the instanced tree field for `sites` ({ x, y, z, scale, species, yaw?, sx?, sz?, tier? }). Call
+ * `update(cameraPosition)` with the actual view camera before rendering. Returns
  * { group, material, atlas, rideSolids, update(cameraPosition) }. rideSolids is static (two lower-trunk boxes per
  * retained tree), independent of the camera's LOD / distance culling.
  */
-function createTreeField(scene, sites) {
+function createTreeField(_scene, sites) {
   const group = new THREE.Group();
   group.name = 'Trees';
   const atlas = createLeafAtlas();
@@ -874,11 +878,11 @@ function createTreeField(scene, sites) {
   const px = new Float32Array(N);
   const py = new Float32Array(N);
   const pz = new Float32Array(N);
-  const meshOf = new Int16Array(N * 3); // mesh index per level
+  const meshOf = new Int16Array(N * 3); // global mesh index per level (15 pools)
   const tier = new Uint8Array(N);
   const lod = new Uint8Array(N).fill(255);
 
-  // Meshes: lod 0 & 1 per species & variant, lod 2 per species
+  // Original render pools: lod 0 & 1 per species & variant, lod 2 per species (still v0 only).
   const meshes = [];
   const counts = [];
   const makeMesh = (geo, name) => {
@@ -890,6 +894,7 @@ function createTreeField(scene, sites) {
     l1: [0, 1].map((v) => makeMesh(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`)),
     l2: makeMesh(geos[s][0][2], `Trees_${sp.name}_lod2`)
   }));
+  const cells = new Map();
 
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
@@ -923,11 +928,43 @@ function createTreeField(scene, sites) {
     py[i] = (t.y || 0) + 6 * s;
     pz[i] = t.z;
     tier[i] = Math.min(2, t.tier || 0);
+    // Construction-only keys: signed coordinates without a packed-key range/aliasing restriction.
+    const key = Math.floor(t.x / TREE_CELL_SIZE) + ',' + Math.floor(t.z / TREE_CELL_SIZE);
+    let cell = cells.get(key);
+    if (!cell) cells.set(key, cell = { trees: [] });
+    cell.trees.push(i);
     const mi = meshIndex[sp];
     meshOf[i * 3] = mi.l0[variant];
     meshOf[i * 3 + 1] = mi.l1[variant];
     meshOf[i * 3 + 2] = mi.l2;
     for (let l = 0; l < 3; l++) meshes[meshOf[i * 3 + l]].capacity++;
+  });
+
+  // CPU-only bounds enclose the original Float32 mid-crown samples; they never cull canopy or shadow geometry.
+  const cellList = Array.from(cells.values(), (cell) => {
+    const trees = Int32Array.from(cell.trees);
+    const bounds = new THREE.Box3();
+    const point = new V3();
+    let minCutoff = Infinity, maxCutoff = 0;
+    for (const i of trees) {
+      bounds.expandByPoint(point.set(px[i], py[i], pz[i]));
+      minCutoff = Math.min(minCutoff, MAX_DIST[tier[i]]);
+      maxCutoff = Math.max(maxCutoff, MAX_DIST[tier[i]]);
+    }
+    const center = bounds.getCenter(new V3());
+    let radiusSq = 0;
+    for (const i of trees) radiusSq = Math.max(radiusSq, point.set(px[i], py[i], pz[i]).distanceToSquared(center));
+    cell.trees = trees;
+    cell.cx = center.x;
+    cell.cy = center.y;
+    cell.cz = center.z;
+    cell.radius = Math.sqrt(radiusSq) + 0.001;
+    cell.minCutoffAloft = minCutoff;
+    cell.maxCutoffAloft = maxCutoff;
+    cell.minCutoffLow = Math.min(minCutoff, LOW_CUTOFF);
+    cell.maxCutoffLow = Math.min(maxCutoff, LOW_CUTOFF);
+    cell.uniformLod = 255; // all trees start hidden; -1 below means mixed, never hidden
+    return cell;
   });
 
   const instanced = meshes.map((m) => {
@@ -945,7 +982,7 @@ function createTreeField(scene, sites) {
     mesh.name = m.name;
     mesh.count = 0;
     mesh.visible = false;
-    mesh.frustumCulled = false; // instances surround the camera: the per-tree levels do the culling
+    mesh.frustumCulled = false; // original global pools: only per-tree LOD/distance selection culls instances
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     group.add(mesh);
@@ -953,7 +990,7 @@ function createTreeField(scene, sites) {
     return mesh;
   });
 
-  // Regroup every visible tree into the mesh of its level
+  // Original global repack, only when LOD membership changes. Preserve source order and fixed buffer capacities.
   function rebuild() {
     counts.fill(0);
     for (let i = 0; i < N; i++) {
@@ -968,7 +1005,7 @@ function createTreeField(scene, sites) {
     instanced.forEach((mesh, mi) => {
       const n = counts[mi];
       if (n > 0) {
-        // upload only the instances in use (main.js swaps instanceMatrix for a storage attribute: look it up here)
+        // main.js replaces instanceMatrix with a storage attribute on WebGPU: always use the current attribute.
         for (const attr of [mesh.instanceMatrix, mesh.geometry.attributes.aTreeData]) {
           attr.clearUpdateRanges();
           attr.addUpdateRange(0, n * attr.itemSize);
@@ -980,49 +1017,87 @@ function createTreeField(scene, sites) {
     });
   }
 
-  // Levels from the camera position (3D distance to mid-crown), with hysteresis at every boundary
+  function setCellUniformLod(cell, target) {
+    if (cell.uniformLod === target) return false;
+    let changed = false;
+    for (const i of cell.trees) {
+      if (lod[i] !== target) {
+        lod[i] = target;
+        changed = true;
+      }
+    }
+    cell.uniformLod = target;
+    return changed;
+  }
+
+  // Used but empty pools are exposed until the first explicit update so traverseVisible precompiles all pipelines.
+  // They draw zero instances and need no extra representative meshes or shared-pipeline aliases.
+  const compileOnly = [];
+  // Levels from the camera position (3D distance to mid-crown), with the accepted 4 m update policy.
   const last = new V3(Infinity, Infinity, Infinity);
   const cam = new V3();
   function update(position) {
+    for (const mesh of compileOnly) mesh.visible = mesh.count > 0;
+    compileOnly.length = 0;
     cam.copy(position);
     if (cam.distanceToSquared(last) < 16) return false;
     last.copy(cam);
     const low = cam.y < 40;
     let changed = false;
-    for (let i = 0; i < N; i++) {
-      const dx = px[i] - cam.x;
-      const dy = py[i] - cam.y;
-      const dz = pz[i] - cam.z;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const maxD = low ? Math.min(MAX_DIST[tier[i]], LOW_CUTOFF) : MAX_DIST[tier[i]];
-      // levels 0-2, 3 = hidden; next to a boundary a tree keeps the level it has
-      const curL = lod[i] === 255 ? 3 : lod[i];
-      let nextL = d < LOD_NEAR ? 0 : d < LOD_MID ? 1 : d < maxD ? 2 : 3;
-      if (Math.abs(nextL - curL) === 1) {
-        const edge = [LOD_NEAR, LOD_MID, maxD][Math.min(nextL, curL)];
-        if (Math.abs(d - edge) < LOD_HYSTERESIS) nextL = curL;
+    for (const cell of cellList) {
+      const dx = cell.cx - cam.x, dy = cell.cy - cam.y, dz = cell.cz - cam.z;
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const minD = distance - cell.radius, maxD = distance + cell.radius;
+      const maxCutoff = low ? cell.maxCutoffLow : cell.maxCutoffAloft;
+      const minCutoff = low ? cell.minCutoffLow : cell.minCutoffAloft;
+      let target = -1;
+      // Entire cells safely outside hysteresis can skip all per-tree distance/LOD work.
+      if (minD >= maxCutoff + LOD_HYSTERESIS) target = 255;
+      else if (maxD < LOD_NEAR - LOD_HYSTERESIS) target = 0;
+      else if (minD >= LOD_NEAR + LOD_HYSTERESIS && maxD < LOD_MID - LOD_HYSTERESIS) target = 1;
+      else if (minD >= LOD_MID + LOD_HYSTERESIS && maxD < minCutoff - LOD_HYSTERESIS) target = 2;
+      if (target !== -1) {
+        if (setCellUniformLod(cell, target)) changed = true;
+        continue;
       }
-      const next = nextL === 3 ? 255 : nextL;
-      if (next !== lod[i]) {
-        lod[i] = next;
-        changed = true;
+
+      let cellChanged = false, firstLod = -1, allSame = true;
+      for (const i of cell.trees) {
+        const dx = px[i] - cam.x, dy = py[i] - cam.y, dz = pz[i] - cam.z;
+        // Preserve the baseline arithmetic at boundary cells. Squaring thresholds alone changes decisions within
+        // an ULP of an edge because Math.sqrt rounds; the hierarchy already removes the distant per-tree scans.
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const maxD = low ? Math.min(MAX_DIST[tier[i]], LOW_CUTOFF) : MAX_DIST[tier[i]];
+        const curL = lod[i] === 255 ? 3 : lod[i];
+        let nextL = d < LOD_NEAR ? 0 : d < LOD_MID ? 1 : d < maxD ? 2 : 3;
+        if (Math.abs(nextL - curL) === 1) {
+          const edge = Math.min(nextL, curL) === 0 ? LOD_NEAR : Math.min(nextL, curL) === 1 ? LOD_MID : maxD;
+          if (Math.abs(d - edge) < LOD_HYSTERESIS) nextL = curL;
+        }
+        const next = nextL === 3 ? 255 : nextL;
+        if (next !== lod[i]) {
+          lod[i] = next;
+          cellChanged = true;
+        }
+        if (firstLod === -1) firstLod = next;
+        else if (next !== firstLod) allSame = false;
       }
+      cell.uniformLod = allSame ? firstLod : -1;
+      if (cellChanged) changed = true;
     }
     if (changed) rebuild();
     return changed;
   }
 
-  // Follow the view camera of every scene render (shadow cascades are orthographic and keep the view's levels)
-  const viewPos = new V3();
-  const prevBeforeRender = scene.onBeforeRender;
-  scene.onBeforeRender = function (renderer, scn, camera, target) {
-    prevBeforeRender.call(this, renderer, scn, camera, target);
-    if (camera.isOrthographicCamera === true || camera.isArrayCamera === true) return;
-    update(viewPos.setFromMatrixPosition(camera.matrixWorld));
-  };
-
   // Levels for the start-up view (Midtown, 5th Ave), so the precompile pass sees the tree meshes
   update(new V3(0, 10, 140));
+
+  instanced.forEach((mesh, mi) => {
+    if (meshes[mi].capacity > 0 && !mesh.visible) {
+      mesh.visible = true;
+      compileOnly.push(mesh);
+    }
+  });
 
   const stats = {
     trees: N,

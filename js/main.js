@@ -133,7 +133,7 @@ export async function initApp(startup) {
   markInit('traffic');
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
   await showLoadingStage('Adding road markings...');
-  buildRoadPaint(scene, trafficSystem.network);
+  buildRoadPaint(scene, trafficSystem.network, cityGrid.roadPaint);
   markInit('roadPaint');
 
   // 4. The player's EUC (controllers.js, euc-rider.js) & Multi-Camera System
@@ -894,6 +894,8 @@ export async function initApp(startup) {
     // 120 Hz accumulator, traffic, pursuit, booking and audio. First-frame boot must always run to completion.
     const renderFrame = framePacer.shouldRender(now) || !warmedUp;
     if (renderFrame) {
+      // Presentation only: use the final title/riding/booking camera once per submitted view, not per shadow pass.
+      streetDetails.treeField?.update(cameraSystem.camera.position);
       if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
 
       // Render frame via TSL RenderPipeline (SSR + Bloom)

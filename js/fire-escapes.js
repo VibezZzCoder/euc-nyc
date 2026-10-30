@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, attribute, uv, positionGeometry, normalGeometry,
+  Fn, If, float, attribute, varying, uv, positionGeometry, normalGeometry,
   abs, floor, fract, mod, step, fwidth, max, min, mix
 } from 'three/tsl';
 
@@ -64,27 +64,38 @@ export function createFireEscapes(group) {
   const steel = { color: 0x25292c, roughness: 0.65, metalness: 0.6 };
   const nearMaterial = new THREE.MeshStandardNodeMaterial({ ...steel, side: THREE.DoubleSide });
   nearMaterial.maskNode = Fn(() => {
-    const part = attribute('escapePart', 'float');
+    const part = varying(attribute('escapePart', 'float'), 'vEscapePart').setInterpolation('flat');
     const flags = attribute('escapeFlags', 'vec2');
     const u = uv();
     const bar = (distance, halfWidth, footprint) => step(distance, max(halfWidth, footprint.mul(0.5)));
     const p = positionGeometry.xz;
     const grid = p.mul(10);
-    const bars = bar(abs(fract(grid.add(0.5)).sub(0.5)), 0.08, fwidth(grid));
-    // Frame the landing panels and their stair opening; unresolved grating fills in without shimmering.
-    const edge = min(abs(abs(p.x).sub(1.7)), abs(abs(p.x).sub(1.2)), abs(abs(p.y).sub(0.55)), abs(p.y.add(0.18)));
-    const frame = bar(edge, 0.025, max(fwidth(p.x), fwidth(p.y)));
-    const solid = mix(max(bars.x, bars.y, frame), 1, step(0.5, part));
-    const pickets = bar(abs(fract(u.x.add(0.5)).sub(0.5)), 0.08, fwidth(u.x));
-    const rail = bar(abs(u.y.sub(0.97)), 0.03, fwidth(u.y));
-    const middleRail = bar(abs(u.y.sub(0.48)), 0.018, fwidth(u.y));
-    const guard = max(pickets, rail, middleRail);
-    const ladderRails = bar(min(u.x, float(1).sub(u.x)), 0.065, fwidth(u.x));
-    const rungs = bar(abs(fract(u.y.mul(8).add(0.5)).sub(0.5)), 0.07, fwidth(u.y).mul(8));
-    const ladder = step(3.5, part);
-    const flight = step(1.5, part).mul(float(1).sub(ladder));
-    const visible = mix(1, flags.x, flight).mul(mix(1, flags.y, ladder));
-    return mix(mix(solid, guard, mod(part, 2)), max(ladderRails, rungs), ladder).mul(visible).greaterThan(0.5);
+    // Selective ideas from ab33d1b9514e2568c6f7d18fd129052e67ed421e / 00d95cb9b5d0f4d0775ab20b7b6a9641f79ca9a5
+    // (mrdoob/slop-newyork, MIT): skip other parts' mask work, retaining our detailed-floor / far-proxy system.
+    // Materialize derivatives BEFORE divergent branches (WGSL uniformity); retain the original filtering arithmetic.
+    const gridWidth = fwidth(grid).toVar();
+    const px = fwidth(p.x).toVar(), pz = fwidth(p.y).toVar();
+    const ux = fwidth(u.x).toVar(), uy = fwidth(u.y).toVar();
+    const mask = float(1).toVar();
+    If(part.lessThan(0.5), () => {
+      const bars = bar(abs(fract(grid.add(0.5)).sub(0.5)), 0.08, gridWidth);
+      // Frame the landing panels and their stair opening; unresolved grating fills in without shimmering.
+      const edge = min(abs(abs(p.x).sub(1.7)), abs(abs(p.x).sub(1.2)), abs(abs(p.y).sub(0.55)), abs(p.y.add(0.18)));
+      const frame = bar(edge, 0.025, max(px, pz));
+      mask.assign(max(bars.x, bars.y, frame));
+    }).ElseIf(part.greaterThan(3.5), () => {
+      const ladderRails = bar(min(u.x, float(1).sub(u.x)), 0.065, ux);
+      const rungs = bar(abs(fract(u.y.mul(8).add(0.5)).sub(0.5)), 0.07, uy.mul(8));
+      mask.assign(max(ladderRails, rungs).mul(flags.y));
+    }).ElseIf(mod(part, 2).greaterThan(0.5), () => {
+      const pickets = bar(abs(fract(u.x.add(0.5)).sub(0.5)), 0.08, ux);
+      const rail = bar(abs(u.y.sub(0.97)), 0.03, uy);
+      const middleRail = bar(abs(u.y.sub(0.48)), 0.018, uy);
+      mask.assign(max(pickets, rail, middleRail).mul(mix(1, flags.x, step(1.5, part))));
+    }).Else(() => {
+      mask.assign(flags.x); // all sixteen horizontal treads and both stringers stay solid geometry
+    });
+    return mask.greaterThan(0.5);
   })();
 
   const geometry = floorGeometry();
@@ -136,7 +147,9 @@ export function createFireEscapes(group) {
   for (const mesh of [...near, far]) {
     mesh.count = 0;
     mesh.castShadow = mesh.receiveShadow = true;
-    mesh.frustumCulled = false;
+    mesh.frustumCulled = true;
+    // A full streaming pool is still dynamic; scene-culling must never split it into stale static copies.
+    mesh.userData.dynamicInstances = true;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     group.add(mesh);
   }
@@ -180,6 +193,10 @@ export function createFireEscapes(group) {
       far.count = farCount;
       flagRange(far.instanceMatrix, farCount);
       flagRange(farData, farCount);
+      // Refit to the uploaded matrices on each stream (including empty/teleported pools), for both view and shadows.
+      // No vertex displacement here: Three's transformed geometry spheres conservatively cover every retained part.
+      // Keep all three visible/precompile-eligible even when empty, with their original counts and capacities.
+      for (const mesh of [...near, far]) mesh.computeBoundingSphere();
     }
   };
 }

@@ -69,6 +69,9 @@ The Teleport menu has seventeen stops, including the four East River bridge appr
 Little Island, the Hudson River Greenway and **Civic Detention Jail** on White Street. The jail is an original fictional
 exterior on the historic Tombs site. Your camera and time-of-day choices are remembered between visits.
 
+At street level, storefront glazing reveals simulated shelves and counters behind generic shop signs, alongside
+distinct residential entrances. Traffic wheels retain each vehicle's alloy, blackout or patrol-wheel style up close.
+
 Search **Pier 62** on the map and click its **skateboard icon** to try the larger waterfront skatepark: banks, two
 quarter-pipes, rollers, a manual pad, ledges and a low rail, joined by a clear flat riding line and gentle path entrances.
 The slate-blue court sits beside an active asphalt traffic crossing.

@@ -66,9 +66,9 @@ import {
   createMarbleAshlarMaterial,
   createParkWallMaterial,
   createParkLampPoolMaterial,
-  createRoadPaintMaterial,
   createTunnelShadeMaterial
 } from './tsl-materials.js';
+import { createRoadPaintChunkBuilder } from './road-paint.js';
 import { GEO } from './nyc-geodata.js';
 import { subtractConvex, convexHullXZ, prismSlices, railBodies } from './ride-geometry.js';
 
@@ -197,6 +197,7 @@ function batchStaticGroupMeshes(rootGroup, excludeMaterials = null) {
 
   rootGroup.traverse((obj) => {
     if (!obj.isMesh || obj.isInstancedMesh || !obj.geometry || !obj.material) return;
+    if (obj.userData.roadPaintChunk) return; // keep spatial bounds and shader attributes even if a caller adds UVs
     if (excludeMaterials && excludeMaterials.has(obj.material)) return;
     const attrs = obj.geometry.attributes;
     if (!attrs.position || !attrs.normal || !attrs.uv) return;
@@ -3312,7 +3313,9 @@ function buildCityGrid(scene) {
   // 9 & 10. The East River bridges, harbor islands and the surrounding boroughs are built by boroughs.js
 
   // 11. Manhattan's waterfront edge: esplanades, shore highways & riverside park belts (see buildManhattanWaterfrontEdge)
-  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road: inWaterfrontRoad, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops });
+  // Finalize once, after main.js adds the traffic-network markings through buildRoadPaint(..., roadPaint).
+  const roadPaint = createRoadPaintChunkBuilder();
+  const highwayLanes = buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road: inWaterfrontRoad, treeSites, lawnMat: cpLawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops, roadPaint });
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
   batchStaticGroupMeshes(group, new Set([waterMat, roadMat, cpLawnMat, cpMeadowMat]));
@@ -3327,7 +3330,7 @@ function buildCityGrid(scene) {
   const colliders = (fdrViaduct && fdrViaduct.colliders) || [];
   const trafficColliders = (fdrViaduct && fdrViaduct.trafficColliders) || [];
   return {
-    group, sidewalks, footprints, highwayLanes, colliders, trafficColliders, ride: { tops: rideTops, solids: rideSolids },
+    group, sidewalks, footprints, highwayLanes, colliders, trafficColliders, roadPaint, ride: { tops: rideTops, solids: rideSolids },
     rideBuilder: { addRideMesh, addRideSolid }
   };
 }
@@ -3352,7 +3355,7 @@ function buildCityGrid(scene) {
  * South of the Williamsburg Bridge the FDR leaves the strip for the South Street Viaduct (buildSouthStreetViaduct).
  * Everything is merged into a handful of meshes and keeps clear of the bridge towers standing near the shore.
  */
-function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road, treeSites, lawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops }) {
+function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier57Road, treeSites, lawnMat, curbMat, roadMat, addRideTop, addRideSolid, addRideMesh, rideTops, roadPaint }) {
   const STEP = 3; // shore sampling (m of z)
   const HWY_W = 15.2; // 0.4 shoulder, 2 x 3.3 m lanes, 1.2 m median, 2 x 3.3 m lanes, 0.4 shoulder
   const COPING_Y = -0.04; // seawall coping top (section 2)
@@ -3444,7 +3447,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier5
   // Lane paint (createRoadPaintMaterial attributes, as in js/road-paint.js), dashes continuing along each run
   const WHITE = new THREE.Color(0xe6e2d6);
   const YELLOW = new THREE.Color(0xe8ad22);
-  const paint = { pos: [], side: [], paint: [], col: [], idx: [] };
+  const paint = roadPaint;
   function paintLine(rows, dOf, w, col, period = 1, duty = 1) {
     const pts = rows.map((r) => {
       const d = dOf(r);
@@ -3454,16 +3457,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier5
     runs(pts, (i, a, b, start) => {
       if (start) u = 0;
       const len = Math.hypot(b.x - a.x, b.z - a.z);
-      const sx = ((a.z - b.z) / len) * w * 0.5;
-      const sz = ((b.x - a.x) / len) * w * 0.5;
-      const k = paint.pos.length / 3;
-      for (const [p, s, t] of [[a, -1, u], [a, 1, u], [b, 1, u + len], [b, -1, u + len]]) {
-        paint.pos.push(p.x + sx * s, p.y, p.z + sz * s);
-        paint.side.push(sx * s, sz * s);
-        paint.paint.push(t, period, duty);
-        paint.col.push(col.r, col.g, col.b);
-      }
-      paint.idx.push(k, k + 1, k + 2, k, k + 2, k + 3);
+      paint.strip3D(a.x, a.y, a.z, b.x, b.y, b.z, w, col, period, duty, u);
       u += len;
     });
   }
@@ -3764,23 +3758,6 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, westRows, inPier5
   addMesh(wPortal.dark, viaduct.portalMats.dark);
   const wShade = addMesh(wPortal.shade, viaduct.portalMats.shade);
   if (wShade) wShade.renderOrder = 1; // over the lane markings (renderOrder -1)
-
-  if (paint.idx.length) {
-    const g = new THREE.BufferGeometry();
-    const normals = new Float32Array(paint.pos.length);
-    for (let i = 1; i < normals.length; i += 3) normals[i] = 1;
-    g.setAttribute('position', new THREE.Float32BufferAttribute(paint.pos, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(paint.col, 3));
-    g.setAttribute('side', new THREE.Float32BufferAttribute(paint.side, 2));
-    g.setAttribute('paint', new THREE.Float32BufferAttribute(paint.paint, 3));
-    g.setIndex(paint.idx);
-    const m = new THREE.Mesh(g, createRoadPaintMaterial());
-    m.name = 'ShoreHighwayMarkings';
-    m.receiveShadow = true;
-    m.renderOrder = -1; // like the street markings (js/road-paint.js)
-    group.add(m);
-  }
 
   const dummy = new THREE.Object3D();
   // Register only retained lamp sites, after the viaduct / portal removals above.
@@ -4196,18 +4173,8 @@ function buildSouthStreetViaduct(group, opts) {
     for (let i = 0; i < Math.min(nP - 1, iMouth + 3); i++) {
       const a = V(i, w, Y[i] + 0.012);
       const b = V(i + 1, w, Y[i + 1] + 0.012);
-      const flat = Math.hypot(b.x - a.x, b.z - a.z);
-      const sx = ((a.z - b.z) / flat) * width * 0.5;
-      const sz = ((b.x - a.x) / flat) * width * 0.5;
       const len = a.distanceTo(b);
-      const k = paint.pos.length / 3;
-      for (const [p, s, t] of [[a, -1, u], [a, 1, u], [b, 1, u + len], [b, -1, u + len]]) {
-        paint.pos.push(p.x + sx * s, p.y, p.z + sz * s);
-        paint.side.push(sx * s, sz * s);
-        paint.paint.push(t, period, duty);
-        paint.col.push(col.r, col.g, col.b);
-      }
-      paint.idx.push(k, k + 1, k + 2, k, k + 2, k + 3);
+      paint.strip3D(a.x, a.y, a.z, b.x, b.y, b.z, width, col, period, duty, u, 1, len);
       u += len;
     }
   }

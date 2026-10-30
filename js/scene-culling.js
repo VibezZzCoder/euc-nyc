@@ -51,7 +51,8 @@ function instanceSize(mesh) {
 }
 
 function isStaticMesh(o) {
-  return o.isMesh && !o.isSkinnedMesh && o.visible && o.frustumCulled !== false && !o.morphTargetInfluences;
+  return o.isMesh && !o.isSkinnedMesh && o.visible && o.frustumCulled !== false && !o.morphTargetInfluences &&
+    !o.userData.dynamicInstances;
 }
 
 function copyObjectState(dst, src) {

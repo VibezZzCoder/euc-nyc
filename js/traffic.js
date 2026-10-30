@@ -13,6 +13,7 @@ import {
   buildCarGeometry,
   buildCarProxyGeometry,
   buildSteerableWheelGeo,
+  createCarWheelMaterial,
   createLoftedCarMaterial,
   buildLightbarGeometry,
   createLightbarMaterial,
@@ -198,8 +199,11 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // Six body kinds share separately instanced wheels, scaled to each model's tyre radius.
   const carWheelLeftGeo = buildSteerableWheelGeo(BODY_SPECS.sedan, -1);
   const carWheelRightGeo = buildSteerableWheelGeo(BODY_SPECS.sedan, 1);
-
-  const carWheelMat = createLoftedCarMaterial(BODY_SPECS.sedan, 0xffbe14);
+  // Per-vehicle wheel styles adapted from slop-newyork@9cabaebb2f982d7cc822369448b0389a03ffb977.
+  const carWheelStyles = new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 2), 1);
+  carWheelLeftGeo.setAttribute('wheelStyle', carWheelStyles);
+  carWheelRightGeo.setAttribute('wheelStyle', carWheelStyles);
+  const carWheelMat = createCarWheelMaterial({ instanced: true });
 
   const cars = [];
   const counts = Object.fromEntries(Object.keys(CAR_KINDS).map(kind => [kind, 0]));
@@ -244,6 +248,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
 
   const carWheelLeftInst = new THREE.InstancedMesh(carWheelLeftGeo, carWheelMat, NUM_CARS * 2);
   const carWheelRightInst = new THREE.InstancedMesh(carWheelRightGeo, carWheelMat, NUM_CARS * 2);
+  carWheelRightInst.userData.sharesPipelineWith = carWheelLeftInst;
 
   // 3D Collision Spark & Debris Particle Pool
   const MAX_SPARKS = 120;
@@ -1808,6 +1813,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   const OFF_STAGE_Z = NORTH_BARRIER.z + 2.6;
   const dirtyPaint = new Set();
   const dirtyState = new Set();
+  let dirtyWheelStyles = false;
   const litVehicles = [];
   let litVehicleCount = 0;
   let wheelCars = 0;
@@ -1924,6 +1930,12 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     }
 
     if (near) {
+      const wi = wheelCars * 2;
+      const ws = carWheelStyles.array;
+      if (ws[wi] !== c.style || ws[wi + 1] !== c.style) {
+        ws[wi] = ws[wi + 1] = c.style;
+        dirtyWheelStyles = true;
+      }
       placeWheels(c, wheelCars++, rotY, c.roll, spec.wheelRadius, spec.wheelX, spec.wheelZ, carWheelLeftInst, carWheelRightInst);
     }
   }
@@ -2166,6 +2178,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     }
     buildOccupancy();
     for (const m of bodyMeshes) m.count = 0;
+    dirtyWheelStyles = false;
     litVehicleCount = 0;
     wheelCars = 0;
     visibleCars = 0;
@@ -2223,6 +2236,13 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     };
     syncInst(carWheelLeftInst, wheelCars * 2);
     syncInst(carWheelRightInst, wheelCars * 2);
+    if (dirtyWheelStyles && wheelCars > 0) {
+      // Traffic still updates on skipped render callbacks. Keep the widest pending prefix until the renderer
+      // consumes it; a shrinking near set must not lose styles for slots that can reappear without another write.
+      let n = wheelCars * 2;
+      for (const range of carWheelStyles.updateRanges) n = Math.max(n, range.count);
+      flagRange(carWheelStyles, n);
+    }
     for (const kind of ['sedan', 'suv']) syncInst(policeBars[kind], policeDrawn[kind]);
     syncInst(carShadowInst, visibleCars);
     syncInst(busBodyInst, visibleBuses);
