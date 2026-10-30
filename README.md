@@ -74,6 +74,11 @@ The Teleport menu has seventeen stops, including the four East River bridge appr
 Little Island, the Hudson River Greenway and **Civic Detention Jail** on White Street. The jail is an original fictional
 exterior on the historic Tombs site. Your camera and time-of-day choices are remembered between visits.
 
+All eleven camera views follow your ride. Alongside Chase, Action and First-Person, choose Elevated, Avenue,
+Crossroads, Architecture, Overlook, Side Tracking, Panorama or the travelling aerial Director. These replace the
+fixed landmark viewpoints with local cinematic framing, clearer-side selection and obstruction handling. Cycle with
+**V / Shift+V** or gamepad **Y**, or use the camera menu.
+
 At street level, storefront glazing reveals simulated shelves and counters behind generic shop signs, alongside
 distinct residential entrances. Traffic wheels retain each vehicle's alloy, blackout or patrol-wheel style up close.
 

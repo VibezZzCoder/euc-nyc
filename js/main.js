@@ -397,8 +397,7 @@ export async function initApp(startup) {
     if (elMode) elMode.textContent = RIDERS[ent.riderId].name;
     savePlayerState();
 
-    // If currently on a static scenic camera, switch to 3rd-Person Chase so the new rider is in view
-    if (cameraSystem.getActivePreset().category !== 'follow') selectCamera('chase', false, false);
+    // Every selectable camera follows the rider, so retain the chosen shot across a rider swap.
   }
 
   function selectCamera(camId, snap = false, remember = true) {

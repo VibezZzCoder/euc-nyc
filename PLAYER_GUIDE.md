@@ -198,13 +198,31 @@ carries on, only the rider changes. Each has their own crash voice.
 
 ## Cameras
 
-Three follow cameras (*3rd-Person Chase*, *Low-Angle Action*, *First-Person*); the first two move in front of a
-wall rather than into it. And scenic views around the city: Central
-Park, 5th Ave and the Empire State Building, Times Square, 42nd St, the Empire State observatory deck, Bryant Park, the
-East River, and an aerial auto-director. Pick one from the camera menu (bottom right; top right on touch screens).
-**Central Park Oasis** looks from above the southern canopy toward the park and skyline.
-Your chosen camera returns when you press **Ride** on your next visit. The title screen still circles the rider;
-teleporting or changing rider from a scenic view temporarily selects Chase without replacing your saved choice.
+All eleven views follow **your current location and elevation**. Pick from the camera menu (bottom right; top right
+on touch screens), or cycle with **V / Shift+V**, the camera arrows or gamepad **Y**.
+
+| View | Framing |
+|---|---|
+| **3rd-Person Chase** (`5`) | Behind the rider, with a view of the road ahead. |
+| **Low-Angle Action** (`6`) | Close, low rear-quarter view. |
+| **First-Person** (`7`) | Rider's-eye view. |
+| **Elevated** | Raised trailing view of the rider and nearby surroundings. |
+| **Avenue** (`8`) | Longer rear view along the street ahead. |
+| **Crossroads** (`9`) | Wider three-quarter tracking shot. |
+| **Architecture** (`0`) | Low architectural angle with the rider in the foreground. |
+| **Overlook** | High, downward view centred near the rider. |
+| **Side Tracking** | Close lateral view of the rider and wheel. |
+| **Panorama** | Wider side/rear view; favours a clear nearby water-side angle when available. |
+| **Auto-Director Aerial** | Slow aerial orbit that travels with you. |
+
+The former landmark views now film your ride wherever you are; their saved selections and shortcuts still work.
+The cinematic views ease around turns, can choose a clearer side, and retract when buildings or overhead structures
+block the camera. Drag/right-stick to look and pinch/wheel to zoom in Chase and the cinematic views; First-Person
+supports looking, while Action keeps its fixed rear-quarter angle. Looking manually pauses the Director's automatic
+orbit briefly. Portrait framing reduces the cinematic look-ahead so the rider stays in view.
+
+Your chosen view returns when you press **Ride** on your next visit and stays selected when changing rider. The title
+screen still circles the rider; teleporting and booking release temporarily select Chase without replacing your saved choice.
 
 ## Getting around
 

@@ -1,23 +1,35 @@
 import * as THREE from 'three/webgpu';
-import { bryantParkLawn } from './landmarks.js';
 
 // js/cameras.js
 // Multi-camera system supporting Third-Person Chase (with mouse/touch orbit + zoom),
-// Low-Angle Action Cam, rider's-eye POV Cam, 7 Iconic NYC Architectural Cameras, and Auto-Director Drone.
+// Low-Angle Action, rider's-eye POV, seven local cinematic styles, and a rider-centred director.
 
 const CAMERA_PRESETS = [
   { id: 'chase',       name: '3rd-Person Chase',         short: 'Chase',       category: 'follow', fov: 56 },
   { id: 'action',      name: 'Low-Angle Action',         short: 'Action',      category: 'follow', fov: 60 },
   { id: 'pov',         name: 'First-Person',             short: 'POV',         category: 'follow', fov: 68 },
-  { id: 'centralPark', name: 'Central Park Oasis',       short: 'Central Pk',  category: 'scenic', fov: 52 },
-  { id: 'fifthAve',    name: '5th Ave & Empire State',   short: '5th Ave',     category: 'scenic', fov: 48 },
-  { id: 'timesSquare', name: 'Times Square Crossroads',  short: 'Times Sq',    category: 'scenic', fov: 58 },
-  { id: 'chryslerGCT', name: '42nd St · Chrysler & GCT', short: 'Chrysler',    category: 'scenic', fov: 50 },
-  { id: 'observatory', name: 'Empire State 86th Deck',   short: '86th Deck',   category: 'scenic', fov: 52 },
-  { id: 'bryantPark',  name: 'Bryant Park & NYPL',       short: 'Bryant Pk',   category: 'scenic', fov: 52 },
-  { id: 'waterfront',  name: 'East River & Skyline',     short: 'Skyline',     category: 'scenic', fov: 46 },
-  { id: 'drone',       name: 'Auto-Director Aerial',     short: 'Director',    category: 'scenic', fov: 50 }
+  { id: 'centralPark', name: 'Elevated',                short: 'Elevated',   category: 'follow', fov: 52 },
+  { id: 'fifthAve',    name: 'Avenue',                  short: 'Avenue',     category: 'follow', fov: 48 },
+  { id: 'timesSquare', name: 'Crossroads',              short: 'Crossroads', category: 'follow', fov: 58 },
+  { id: 'chryslerGCT', name: 'Architecture',            short: 'Architecture', category: 'follow', fov: 50 },
+  { id: 'observatory', name: 'Overlook',                short: 'Overlook',   category: 'follow', fov: 52 },
+  { id: 'bryantPark',  name: 'Side Tracking',           short: 'Side',       category: 'follow', fov: 52 },
+  { id: 'waterfront',  name: 'Panorama',                short: 'Panorama',   category: 'follow', fov: 46 },
+  { id: 'drone',       name: 'Auto-Director Aerial',     short: 'Director',   category: 'follow', fov: 50 }
 ];
+
+// Retain IDs/order/FOVs so existing saved choices and shortcuts still select the same style.
+// Metres relative to the rider: positive back trails, positive side films from the right.
+const LOCAL_SHOTS = Object.freeze({
+  centralPark: { back: 11, side: 0, height: 9, lead: 1.8, lookHeight: 1.1 },
+  fifthAve: { back: 13, side: 0, height: 3.5, lead: 3, lookHeight: 1.3 },
+  timesSquare: { back: 7, side: 7, height: 4.5, lead: 1.5, lookHeight: 1.1 },
+  chryslerGCT: { back: 4, side: 5, height: 1.1, lead: 0, lookHeight: 2.2 },
+  observatory: { back: 5, side: 0, height: 20, lead: .7, lookHeight: 1 },
+  bryantPark: { back: 1.8, side: 7, height: 2, lead: 1, lookHeight: 1.1 },
+  waterfront: { back: 7, side: 13, height: 5, lead: 1, lookHeight: 1.3 },
+  drone: { back: 10, side: 5, height: 8, lead: .6, lookHeight: 1.1 },
+});
 
 class CameraSystem {
   constructor(domElement, controllerManager) {
@@ -57,6 +69,15 @@ class CameraSystem {
     this._rayOrigin = { x: 0, y: 0, z: 0 };
     this._rayDirection = { x: 0, y: 0, z: 0 };
     this._riderPoint = new THREE.Vector3();
+    this._lastRiderPosition = new THREE.Vector3();
+    this.hasRiderPosition = false;
+    this.shotInitialized = false;
+    this.shotSide = 1;
+    this.sideCheckIn = 0;
+    this.sideHold = 0;
+    this.directorAngle = 0;
+    this._candidate = new THREE.Vector3();
+    this._groundProbe = { height: 0, surface: 'pavement', plane: null };
 
     this.bindPointerControls();
   }
@@ -127,6 +148,16 @@ class CameraSystem {
   setCameraPreset(presetId, snapImmediately = false) {
     const preset = CAMERA_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
+    if (this.activePresetId !== preset.id || snapImmediately) {
+      this.shotInitialized = false;
+      this.shotSide = 1;
+      this.sideCheckIn = 0;
+      this.sideHold = 0;
+      this.directorAngle = 0;
+      this.armFraction = 1;
+      this._clearPointers();
+      this.resetOrbit();
+    }
     this.activePresetId = preset.id;
     this.camera.fov = preset.fov;
     this.camera.updateProjectionMatrix();
@@ -137,9 +168,9 @@ class CameraSystem {
 
   applyGamepadInput(lookX, lookY, zoom, dt) {
     if (!(dt > 0) || !Number.isFinite(dt)) return;
-    if (this.activePresetId !== 'chase' && this.activePresetId !== 'pov') return;
-    // POV uses the orbit angles, but only chase renders a zoomed camera distance.
-    if (this.activePresetId !== 'chase') zoom = 0;
+    if (this.activePresetId === 'action') return;
+    // POV uses the orbit angles; all other controllable views also use distance.
+    if (this.activePresetId === 'pov') zoom = 0;
     if (!lookX && !lookY && !zoom) return;
     this.orbitYawOffset -= lookX * 2.0 * dt;
     this.orbitPitchOffset = Math.max(-0.32, Math.min(0.68, this.orbitPitchOffset + lookY * 1.25 * dt));
@@ -195,6 +226,7 @@ class CameraSystem {
       this.camera.fov = this.getActivePreset().fov;
       this.camera.updateProjectionMatrix();
       this.initialized = false;
+      this.shotInitialized = false;
     }
   }
 
@@ -209,6 +241,16 @@ class CameraSystem {
       return;
     }
     const entity = this.controllerManager.getActiveEntity();
+    const p = entity.position, last = this._lastRiderPosition;
+    // Recovery / external placement can relocate without a menu teleport. Never fly across the city to catch up.
+    if (this.hasRiderPosition && Math.hypot(p.x - last.x, p.y - last.y, p.z - last.z) > 40) {
+      this.initialized = false;
+      this.shotInitialized = false;
+      this.armFraction = 1;
+    }
+    last.copy(p);
+    this.hasRiderPosition = true;
+    const localShot = !this.titleOrbit && LOCAL_SHOTS[this.activePresetId];
     const desiredPos = this._desiredPos;
     const desiredLook = this._desiredLook;
 
@@ -296,80 +338,11 @@ class CameraSystem {
         break;
       }
 
-      case 'centralPark': {
-        // Above the southern canopy, looking across The Pond toward the park and skyline.
-        // Camera-only adaptation of mrdoob/slop-newyork@565a6c4688dabb127b2b46c78809331308c871c0.
-        const sway = Math.sin(elapsed * 0.22) * 3.5;
-        desiredPos.set(-70.0 + sway, 26.0, -1425.0);
-        desiredLook.set(-250.0, 6.5, -1690.0);
-        break;
-      }
-
-      case 'fifthAve': {
-        // 5th Avenue & 42nd St looking South down the 5th Ave canyon toward the Empire State Building
-        const sway = Math.sin(elapsed * 0.25) * 1.8;
-        desiredPos.set(0.0 + sway, 6.5, -20.0);
-        desiredLook.set(-60.0, 150.0, 686.0);
-        break;
-      }
-
-      case 'timesSquare': {
-        // Times Square & Broadway looking across Duffy Square red steps and One Times Square billboards
-        const sway = Math.sin(elapsed * 0.3) * 3.0;
-        desiredPos.set(-603.0 + sway, 5.5, -290.0);
-        desiredLook.set(-566.0, 40.0, -40.0);
-        break;
-      }
-
-      case 'chryslerGCT': {
-        // Park Ave & 42nd St intersection looking straight at Grand Central, MetLife, and Chrysler Building Crown
-        const sway = Math.cos(elapsed * 0.22) * 2.5;
-        desiredPos.set(300.0 + sway, 9.5, 95.0);
-        desiredLook.set(470.0, 120.0, -50.0);
-        break;
-      }
-
-      case 'observatory': {
-        // Empire State Building 86th Floor Deck looking North-East across Midtown skyline
-        const pan = Math.sin(elapsed * 0.18) * 80.0;
-        desiredPos.set(-58.0, 322.0, 660.0);
-        desiredLook.set(420.0 + pan, 150.0, -200.0);
-        break;
-      }
-
-      case 'bryantPark': {
-        // Inside Bryant Park Great Lawn looking East toward NYPL portico, One Vanderbilt & Chrysler Building
-        const sway = Math.sin(elapsed * 0.25) * 1.5;
-        const lawn = bryantParkLawn || { minX: -260, maxX: -150, minZ: 40, maxZ: 120, top: 1.3 };
-        const lz = (lawn.minZ + lawn.maxZ) * 0.5;
-        desiredPos.set(lawn.minX + 18.0, lawn.top + 1.7, lz + sway);
-        desiredLook.set(lawn.maxX + 260.0, 70.0, lz - 60.0);
-        break;
-      }
-
-      case 'waterfront': {
-        // Over the shimmering East River looking across the FDR Drive, Queensboro Bridge & Midtown Skyline
-        const drift = Math.sin(elapsed * 0.15) * 40.0;
-        desiredPos.set(1640.0, 60.0, 60.0 + drift);
-        desiredLook.set(150.0, 150.0, -150.0);
-        break;
-      }
-
-      case 'drone': {
-        const angle = elapsed * 0.07 + 0.65;
-        const radius = 720.0 + Math.sin(elapsed * 0.23) * 140.0;
-        const alt = 330.0 + Math.cos(elapsed * 0.19) * 90.0;
-        desiredPos.set(
-          Math.cos(angle) * radius + 60.0,
-          alt,
-          Math.sin(angle) * radius + 250.0
-        );
-        desiredLook.set(60.0, 160.0, 250.0);
-        break;
-      }
+      default:
+        this.localFraming(entity, localShot, dt, desiredPos, desiredLook);
     }
 
-    if (!this.initialized || this.activePresetId === 'pov') {
+    if (!this.initialized || this.activePresetId === 'pov' || localShot) {
       this.currentPos.copy(desiredPos);
       this.currentLookAt.copy(desiredLook);
       this.initialized = true;
@@ -404,9 +377,120 @@ class CameraSystem {
     this.camera.position.copy(this.currentPos);
     const look = this._look ??= new THREE.Vector3();
     look.copy(this.currentLookAt);
-    if (this.activePresetId === 'chase' || this.activePresetId === 'action') this.occlude(entity, dt, look);
+    if (localShot) this.occludeLocal(entity, dt, look);
+    else if (this.activePresetId === 'chase' || this.activePresetId === 'action') this.occlude(entity, dt, look);
     else this.armFraction = 1;
     this.camera.lookAt(look);
+  }
+
+  /** Polar easing keeps each shot's radius stable through turns and follows translation without world-space lag. */
+  localFraming(entity, shot, dt, position, look) {
+    const p = entity.position;
+    const portrait = Math.min(1, this.camera.aspect);
+    const scale = Math.max(.65, Math.min(1.7, this.zoomMultiplier)) * (.88 + .12 * portrait);
+    const radius = Math.hypot(shot.back, shot.side) * scale;
+    const height = Math.max(.8, shot.height * scale + Math.sin(this.orbitPitchOffset - .09) * radius * .4);
+    this.sideCheckIn -= dt;
+    this.sideHold = Math.max(0, this.sideHold - dt);
+    if (shot.side && this.activePresetId !== 'drone' && this.sideCheckIn <= 0 && !this.isDragging && this.userOrbitTimer <= 0) {
+      this.sideCheckIn = .3;
+      const score = (side) => {
+        const angle = entity.heading + Math.atan2(shot.side * side, -shot.back);
+        this._candidate.set(p.x + Math.sin(angle) * radius, p.y + height, p.z + Math.cos(angle) * radius);
+        let value = this.clearArm(entity, this._candidate, false);
+        // A nearby water-facing camera can show the rider against the skyline; never prefer a blocked water shot.
+        if (this.activePresetId === 'waterfront' && value > .85 &&
+          this.waterSide(this._candidate.x, this._candidate.z, p.y)) value += .35;
+        return value;
+      };
+      if (this.sideHold <= 0 && score(-this.shotSide) > score(this.shotSide) + .22) {
+        this.shotSide *= -1;
+        this.sideHold = 1.5;
+      }
+    }
+    // Pause the automatic orbit while looking manually; phase advances only while this preset is selected.
+    if (this.activePresetId === 'drone' && !this.isDragging && this.userOrbitTimer <= 0) {
+      this.directorAngle = (this.directorAngle + dt * .09) % (Math.PI * 2);
+    }
+    const yaw = entity.heading + Math.atan2(shot.side * this.shotSide, -shot.back) +
+      this.orbitYawOffset + (this.activePresetId === 'drone' ? this.directorAngle : 0);
+    const lead = shot.lead * portrait;
+    if (!this.shotInitialized) {
+      const dx = this.currentPos.x - p.x, dz = this.currentPos.z - p.z;
+      const oldRadius = Math.hypot(dx, dz);
+      const blend = this.initialized && oldRadius > 1 && oldRadius < 60;
+      this.shotYaw = blend ? Math.atan2(dx, dz) : yaw;
+      this.shotRadius = blend ? oldRadius : radius;
+      this.shotHeight = blend ? Math.max(.8, this.currentPos.y - p.y) : height;
+      this.shotLead = blend ? 0 : lead;
+      this.shotLookHeight = blend ? 1.2 : shot.lookHeight;
+      this.shotHeading = entity.heading;
+      this.shotInitialized = true;
+    }
+    const k = 1 - Math.exp(-dt * 4);
+    this.shotYaw += Math.atan2(Math.sin(yaw - this.shotYaw), Math.cos(yaw - this.shotYaw)) * k;
+    this.shotRadius += (radius - this.shotRadius) * k;
+    this.shotHeight += (height - this.shotHeight) * k;
+    this.shotLead += (lead - this.shotLead) * k;
+    this.shotLookHeight += (shot.lookHeight - this.shotLookHeight) * k;
+    const headingDelta = entity.heading - this.shotHeading;
+    this.shotHeading += Math.atan2(Math.sin(headingDelta), Math.cos(headingDelta)) * k;
+    position.set(
+      p.x + Math.sin(this.shotYaw) * this.shotRadius,
+      p.y + this.shotHeight,
+      p.z + Math.cos(this.shotYaw) * this.shotRadius
+    );
+    look.set(
+      p.x + Math.sin(this.shotHeading) * this.shotLead,
+      p.y + this.shotLookHeight,
+      p.z + Math.cos(this.shotHeading) * this.shotLead
+    );
+  }
+
+  waterSide(x, z, referenceY) {
+    const sampler = this.controllerManager.eucSampler;
+    if (sampler?.isWater?.(x, z, referenceY)) return true;
+    if (sampler?.topAt?.(x, z, true, referenceY)) return false;
+    // isWater identifies authored ponds, not the rivers. Outside the rideable shore, a submerged city floor
+    // identifies river water. This excludes northern out-of-bounds land and registered (even floating) pier decks.
+    return Boolean(sampler?.isOffLimits?.(x, z, referenceY) &&
+      sampler.cityGround?.(x, z, this._groundProbe, referenceY)?.height < 0);
+  }
+
+  /** Bounded native box queries. Four parallel guard rays leave room for the camera near plane at corners. */
+  clearArm(entity, position, guards) {
+    const sampler = this.controllerManager.eucSampler;
+    if (!sampler?.raycast) return 1;
+    const p = entity.position, o = this._rayOrigin, d = this._rayDirection;
+    d.x = position.x - p.x;
+    d.y = position.y - (p.y + 1.2);
+    d.z = position.z - p.z;
+    const length = Math.hypot(d.x, d.y, d.z);
+    if (length < .001) return 1;
+    let allowed = length;
+    for (let i = 0; i < (guards ? 5 : 1); i++) {
+      o.x = p.x + (i === 1 ? .25 : i === 2 ? -.25 : 0);
+      o.y = p.y + 1.2;
+      o.z = p.z + (i === 3 ? .25 : i === 4 ? -.25 : 0);
+      const hit = sampler.raycast(o, d, length);
+      if (hit !== null) allowed = Math.min(allowed, Math.max(.08, hit - .6));
+    }
+    return allowed / length;
+  }
+
+  occludeLocal(entity, dt, look) {
+    const target = this.clearArm(entity, this.camera.position, true);
+    if (target < this.armFraction) this.armFraction = target;
+    else this.armFraction += (target - this.armFraction) * (1 - Math.exp(-dt * 4));
+    if (this.armFraction >= .999) return;
+    const p = entity.position, f = this.armFraction;
+    // Stay on the tested segment, including under bridges: lifting after a ray hit can enter a ceiling.
+    this.camera.position.set(
+      p.x + (this.camera.position.x - p.x) * f,
+      p.y + 1.2 + (this.camera.position.y - p.y - 1.2) * f,
+      p.z + (this.camera.position.z - p.z) * f
+    );
+    look.lerp(this._riderPoint.set(p.x, p.y + 1.1, p.z), 1 - f);
   }
 
   /**
