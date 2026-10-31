@@ -104,13 +104,19 @@ function inBridgeApproach(x, z, margin = 0) {
  * Builds a multi-part vaulted stone-arch park bridge (Gapstow Bridge & Bow Bridge)
  * with stone abutments, segmented arch ring, cambered walkway deck, and parapet walls.
  */
-function addStoneArchBridge(parent, cx, cz, rotY, span, width, archRise, wallMat, deckMat) {
+function addStoneArchBridge(parent, cx, cz, rotY, span, width, archRise, wallMat, deckMat, rideBuilder) {
   const bGroup = new THREE.Group();
   bGroup.position.set(cx, 1.22, cz);
   bGroup.rotation.y = rotY;
 
   const numSegs = 9;
   const segLen = span / numSegs;
+  const roofs = [], halfWalk = (width - 0.7) / 2, endX = span * 0.49 + 1.3;
+  const addRoof = (x, y, w, h, pitch, clearance = 0) => {
+    const c = Math.cos(pitch), s = Math.sin(pitch);
+    roofs.push({ left: x - w / 2 * c - h / 2 * s, right: x + w / 2 * c - h / 2 * s,
+      low: y - w / 2 * s + h / 2 * c + clearance, high: y + w / 2 * s + h / 2 * c + clearance });
+  };
   for (let i = 0; i < numSegs; i++) {
     const u = ((i + 0.5) / numSegs) * 2.0 - 1.0; // -1 .. +1
     const archY = Math.max(0.15, (1.0 - u * u) * archRise);
@@ -125,13 +131,11 @@ function addStoneArchBridge(parent, cx, cz, rotY, span, width, archRise, wallMat
     archSeg.castShadow = true;
     archSeg.receiveShadow = true;
     bGroup.add(archSeg);
+    addRoof(xPos, archSeg.position.y, segLen * 1.08, spandrelH, archSeg.rotation.z, 0.03);
 
-    // Cambered gravel/bluestone pedestrian deck
-    const deckSeg = new THREE.Mesh(new THREE.BoxGeometry(segLen * 1.08, 0.22, width - 0.7), deckMat);
-    deckSeg.position.set(xPos, archY + spandrelH * 0.78, 0);
-    deckSeg.rotation.z = tiltZ * 0.65;
-    deckSeg.receiveShadow = true;
-    bGroup.add(deckSeg);
+    // Retain the original bluestone deck's crown/profile, but join its walking face below instead of leaving
+    // separate pitched boxes with 35 cm steps. The stone arch and parapets retain their original geometry.
+    addRoof(xPos, archY + spandrelH * 0.78, segLen * 1.08, 0.22, tiltZ * 0.65);
 
     // Left & right stone parapet railings
     for (const side of [-1, 1]) {
@@ -151,9 +155,130 @@ function addStoneArchBridge(parent, cx, cz, rotY, span, width, archRise, wallMat
     pier.castShadow = true;
     pier.receiveShadow = true;
     bGroup.add(pier);
+    addRoof(pier.position.x, pier.position.y, 2.6, 1.35, 0, 0.02);
   }
 
   parent.add(bGroup);
+  // Keep the authored, stepped silhouette intact. Exact transformed facets supply support; native bodies must
+  // not turn these pitched pieces into tall flat lids or close the space under the arch with one bridge box.
+  for (const mesh of bGroup.children) {
+    rideBuilder.addRideMesh(mesh, 'brick', false, true);
+    const { width: w, height: h, depth: d } = mesh.geometry.parameters;
+    const c = Math.cos(mesh.rotation.z), s = Math.sin(mesh.rotation.z);
+    const outline = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => ({
+      x: mesh.position.x + x * w / 2 * c - y * h / 2 * s,
+      y: mesh.position.y + x * w / 2 * s + y * h / 2 * c
+    }));
+    const xs = [...new Set(outline.map(p => p.x))].sort((a, b) => a - b);
+    const range = x => {
+      const ys = [];
+      for (let i = 0; i < outline.length; i++) {
+        const a = outline[i], b = outline[(i + 1) % outline.length];
+        if (x < Math.min(a.x, b.x) - 1e-9 || x > Math.max(a.x, b.x) + 1e-9) continue;
+        if (Math.abs(a.x - b.x) < 1e-9) ys.push(a.y, b.y);
+        else ys.push(a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x));
+      }
+      return [Math.min(...ys), Math.max(...ys)];
+    };
+    for (let i = 1; i < xs.length; i++) {
+      const x0 = xs[i - 1], x1 = xs[i], a = range(x0), b = range(x1);
+      // Inscribe upright slices. Bound the missing edge strip to 6 cm along X for steep ends, Y for shallow
+      // faces; a long, nearly level face does not need dozens of short boxes. The unpitched abutment is one box.
+      const change = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+      const n = Math.max(1, Math.ceil(Math.min(x1 - x0, change) / 0.06));
+      for (let j = 0; j < n; j++) {
+        const left = x0 + (x1 - x0) * j / n, right = x0 + (x1 - x0) * (j + 1) / n;
+        const lo = range(left), hi = range(right), bottom = Math.max(lo[0], hi[0]), top = Math.min(lo[1], hi[1]);
+        if (top - bottom <= 1e-7) continue;
+        const centre = new THREE.Vector3((left + right) / 2, (bottom + top) / 2, mesh.position.z).applyMatrix4(bGroup.matrixWorld);
+        // Match the other sliced city bodies' micrometre overlap at shared faces (axis-parallel ray roundoff).
+        const body = rideBuilder.addRideSolid(centre.x, centre.z, right - left + 2e-6, d,
+          centre.y - (top - bottom) / 2, centre.y + (top - bottom) / 2, rotY, true);
+        body.support = false;
+        body.layered = true;
+        body.surface = 'brick';
+      }
+    }
+  }
+
+  // The least 0.32-grade majorant of the actual stone/deck roof segments blends each discontinuity locally.
+  // Use all line intersections, not a sampled height grid: even the narrow spandrel corners must stay below
+  // the walking face. This replaces only the existing narrow deck, never blankets the arch's stone cheeks.
+  const grade = 0.32, lines = [];
+  for (const r of roofs) {
+    const slope = (r.high - r.low) / (r.right - r.left);
+    for (const [from, to, m, b] of [[-endX, r.left, grade, r.low - grade * r.left],
+      [r.left, r.right, slope, r.low - slope * r.left], [r.right, endX, -grade, r.high + grade * r.right]]) {
+      if (Math.min(endX, to) > Math.max(-endX, from)) lines.push({ from: Math.max(-endX, from), to: Math.min(endX, to), m, b });
+    }
+  }
+  const knots = [-endX, endX, ...lines.flatMap(l => [l.from, l.to])];
+  for (let i = 0; i < lines.length; i++) for (let j = 0; j < i; j++) {
+    const a = lines[i], b = lines[j];
+    if (Math.abs(a.m - b.m) < 1e-9) continue;
+    const x = (b.b - a.b) / (a.m - b.m);
+    if (x > Math.max(a.from, b.from) && x < Math.min(a.to, b.to)) knots.push(x);
+  }
+  const profile = [];
+  for (const x of knots.sort((a, b) => a - b)) {
+    if (profile.length && x - profile[profile.length - 1].x < 1e-8) continue;
+    const p = { x, y: Math.max(...lines.filter(l => x >= l.from - 1e-8 && x <= l.to + 1e-8).map(l => l.m * x + l.b)), half: halfWalk };
+    while (profile.length > 1) {
+      const a = profile[profile.length - 2], b = profile[profile.length - 1];
+      if (Math.abs((b.y - a.y) * (p.x - b.x) - (p.y - b.y) * (b.x - a.x)) > 1e-8) break;
+      profile.pop();
+    }
+    profile.push(p);
+  }
+  const addWalk = (points, name) => {
+    const vertices = [], indices = [], base = points.length * 2;
+    for (const bottom of [false, true]) for (const p of points) {
+      for (const z of [-p.half, p.half]) vertices.push(p.x, p.y - (bottom ? 0.22 : 0), z);
+    }
+    const quad = (a, b, c, d) => indices.push(a, b, c, a, c, d);
+    for (let i = 0; i < base - 2; i += 2) {
+      quad(i, i + 1, i + 3, i + 2);
+      quad(i + base, i + base + 2, i + base + 3, i + base + 1);
+      quad(i, i + 2, i + base + 2, i + base);
+      quad(i + 1, i + base + 1, i + base + 3, i + 3);
+    }
+    quad(0, base, base + 1, 1);
+    quad(base - 2, base - 1, base * 2 - 1, base * 2 - 2);
+    const indexed = new THREE.BufferGeometry();
+    indexed.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    indexed.setAttribute('uv', new THREE.Float32BufferAttribute(vertices.flatMap((v, i) => i % 3 === 0 ? [v, vertices[i + 2]] : []), 2));
+    indexed.setIndex(indices);
+    const geometry = indexed.toNonIndexed();
+    indexed.dispose();
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, deckMat);
+    mesh.name = name;
+    mesh.receiveShadow = true;
+    bGroup.add(mesh);
+    rideBuilder.addRideMesh(mesh, 'brick', false, true);
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i], n = Math.max(1, Math.ceil(Math.abs(b.y - a.y) / 0.06));
+      for (let j = 0; j < n; j++) {
+        const lo = j / n, hi = (j + 1) / n, t = (lo + hi) / 2;
+        const y0 = a.y + (b.y - a.y) * lo, y1 = a.y + (b.y - a.y) * hi;
+        const bottom = Math.max(y0, y1) - 0.22, top = Math.min(y0, y1);
+        const half = Math.min(a.half + (b.half - a.half) * lo, a.half + (b.half - a.half) * hi);
+        const p = new THREE.Vector3(a.x + (b.x - a.x) * t, (bottom + top) / 2, 0).applyMatrix4(bGroup.matrixWorld);
+        const body = rideBuilder.addRideSolid(p.x, p.z, (b.x - a.x) / n + 2e-6, half * 2,
+          p.y - (top - bottom) / 2, p.y + (top - bottom) / 2, rotY, true);
+        body.support = false;
+        body.layered = true;
+        body.surface = 'brick';
+      }
+    }
+  };
+  addWalk(profile, 'StoneBridgeWalk');
+  // Eight-metre tapered path ramps reach the unchanged park lawn; a short flat toe makes both directions flush.
+  // These are visible 22 cm-deep meshes with explicit vertical ends, not pitched boxes or invisible support.
+  const parkY = CENTRAL_PARK_TOP - bGroup.position.y;
+  addWalk([{ x: -endX - 8.75, y: parkY, half: 1.5 }, { x: -endX - 8, y: parkY, half: 1.5 }, profile[0]], 'StoneBridgeApproach');
+  addWalk([profile[profile.length - 1], { x: endX + 8, y: parkY, half: 1.5 },
+    { x: endX + 8.75, y: parkY, half: 1.5 }], 'StoneBridgeApproach');
 }
 
 /**
@@ -2631,9 +2756,9 @@ function buildCityGrid(scene) {
 
   // Stone arch bridges: Gapstow Bridge over the Pond, Bow Bridge across the Lake (spanning their real headings)
   const gapstow = cpSite('Gapstow Bridge');
-  if (gapstow) addStoneArchBridge(group, gapstow.x, gapstow.z, -gapstow.ang, 24.0, 5.2, 2.25, cpWallMat, cpPathMat);
+  if (gapstow) addStoneArchBridge(group, gapstow.x, gapstow.z, -gapstow.ang, 24.0, 5.2, 2.25, cpWallMat, cpPathMat, { addRideMesh, addRideSolid });
   const bow = cpSite('Bow Bridge');
-  if (bow) addStoneArchBridge(group, bow.x, bow.z, -bow.ang, 30.0, 4.8, 2.1, marbleArchMat, cpPathMat);
+  if (bow) addStoneArchBridge(group, bow.x, bow.z, -bow.ang, 30.0, 4.8, 2.1, marbleArchMat, cpPathMat, { addRideMesh, addRideSolid });
 
   // The Mall / Literary Walk (66th to 72nd St) up to Bethesda Terrace & the Angel of the Waters fountain: hex asphalt
   // pavers (the park paving's style 0) under the elm allée, not the pale gravel of the walks, which read as a white strip

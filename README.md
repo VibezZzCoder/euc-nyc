@@ -7,6 +7,8 @@ A free side project of [*EUC Thrills*](https://github.com/VibezZzCoder/EUC-thril
 (the wheel's physics, the riders and the crashes) comes from *EUC Thrills*. The city is a fork of Mr.doob's
 open-source [three.js New York](https://github.com/mrdoob/slop-newyork) (MIT); it is not meant to merge back.
 
+Exploration comes first: roam freely, find a route and enjoy the city. Tricks and skateparks are optional extras.
+
 Status: early. Riders: Cool Rider (`1`) and Trollina (`2`). Cars, buses and pedestrians are solid: hitting one at
 speed is a crash. Real-world brands are replaced with fictional ones. Street, park and landmark names are kept as
 place names.
@@ -85,6 +87,11 @@ Crossroads, Architecture, Overlook, Side Tracking, Panorama or the travelling ae
 fixed landmark viewpoints with local cinematic framing, clearer-side selection and obstruction handling. Cycle with
 **V / Shift+V** or gamepad **Y**, or use the camera menu.
 
+The full map keeps riding input separate from map interaction. Landmark search results can be activated with
+Tab/Down and Enter/Space; unsafe or occupied arrivals leave you in place with feedback. The waypoint line is a
+direction guide, not a navigable GPS route. In Central Park, Gapstow and Bow bridges have connected rideable decks
+and gentle approaches from both banks.
+
 At street level, storefront glazing reveals simulated shelves and counters behind generic shop signs, alongside
 distinct residential entrances. Traffic wheels retain each vehicle's alloy, blackout or patrol-wheel style up close.
 
@@ -106,7 +113,7 @@ for the chase rules, release and skip controls.
 
 ## Developing
 
-- `node --test tests/*.test.*` runs the headless tests (Node 18 or newer).
+- `node --test tests/*.test.*` runs the headless tests. Use Node 24, also needed for the EUC vendor tool's native TypeScript stripping.
 - `js/euc/` is generated. Do not edit it. To update it from a local EUC Thrills checkout (`npm ci` done there), run
   `node tools/vendor-euc.mjs --src <path-to-EUC-thrills>`. Run it with `--check` to
   confirm the folder is current. The tool only keeps the riders in scope, and it fails if anything from a real-person

@@ -1,12 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import * as THREE from '../vendor/three/build/three.core.js';
-import { EucController, createPose, copyPose, lerpPose } from '../js/euc/simulation/EucController.js';
+import { EucController, createPose, copyPose } from '../js/euc/simulation/EucController.js';
 import { NEUTRAL_ACTIONS } from '../js/euc/input/actions.js';
-import { SIMULATION, INPUT } from '../js/euc/data/tuning.js';
 import { RiderTricks, TRICK_FEEDBACK_SECONDS } from '../js/euc-tricks.js';
 import { EucHud } from '../js/euc-hud.js';
+import { createTestEntity as entity } from './helpers/euc-entity.mjs';
 
 const DT = 1 / 120;
 const flat = { sampleGround(x, z, out) {
@@ -129,21 +127,6 @@ test('fakie requires a landed spin and continuous moving ground time; reset clea
   assert.equal(t.label, ''); assert.equal(t.fakieBase, '');
   assert.equal(t.previousFoot, 0); assert.equal(t.previousTuck, 0);
 });
-
-// Exercise the real entity accumulator/input/rig wiring. Only drawing and lighting
-// collaborators are stubbed; the controller, pose maths and trick lifecycle are real.
-function entity() {
-  const source = readFileSync(new URL('../js/euc-rider.js', import.meta.url), 'utf8')
-    .replace(/^import .*?;\n/gm, '').replace(/^export /gm, '');
-  const deps = { THREE, EucController, createPose, copyPose, lerpPose, NEUTRAL_ACTIONS, SIMULATION, INPUT, RiderTricks,
-    createRidingRig: () => ({ group: new THREE.Group(), apply(p) { this.drawn = { crouch: p.crouch, tuck: p.tuck }; },
-      setTrickPose(foot) { this.foot = foot; }, applySwing() {}, applyStatus() {}, dispose() {} }),
-    riderLook: x => x, machineLook: x => x, cityUniforms: { uInteriorGlow: { value: 0 } },
-    createEucHeadlight: () => Object.assign(new THREE.Object3D(), { target: new THREE.Object3D() }),
-    headlightBeamScale: () => 0, EUC_HEADLIGHT: {}, placeEucHeadlight() {} };
-  const create = new Function(...Object.keys(deps), `${source}; return createEucEntity;`)(...Object.values(deps));
-  return create(new THREE.Scene(), flat, { x: 0, z: 0 });
-}
 
 test('production entity: held input reaches interpolated rig, native jump is immediate, swap/placement clear tricks', () => {
   for (const hz of [30, 60, 120]) {

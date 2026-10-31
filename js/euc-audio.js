@@ -265,6 +265,7 @@ export class EucAudio {
     this.context = context;
     this.onWindHowl = onWindHowl;
     this.disposed = false;
+    this.loadController = new AbortController(); // Mute keeps samples cached; only disposal cancels loading.
     this.noise = noise || this.makeNoise();
     this.buffers = {};
     this.voices = new Set();
@@ -412,18 +413,20 @@ export class EucAudio {
   }
 
   load(key) {
+    if (this.disposed) return Promise.resolve(null);
     let url;
     try {
       url = new URL(`../audio/euc/${EUC_SAMPLE_FILES[key]}`, import.meta.url);
     } catch {
       return Promise.resolve(null);
     }
-    return fetch(url)
+    return fetch(url, { signal: this.loadController.signal })
       .then((response) => {
+        if (this.disposed) return null;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.arrayBuffer();
       })
-      .then((data) => decode(this.context, data))
+      .then((data) => this.disposed ? null : decode(this.context, data))
       .then((buffer) => {
         if (this.disposed) return null;
         this.buffers[key] = buffer;
@@ -431,7 +434,7 @@ export class EucAudio {
         return buffer;
       })
       .catch((error) => {
-        if (this.disposed) return null;
+        if (this.disposed || error?.name === 'AbortError') return null;
         this.buffers[key] = null;
         if (!this.warned.has(key)) {
           this.warned.add(key);
@@ -742,6 +745,7 @@ export class EucAudio {
     if (this.disposed) return;
     this.reset();
     this.disposed = true;
+    this.loadController.abort();
     for (const source of [...this.loops, this.motorHz, this.windSource, this.tokoSource]) {
       try { source?.stop(); } catch { /* already stopped */ }
     }

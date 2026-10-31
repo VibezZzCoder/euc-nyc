@@ -115,7 +115,7 @@ class CityAudioSystem {
     this.lastHorn = -Infinity;
     this.collisionPairs = new WeakMap();
     this.collisionSequence = 0;
-    this.collisionSystems = [simulation.controllerManager, simulation.trafficSystem];
+    this.collisionSystems = [simulation.controllerManager, simulation.trafficSystem, simulation.highwayTraffic].filter(Boolean);
     this.onCollision = (impact) => this.crash(impact);
     for (const system of this.collisionSystems) system.setCollisionListener?.(this.onCollision);
     this.motorParams = { speed: 0, load: 0, doppler: 1, seed: 0 };
@@ -155,6 +155,7 @@ class CityAudioSystem {
   }
 
   initialize() {
+    if (this.disposed || this.context) return;
     const Context = globalThis.AudioContext || globalThis.webkitAudioContext;
     const context = this.context = new Context({ latencyHint: 'interactive' });
     const listener = context.listener;
@@ -194,18 +195,24 @@ class CityAudioSystem {
       onWindHowl: (buffer) => this.wind?.useHowl(buffer), // one wind sound for the whole game: the EUC Thrills howl
     });
     this.cop = new NemesisAudio(context, this.mix, { noise: this.resources.noise, reflections: this.reflections });
+    this.cop.reset(this.chaser?.audioView);
     context.onstatechange = () => this.onStateChange();
   }
 
   /** The chasing cop (nemesis.js): anything with an `audioView` { present, chasing, x, z, range, closing, ... }. */
   setChaser(chaser) {
     this.chaser = chaser;
+    this.cop?.reset(chaser?.audioView);
   }
 
   // Every frame, like the rider: his sting must land on the frame he appears. Panned by where he is from the camera.
-  updateChaser(camera) {
+  updateChaser(camera, playing) {
     const view = this.chaser?.audioView;
-    if (!view || !this.cop) return;
+    if (!this.cop) return;
+    if (!playing || !view) {
+      this.cop.reset(view); // Consume silent counters and cancel voices before the context can resume.
+      return;
+    }
     const m = camera.matrixWorld.elements; // the camera's right vector is (m[0], m[1], m[2])
     const dx = view.x - camera.position.x, dz = view.z - camera.position.z;
     const d = Math.hypot(dx, dz);
@@ -216,8 +223,10 @@ class CityAudioSystem {
   setEnabled(enabled) {
     this.enabled = !!enabled;
     try { localStorage.setItem('nyc-sound', this.enabled ? 'on' : 'off'); } catch { /* Storage is optional. */ }
-    if (this.enabled) this.unlock();
-    else {
+    if (this.enabled) {
+      this.cop?.reset(this.chaser?.audioView);
+      this.unlock();
+    } else {
       this.reset();
       this.suspend();
     }
@@ -246,7 +255,7 @@ class CityAudioSystem {
     this.haveListener = false;
     this.accumulator = 0;
     this.euc?.reset();
-    this.cop?.reset();
+    this.cop?.reset(this.chaser?.audioView);
     if (this.master) {
       this.master.gain.cancelScheduledValues(this.context.currentTime);
       this.master.gain.setValueAtTime(0, this.context.currentTime);
@@ -428,8 +437,8 @@ class CityAudioSystem {
   update(dt, elapsed, camera, night = false) {
     const playing = this.ready && this.enabled && this.context?.state === 'running' && !document.hidden;
     this.updateRider(playing);
+    this.updateChaser(camera, playing);
     if (!playing) return;
-    this.updateChaser(camera);
     this.accumulator += dt;
     if (this.accumulator < 0.1) return;
     dt = Math.min(this.accumulator, 0.25);
@@ -539,6 +548,7 @@ class CityAudioSystem {
   }
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     for (const system of this.collisionSystems) system.setCollisionListener?.(null);
     document.removeEventListener('pointerdown', this.onGesture);

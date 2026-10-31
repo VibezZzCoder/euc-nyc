@@ -1375,6 +1375,9 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     v.wait = 0;
     v.speed = v.v0 * 0.5;
     v.acc = 0;
+    // A recycled vehicle starts a new contact, without the old hold or impact velocity.
+    v.touch = v.hold = false;
+    v.hitVX = v.hitVZ = v.hitTimer = 0;
     v.dl = v.dlv = 0;
     v.vx = v.vz = v.yawOffset = v.yawVel = v.pitch = v.pitchVel = v.roll = v.rollVel = 0;
     locate(v);
@@ -1475,6 +1478,8 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       p.z = z;
       p.v = crosswalk ? 0 : p.speed;
       p.pause = 0;
+      p.waiting = false;
+      p.dodge = p.bumpOX = p.bumpOZ = p.bumpVX = p.bumpVZ = p.bumpCooldown = 0;
       p.nextRoute = null;
       p.nextLeg = 0;
       p.goalTime = 0;
@@ -1823,8 +1828,11 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   let updates = 0;
 
   function flagRange(attr, n) {
+    // Simulation can shrink the active prefix before a render consumes it. Retain pending tail writes too.
+    let count = n * attr.itemSize;
+    for (const range of attr.updateRanges) count = Math.max(count, range.start + range.count);
     attr.clearUpdateRanges();
-    attr.addUpdateRange(0, n * attr.itemSize);
+    attr.addUpdateRange(0, count);
     attr.needsUpdate = true;
   }
 
@@ -2237,11 +2245,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     syncInst(carWheelLeftInst, wheelCars * 2);
     syncInst(carWheelRightInst, wheelCars * 2);
     if (dirtyWheelStyles && wheelCars > 0) {
-      // Traffic still updates on skipped render callbacks. Keep the widest pending prefix until the renderer
-      // consumes it; a shrinking near set must not lose styles for slots that can reappear without another write.
-      let n = wheelCars * 2;
-      for (const range of carWheelStyles.updateRanges) n = Math.max(n, range.count);
-      flagRange(carWheelStyles, n);
+      flagRange(carWheelStyles, wheelCars * 2);
     }
     for (const kind of ['sedan', 'suv']) syncInst(policeBars[kind], policeDrawn[kind]);
     syncInst(carShadowInst, visibleCars);
@@ -2324,6 +2328,21 @@ function createHighwayTraffic(scene, lanes) {
   const group = new THREE.Group();
   group.name = 'HighwayTraffic';
   scene.add(group);
+  let collisionListener = null;
+  const collisionEvent = { a: null, b: null, kind: 'vehicle', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, speed: 0 };
+  function setCollisionListener(listener) {
+    collisionListener = typeof listener === 'function' ? listener : null;
+  }
+  // Same synchronous contract as street traffic; CityAudioSystem shares its pair gate with controller reports.
+  function reportCollision(entity, c, pl, side) {
+    const nx = Math.sin(c.yaw) * side, nz = Math.cos(c.yaw) * side;
+    const speed = c.v * side - pl.vx * nx - pl.vz * nz;
+    if (!collisionListener || speed <= 0.5) return;
+    collisionEvent.a = entity; collisionEvent.b = c;
+    collisionEvent.x = pl.x; collisionEvent.y = pl.y + 0.58; collisionEvent.z = pl.z;
+    collisionEvent.nx = nx; collisionEvent.nz = nz; collisionEvent.speed = speed;
+    collisionListener(collisionEvent);
+  }
   const KINDS = Object.keys(CAR_KINDS);
   const PALETTES = FLEET_PALETTES;
   let seed = 20240917;
@@ -2452,8 +2471,10 @@ function createHighwayTraffic(scene, lanes) {
   let updates = 0;
   // Flags the first n items of an attribute for upload (static usage: once per frame, not once per render pass)
   function flagRange(attr, n) {
+    let count = n * attr.itemSize;
+    for (const range of attr.updateRanges) count = Math.max(count, range.start + range.count);
     attr.clearUpdateRanges();
-    attr.addUpdateRange(0, n * attr.itemSize);
+    attr.addUpdateRange(0, count);
     attr.needsUpdate = true;
   }
 
@@ -2544,6 +2565,7 @@ function createHighwayTraffic(scene, lanes) {
           dv = c.v - lead.v;
         }
         // The rider counts as the leader once level with the car's nose or ahead of it (not only once fully ahead)
+        const wasTouching = c.touching;
         c.touching = false;
         if (pIn && pIn.u > c.u - c.len * 0.5) {
           // Retain the existing generous following buffer around the EUC; only the car's own length varies.
@@ -2553,6 +2575,7 @@ function createHighwayTraffic(scene, lanes) {
             dv = c.v - pIn.v;
           }
           c.touching = pIn.u - HWY_RIDER_HALF_LEN - (c.u + c.len * 0.5) < HWY_CONTACT;
+          if (c.touching && !wasTouching) reportCollision(entity, c, pl, pIn.u < c.u ? -1 : 1);
         }
         const sStar = D.s0 + Math.max(0, c.v * D.T + (c.v * dv) / brakeTerm);
         c.acc = Math.max(-9, D.a * (1 - (c.v / lane.speed) ** 4 - (sStar / Math.max(gap, 0.1)) ** 2));
@@ -2737,7 +2760,7 @@ function createHighwayTraffic(scene, lanes) {
     bodySerial++;
   }
 
-  return { group, update, dynamicBodiesNear, bodyVersion: () => bodySerial, cars, lanes };
+  return { group, update, setCollisionListener, dynamicBodiesNear, bodyVersion: () => bodySerial, cars, lanes };
 }
 
 export { createTrafficSystem, createHighwayTraffic };

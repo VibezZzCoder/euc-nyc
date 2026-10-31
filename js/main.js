@@ -27,6 +27,7 @@ import { TitleScreen } from './title-screen.js';
 import { createNemesis } from './nemesis.js';
 import { NemesisHud } from './nemesis-chase.js';
 import { createViewPreferences } from './view-preferences.js';
+import { createPlayerState } from './player-state.js';
 import { createFrameRatePreference, createFramePacer, frameRateHealth } from './frame-rate.js';
 import { createBookingDirector, BookingScreen } from './booking.js';
 import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene.js';
@@ -40,6 +41,9 @@ export async function initApp(startup) {
   const loadingStatus = document.getElementById('loading-status');
   const loadingTrack = loadingOverlay ? loadingOverlay.querySelector('.loader-track') : null;
   const loadingFill = document.getElementById('loading-progress');
+  const gameUI = [...document.querySelectorAll('.hud, #touch-controls, .popover')];
+  const setGameUIEnabled = (enabled) => { for (const root of gameUI) root.inert = !enabled; };
+  setGameUIEnabled(false);
   // Only shader compilation has measurable progress; other stages use the sweeping bar.
   const setLoadingProgress = (p) => {
     if (!loadingFill) return;
@@ -80,6 +84,23 @@ export async function initApp(startup) {
   renderer.shadowMap.enabled = true;
   renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
   container.appendChild(renderer.domElement);
+  let rendererInit = null;
+  let compileWork = null;
+  const graphicsFailed = (error) => {
+    startup.phase('graphics');
+    startup.fail(error instanceof Error ? error : new Error(error?.message || 'The graphics device was lost.'));
+  };
+  renderer.onDeviceLost = graphicsFailed;
+  renderer.onError = graphicsFailed;
+  // Register before awaiting init: a failure may occur while the graphics promise is still pending.
+  startup.onStop(async () => {
+    setGameUIEnabled(false);
+    try { await renderer.setAnimationLoop(null); } catch { /* Initialization may not have finished. */ }
+    try { await rendererInit; } catch { /* The failed init still needs cleanup. */ }
+    try { await compileWork; } catch { /* Drain in-flight jobs before releasing their renderer. */ }
+    await renderer.setAnimationLoop(null);
+    renderer.dispose();
+  });
 
   // Start-up phase timings (logged once as "[init] ...") to keep load-time regressions traceable
   let initTimings = [];
@@ -90,8 +111,8 @@ export async function initApp(startup) {
     initMark = now;
   };
 
-  await renderer.init();
-  startup.onFailure(() => renderer.setAnimationLoop(null).catch(() => {}));
+  rendererInit = renderer.init();
+  await rendererInit;
   if (startup.failed) return;
   markInit('renderer');
   startup.phase('city');
@@ -142,12 +163,10 @@ export async function initApp(startup) {
   await showLoadingStage('Preparing rider, wheel and controls...');
   // Saved state: { version: 2, rider, euc: { x, y, z, heading } }. Version 1 (the spike's multi-mode save) still loads
   // its EUC pose. The fork keeps its own key, so it never shares a save with Slop New York on the same origin.
-  const PLAYER_STATE_KEY = 'euc-newyork-player-state';
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(PLAYER_STATE_KEY)); } catch { /* Missing or unavailable storage. */ }
+  const playerState = createPlayerState({ isPlayableRider });
   // ?rider=cool-rider | trollina overrides the saved rider (handy for links and QA)
   const riderParam = new URLSearchParams(location.search).get('rider');
-  const rider = [riderParam, saved?.rider].find(isPlayableRider) ?? PLAYABLE_RIDERS[0];
+  const rider = [riderParam, playerState.rider].find(isPlayableRider) ?? PLAYABLE_RIDERS[0];
   // Cars, buses and pedestrians are moving obstacles for the wheel (euc-dynamic.js): a hit at speed is a crash
   const dynamicWorld = createEucDynamicWorld(combineBodySources(trafficSystem, highwayTraffic));
   const ride = {
@@ -156,14 +175,11 @@ export async function initApp(startup) {
     tops: [...cityGrid.ride.tops, ...streetDetails.ride.tops]
   };
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders, {
-    ride, rider, dynamicWorld
+    ride, rider, dynamicWorld, inputEnabled: false
   });
   const booking = createBookingDirector();
   // Reuse teleport placement so a saved rider returns at rest, close to where they were.
-  const savedPose = saved?.version === 2 ? saved.euc : saved?.version === 1 ? saved.entities?.euc : null;
-  if (savedPose && [savedPose.x, savedPose.z, savedPose.heading].every(Number.isFinite)) {
-    controllerManager.teleportActiveTo(savedPose.x, savedPose.z, savedPose.heading, Number.isFinite(savedPose.y) ? savedPose.y : 0);
-  }
+  playerState.restore((pose) => controllerManager.teleportActiveTo(pose.x, pose.z, pose.heading, pose.y).succeeded);
 
   function savePlayerState() {
     try {
@@ -171,9 +187,7 @@ export async function initApp(startup) {
       // A reload during the vignette resumes outside, never in a frozen booking or its temporary desk.
       const pose = booking.active ? CIVIC_JAIL.release
         : { x: e.position.x, y: e.position.y, z: e.position.z, heading: e.heading };
-      localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
-        version: 2, rider: e.riderId, euc: pose
-      }));
+      playerState.save(pose, e.riderId);
     } catch { /* Storage may be disabled or full. */ }
   }
 
@@ -192,6 +206,12 @@ export async function initApp(startup) {
     onStateChange: updateSoundButton
   });
   if (nemesis) audioSystem.setChaser(nemesis);
+  startup.onStop(() => {
+    controllerManager.setInputEnabled(false);
+    touchControls.setEnabled(false);
+    audioSystem.dispose();
+    nemesis?.hide();
+  });
   const nemesisHud = nemesis ? new NemesisHud(document) : null;
   const bookingScene = nemesis ? createBookingScene(scene, nemesis) : null;
   function updateSoundButton() {
@@ -417,13 +437,13 @@ export async function initApp(startup) {
     selectCamera(CAMERA_PRESETS[(idx + step + n) % n].id, true);
   }
 
-  function selectTime(timeId) {
+  function selectTime(timeId, remember = true) {
     lightingSystem.applyPreset(timeId);
     colorGrade.applyPreset(lightingSystem.activePresetId);
     timeButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-time') === timeId);
     });
-    viewPreferences.setTime(lightingSystem.activePresetId);
+    if (remember) viewPreferences.setTime(lightingSystem.activePresetId);
   }
 
   // Popovers (native [popover]: light dismiss & Esc for free) open against the control that toggles them: data-anchor
@@ -546,6 +566,8 @@ export async function initApp(startup) {
 
   function teleportTo(x, z, heading = Math.PI, referenceY = Infinity) {
     const destination = controllerManager.teleportActiveTo(x, z, heading, referenceY);
+    if (!destination.succeeded) return destination;
+    nemesis?.observePlayer();
     touchControls.reset();
     gamepadControls.reset();
     cameraSystem.resetForTeleport();
@@ -565,9 +587,12 @@ export async function initApp(startup) {
     allBlocks: cityBlocks.allBlocks,
     onToggle: (open) => {
       resetFramePacing();
+      const enabled = !open && (titleScreen?.started || !titleScreen?.root) && !booking.active && !startup.failed;
+      controllerManager.setInputEnabled(enabled);
       controllerManager.resetInput();
-      touchControls.setEnabled(!open);
-      gamepadControls.setEnabled(!open);
+      cameraSystem._clearPointers();
+      touchControls.setEnabled(enabled);
+      gamepadControls.setEnabled(enabled);
       const mapHint = document.getElementById('fullmap-hover-info');
       if (open && touchControls.available && mapHint) {
         mapHint.textContent = 'Tap to teleport · Drag to pan · Use + / − to zoom';
@@ -575,6 +600,7 @@ export async function initApp(startup) {
     },
     onTeleport: teleportTo
   });
+  mapSystem.enabled = false; // No map input behind the loader/title; Ride authorizes it.
 
   teleportButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -604,7 +630,9 @@ export async function initApp(startup) {
 
   // Global keyboard shortcuts for riders (1-2), cameras (V / 5-0), HUD (H) and sound (N)
   window.addEventListener('keydown', (e) => {
-    if (isTypingInField(e)) return;
+    if (startup.failed || !titleScreen?.started && titleScreen?.root || mapSystem.isFullMapOpen || booking.active
+      || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented || isTypingInField(e)
+      || e.target?.closest?.('button, a[href], [role="button"], [contenteditable]')) return;
     switch (e.code) {
       case 'Digit1':
       case 'Digit2':
@@ -645,12 +673,13 @@ export async function initApp(startup) {
   let resizePending = false;
   function applyViewportSize() {
     resizePending = false;
+    if (startup.failed) return;
     const width = container.clientWidth, height = container.clientHeight;
     if (!(width > 0 && height > 0)) return;
     if (width !== renderWidth || height !== renderHeight) {
       touchControls.reset();
       cameraSystem.onResize(width, height);
-      mapSystem.cancelPan();
+      mapSystem.cancelGestures();
       renderer.setSize(width, height);
       renderWidth = width;
       renderHeight = height;
@@ -668,7 +697,11 @@ export async function initApp(startup) {
   }
   window.addEventListener('resize', scheduleViewportResize);
   window.addEventListener('pageshow', scheduleViewportResize);
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(scheduleViewportResize).observe(container);
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(scheduleViewportResize);
+    observer.observe(container);
+    startup.onStop(() => observer.disconnect());
+  }
   scheduleViewportResize();
 
   // The title screen, shown once the city is on screen (see the loop). Until Ride, the camera circles the rider and no
@@ -681,11 +714,16 @@ export async function initApp(startup) {
     getRider: () => controllerManager.getActiveEntity().riderId,
     onStart: () => {
       resetFramePacing();
+      playerState.authorize();
+      controllerManager.setInputEnabled(true);
       controllerManager.resetInput();
       gamepadControls.reset();
       touchControls.setEnabled(true);
       cameraSystem.setTitleOrbit(false);
       selectCamera(viewPreferences.camera, true, false);
+      setGameUIEnabled(true);
+      mapSystem.enabled = true;
+      savePlayerState();
       if (audioSystem.enabled) audioSystem.unlock(); // inside the Ride gesture: iOS starts sound only from one
     },
   });
@@ -698,7 +736,7 @@ export async function initApp(startup) {
     for (const dx of [0, -0.7, 0.7, -1.5, 1.5, -2.5, 2.5]) {
       const p = controllerManager.findTeleportPosition(x + dx, z, heading, y);
       if (!p || Math.hypot(p.x - x - dx, p.z - z) > 0.5) continue;
-      if (e.placeAt(p.x, p.z, heading, y)) return true; // dynamic-world placement can refuse a passing pedestrian
+      if (e.placeAt(p.x, p.z, heading, p.y, { requireClear: true, departure: 1.2 })) return true;
     }
     return false;
   }
@@ -712,6 +750,7 @@ export async function initApp(startup) {
     bookingScene.update(0, booking.state, cameraSystem.camera.aspect);
     cameraSystem.setCinematic(null);
     controllerManager.resetInput();
+    controllerManager.setInputEnabled(true);
     cameraSystem.resetForTeleport();
     selectCamera('chase', true, false);
     gamepadControls.setEnabled(true);
@@ -728,6 +767,7 @@ export async function initApp(startup) {
     resetFramePacing();
     closePopovers();
     controllerManager.resetInput();
+    controllerManager.setInputEnabled(false);
     touchControls.setEnabled(false);
     gamepadControls.setEnabled(false);
     cameraSystem._clearPointers();
@@ -746,7 +786,24 @@ export async function initApp(startup) {
     cameraSystem.setTitleOrbit(true);
     touchControls.setEnabled(false);
   }
-  selectTime(viewPreferences.time);
+  else {
+    playerState.authorize();
+    controllerManager.setInputEnabled(true);
+    setGameUIEnabled(true);
+    mapSystem.enabled = true;
+  }
+  startup.onStop(() => {
+    gamepadControls.setEnabled(false);
+    cameraSystem._clearPointers();
+    if (mapSystem.isFullMapOpen) mapSystem.toggleFullMap(false);
+    mapSystem.enabled = false;
+    setGameUIEnabled(false);
+    titleScreen.isOpen = false; // Retire capture handlers as well as the visual overlay, so Retry is keyboard-usable.
+    if (titleScreen.root) titleScreen.root.hidden = true;
+    document.body.classList.remove('title-open');
+    bookingScreen.update({ phase: 'idle' }); // Keep booking.active for its outside save checkpoint until reload.
+  });
+  selectTime(viewPreferences.time, false);
   // the web fonts change the buttons' widths once they arrive
   if (document.fonts) document.fonts.ready.then(placeRiderIndicator);
   markInit('ui');
@@ -803,6 +860,7 @@ export async function initApp(startup) {
       // Each compile starts in a task of its own: compileAsync() keeps one precompilation state on the renderer,
       // which must not be mid-step for two of them in the same microtask checkpoint
       await nextTask();
+      if (startup.failed) return;
       try {
         await renderer.compileAsync(object, cameraSystem.camera, scene);
       } catch (e) {
@@ -815,7 +873,10 @@ export async function initApp(startup) {
       while (next < jobs.length) {
         if (startup.failed) return;
         const job = jobs[next++];
-        for (const object of job) await compile(object);
+        for (const object of job) {
+          if (startup.failed) return;
+          await compile(object);
+        }
         if (startup.failed) return;
         done++;
         if (loadingStatus) {
@@ -831,7 +892,8 @@ export async function initApp(startup) {
   }
 
   startup.phase('shaders');
-  await precompileShaders();
+  compileWork = precompileShaders();
+  await compileWork;
   if (startup.failed) return;
   markInit('compile');
   startup.phase('first-frame');
@@ -873,15 +935,15 @@ export async function initApp(startup) {
     if (titleScreen.isOpen) titleScreen.update();
     else if (booking.active) bookingScreen.updateGamepad();
     else if (titleScreen.started || !titleScreen.root) gamepadControls.update(dt);
-    if (booking.active) {
+    const readyToRide = titleScreen.started || !titleScreen.root;
+    if (!readyToRide || document.hidden) {
+      // Live city/title rendering is allowed; player physics and save position stay frozen until Ride.
+      controllerManager.getActiveEntity().update(0, controllerManager.keys);
+    } else if (booking.active) {
       controllerManager.resetInput();
       // Let the initial fall settle; at intake the rider is posed at rest, protected from world motion/input.
       controllerManager.getActiveEntity().update(booking.state.phase === 'captured' ? dt : 0, controllerManager.keys);
     } else controllerManager.update(dt, elapsed);
-    if (!booking.active) {
-      nemesis?.update(dt, (titleScreen.started || !titleScreen.root) && !mapSystem.isFullMapOpen && !document.hidden);
-      if (nemesis?.director.state.phase === 'captured') startBooking();
-    }
     const bookingEvent = booking.update(dt, !document.hidden);
     if (bookingEvent === 'transfer' && placeAtJail(BOOKING_SITE.riderZ, Math.PI)) {
       booking.arrive();
@@ -892,6 +954,11 @@ export async function initApp(startup) {
     if (bookingView) cameraSystem.setCinematic(bookingView);
     bookingScreen.update(booking.state);
     cameraSystem.update(dt, elapsed);
+    // Spawn visibility uses the final view for this callback, including preset/orbit/placement changes.
+    if (!booking.active) {
+      nemesis?.update(dt, readyToRide && !mapSystem.isFullMapOpen && !document.hidden);
+      if (nemesis?.director.state.phase === 'captured') startBooking();
+    }
     streetDetails.signalClock.value = elapsed;
     trafficSystem.update(dt, elapsed, cameraSystem.currentPos, controllerManager.getActiveEntity(), cameraSystem.camera);
     highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity());

@@ -26,11 +26,16 @@ export class TitleScreen {
     this.isOpen = false;
     this.started = false;
     this.padPrevious = null;
+    this.padIndex = null;
+    this.padId = null;
+    this.focused = typeof document.hasFocus !== 'function' || document.hasFocus();
     this.rideButton = root?.querySelector('#title-ride') ?? null;
     this.riderButtons = root ? [...root.querySelectorAll('[data-title-rider]')] : [];
 
     this.rideButton?.addEventListener('click', () => this.start());
-    for (const btn of this.riderButtons) btn.addEventListener('click', () => this.onRider(btn.dataset.titleRider));
+    for (const btn of this.riderButtons) btn.addEventListener('click', () => {
+      if (this.isOpen && this.canInteract()) this.onRider(btn.dataset.titleRider);
+    });
     // Capture phase on window: runs before the game's key listeners, which never see a key while the title is up
     this.onKey = (e) => {
       if (!this.isOpen) return;
@@ -42,11 +47,11 @@ export class TitleScreen {
       }
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (e.type !== 'keydown' || e.repeat) return;
+      if (e.type !== 'keydown' || e.repeat || !this.canInteract()) return;
       if (START_KEYS.has(e.code)) {
         // Enter or Space on a focused rider button picks it; anywhere else they start the ride
         const focused = document.activeElement;
-        if (focused?.dataset?.titleRider && e.code !== 'NumpadEnter') this.onRider(focused.dataset.titleRider);
+        if (focused?.dataset?.titleRider) this.onRider(focused.dataset.titleRider);
         else this.start();
       } else if (e.code === 'Digit1' || e.code === 'Digit2') {
         const id = this.riders[Number(e.code.slice(5)) - 1];
@@ -56,6 +61,14 @@ export class TitleScreen {
     };
     window.addEventListener('keydown', this.onKey, true);
     window.addEventListener('keyup', this.onKey, true);
+    // Polling can pause entirely while hidden. The first returning sample only synchronizes holds.
+    window.addEventListener('blur', () => { this.focused = false; this.padPrevious = null; });
+    window.addEventListener('focus', () => { this.focused = true; this.padPrevious = null; });
+    document.addEventListener('visibilitychange', () => { this.padPrevious = null; });
+  }
+
+  canInteract() {
+    return !document.hidden && this.focused && (typeof document.hasFocus !== 'function' || document.hasFocus());
   }
 
   show() {
@@ -66,18 +79,20 @@ export class TitleScreen {
     document.body.classList.add('title-open');
     this.root.hidden = false;
     // Next frame, so the fade-in transition runs from the hidden state
-    requestAnimationFrame(() => this.root.classList.add('is-shown'));
+    requestAnimationFrame(() => { if (this.isOpen) this.root.classList.add('is-shown'); });
     if (!matchMedia('(pointer: coarse)').matches) this.rideButton?.focus({ preventScroll: true });
   }
 
   start() {
-    if (!this.isOpen || this.started) return;
+    if (!this.isOpen || this.started || !this.canInteract()) return;
     this.started = true;
     this.isOpen = false;
     this.root.classList.remove('is-shown');
     document.body.classList.remove('title-open');
-    this.rideButton?.blur();
-    setTimeout(() => { this.root.hidden = true; }, 500);
+    if (this.root.contains(document.activeElement)) document.activeElement.blur();
+    // CSS reduces transitions to 0.01ms; don't leave an invisible hit-blocking overlay for 500ms.
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.root.hidden = true;
+    else setTimeout(() => { this.root.hidden = true; }, 500);
     this.onStart();
   }
 
@@ -100,12 +115,21 @@ export class TitleScreen {
     if (!this.isOpen) return;
     let pad = null;
     try {
-      for (const p of navigator.getGamepads?.() ?? []) if (p && p.connected) { pad = p; break; }
+      for (const p of navigator.getGamepads?.() ?? []) {
+        if (!p?.connected || p.mapping !== 'standard') continue;
+        if (p.index === this.padIndex && p.id === this.padId) { pad = p; break; }
+        if (!pad) pad = p;
+      }
     } catch { /* no gamepad API */ }
-    if (!pad) { this.padPrevious = null; return; }
-    const pressed = pad.buttons.map((b) => Boolean(b?.pressed));
+    if (!pad) { this.padPrevious = null; this.padIndex = this.padId = null; return; }
+    if (pad.index !== this.padIndex || pad.id !== this.padId) this.padPrevious = null;
+    this.padIndex = pad.index;
+    this.padId = pad.id;
+    const pressed = Array.from({ length: 17 }, (_, i) => Boolean(pad.buttons?.[i]?.pressed) || pad.buttons?.[i]?.value > 0.5);
     const previous = this.padPrevious;
-    this.padPrevious = pressed;
+    const interactive = this.canInteract();
+    this.padPrevious = interactive ? pressed : null;
+    if (!interactive) return;
     if (!previous) return; // a button already held when the pad appeared is not a press
     const edge = (i) => pressed[i] && !previous[i];
     if (edge(PAD.a) || edge(PAD.start)) this.start();

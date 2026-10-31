@@ -8,18 +8,19 @@ const test = require('node:test');
 test('viewport events coalesce, use the host, retain valid targets while hidden and cancel stale input', () => {
   const source = readFileSync(join(__dirname, '../js/main.js'), 'utf8');
   const block = source.slice(source.indexOf('  let resizePending = false;'), source.indexOf('  // The title screen, shown once'));
-  const frames = [], sizes = [], aspects = [], events = {}, resets = [];
+  const frames = [], sizes = [], aspects = [], events = {}, resets = [], cleanup = [];
   const container = { clientWidth: 382, clientHeight: 580 };
   let observe;
   const env = {
     container, renderWidth: 382, renderHeight: 580,
+    startup: { failed: false, onStop: fn => cleanup.push(fn) },
     requestAnimationFrame: (fn) => frames.push(fn),
     window: { innerWidth: 9999, innerHeight: 9999, addEventListener: (name, fn) => { events[name] = fn; } },
-    ResizeObserver: class { constructor(fn) { observe = fn; } observe(el) { assert.equal(el, container); } },
+    ResizeObserver: class { constructor(fn) { observe = fn; } observe(el) { assert.equal(el, container); } disconnect() { resets.push('disconnect'); } },
     renderer: { setSize: (w, h) => sizes.push([w, h]) },
     cameraSystem: { onResize: (w, h) => aspects.push(w / h) },
     touchControls: { reset: () => resets.push('touch') }, placeRiderIndicator() {},
-    mapSystem: { isFullMapOpen: true, cancelPan: () => resets.push('map'), resizeFullCanvas() {}, renderFullMap() {} }
+    mapSystem: { isFullMapOpen: true, cancelGestures: () => resets.push('map'), resizeFullCanvas() {}, renderFullMap() {} }
   };
   runInNewContext(block, env);
   frames.shift()();
@@ -42,4 +43,10 @@ test('viewport events coalesce, use the host, retain valid targets while hidden 
   container.clientWidth = 594; container.clientHeight = 368;
   observe(); frames.shift()();
   assert.deepEqual(sizes.at(-1), [594, 368], 'host-only resize is sufficient');
+  env.startup.failed = true;
+  cleanup.forEach(fn => fn());
+  assert.equal(resets.at(-1), 'disconnect');
+  container.clientWidth = 900;
+  observe(); frames.shift()();
+  assert.equal(sizes.length, 5, 'queued resize cannot recreate graphics resources after failure');
 });

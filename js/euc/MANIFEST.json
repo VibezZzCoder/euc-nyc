@@ -8,7 +8,6 @@
     "simulation/planSampler.ts",
     "simulation/world.ts",
     "input/actions.ts",
-    "render/chaseCamera.ts",
     "render/ridingRig.ts",
     "render/riderLook.ts",
     "render/machineLook.ts"
@@ -43,11 +42,6 @@
     "render/blockoutKit.js": {
       "source": "src/render/blockoutKit.ts",
       "sourceSha256": "e651a01f03ae3e5d826195f726066b38bd10db75f94aa0e5beff4964352a2801",
-      "sliced": false
-    },
-    "render/chaseCamera.js": {
-      "source": "src/render/chaseCamera.ts",
-      "sourceSha256": "7086d89ebc6948edc7219e915227cf1fd0551ff6ed26f8e6d26deed0cbf5197a",
       "sliced": false
     },
     "render/coolRiderAtlas.js": {

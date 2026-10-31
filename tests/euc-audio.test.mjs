@@ -11,8 +11,9 @@ import {
   motorFundamentalHz, motorDrive, motorTargets, windTargets, tyreTargets, landingScale, impactScale, WIND,
 } from '../js/euc-audio.js';
 import { createWindVoice } from '../js/audio-events.js';
-import { COP_SAMPLE_FILES } from '../js/nemesis-audio.js';
+import { COP_SAMPLE_FILES, NemesisAudio } from '../js/nemesis-audio.js';
 import { AUDIO } from '../js/euc/data/tuning.js';
+import { deferred, recordLoads, withSampleRequests } from './helpers/audio-loading.cjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_DIR = join(ROOT, 'audio/euc');
@@ -264,3 +265,141 @@ test('city wind: the synthesized noise gives way to the EUC Thrills howl once it
   wind.update({ altitude: 2, traffic: 0.4, enclosure: 0.5 });
   wind.dispose(true);
 });
+
+for (const [name, Audio, files] of [['EUC', EucAudio, EUC_SAMPLE_FILES], ['cop', NemesisAudio, COP_SAMPLE_FILES]]) {
+  const keys = Object.keys(files), LoadingAudio = recordLoads(Audio);
+  const make = (ctx, onWindHowl = () => {}) => new LoadingAudio(ctx, ctx.createGain(), { noise: { duration: 4 }, onWindHowl });
+  const untouched = audio => {
+    assert.deepEqual(audio.buffers, {}, 'cancelled loads neither cache samples nor install fallback markers');
+    if (name === 'EUC') assert.equal(audio.windSource, null);
+    else assert.deepEqual([audio.far, audio.close], [null, null]);
+  };
+
+  test(`${name} sample disposal aborts every pending fetch once, remains quiet, and refuses new loads`, () =>
+    withSampleRequests(async ({ requests, warnings }) => {
+      const ctx = fakeContext(), audio = make(ctx);
+      assert.equal(requests.length, keys.length);
+      assert.ok(requests.every(r => r.signal instanceof AbortSignal && !r.signal.aborted));
+      assert.equal(new Set(requests.map(r => r.signal)).size, 1, 'one controller owns the object load cycle');
+      audio.dispose(); audio.dispose();
+      const played = ctx.played.length;
+      assert.ok(requests.every(r => r.signal.aborted && r.aborts === 1));
+      assert.deepEqual(await Promise.all(audio.pendingLoads), keys.map(() => null));
+      assert.equal(await audio.load(keys[0]), null);
+      assert.equal(requests.length, keys.length, 'post-dispose load cannot start another fetch');
+      assert.equal(ctx.played.length, played);
+      untouched(audio);
+      assert.deepEqual(warnings, []);
+    }));
+
+  test(`${name} mute/reset preserves pending loads and decoded sample cache`, () =>
+    withSampleRequests(async ({ requests, warnings }) => {
+      const ctx = fakeContext(), buffer = { duration: 4 };
+      ctx.decodeAudioData = () => Promise.resolve(buffer);
+      const audio = make(ctx);
+      audio.reset(); audio.reset();
+      assert.ok(requests.every(r => !r.signal.aborted));
+      for (const r of requests) r.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+      await Promise.all(audio.pendingLoads);
+      for (const key of keys) assert.equal(audio.buffers[key], buffer);
+      audio.reset();
+      for (const key of keys) assert.equal(audio.buffers[key], buffer, 'reset retains the decoded asset');
+      assert.ok(requests.every(r => !r.signal.aborted));
+      assert.equal(requests.length, keys.length);
+      assert.deepEqual(warnings, []);
+      audio.dispose();
+    }));
+
+  test(`${name} disposal before a queued fetch response skips body reads and decoding`, () =>
+    withSampleRequests(async ({ requests, warnings }) => {
+      const ctx = fakeContext();
+      let bodies = 0, decodes = 0;
+      ctx.decodeAudioData = () => { decodes++; return Promise.resolve({ duration: 4 }); };
+      const audio = make(ctx);
+      for (const r of requests) r.resolve({ ok: true, arrayBuffer() { bodies++; return Promise.resolve(new ArrayBuffer(8)); } });
+      audio.dispose();
+      await Promise.all(audio.pendingLoads);
+      assert.equal(bodies, 0);
+      assert.equal(decodes, 0);
+      untouched(audio);
+      assert.deepEqual(warnings, []);
+    }));
+
+  test(`${name} disposal during body download skips decoding even if the body resolves late`, { timeout: 2000 }, () =>
+    withSampleRequests(async ({ requests, warnings }) => {
+      const ctx = fakeContext(), downloading = deferred(), bodies = [];
+      let decodes = 0;
+      ctx.decodeAudioData = () => { decodes++; return Promise.resolve({ duration: 4 }); };
+      const audio = make(ctx);
+      for (const r of requests) r.resolve({ ok: true, arrayBuffer() {
+        const body = deferred(); bodies.push(body);
+        if (bodies.length === keys.length) downloading.resolve();
+        return body.promise;
+      } });
+      await downloading.promise;
+      audio.dispose();
+      for (const body of bodies) body.resolve(new ArrayBuffer(8));
+      await Promise.all(audio.pendingLoads);
+      assert.equal(decodes, 0);
+      untouched(audio);
+      assert.deepEqual(warnings, []);
+    }));
+
+  for (const mode of ['promise success', 'promise failure', 'callback success', 'callback failure']) {
+    test(`${name} disposal ignores late decode ${mode} without starting a loop or fallback`, { timeout: 2000 }, () =>
+      withSampleRequests(async ({ requests, warnings }) => {
+        const ctx = fakeContext(), decoding = deferred(), decodes = [];
+        let windCallbacks = 0;
+        ctx.decodeAudioData = (_bytes, yes, no) => {
+          const result = deferred(); decodes.push(result);
+          if (decodes.length === keys.length) decoding.resolve();
+          if (mode.startsWith('callback')) { result.promise.then(yes, no); return undefined; }
+          return result.promise;
+        };
+        const audio = make(ctx, () => windCallbacks++);
+        for (const r of requests) r.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+        await decoding.promise;
+        audio.dispose(); audio.dispose();
+        const played = ctx.played.length;
+        for (const result of decodes) {
+          if (mode.endsWith('success')) result.resolve({ duration: 4 });
+          else result.reject(new Error('decode finished after disposal'));
+        }
+        await Promise.all(audio.pendingLoads);
+        assert.equal(ctx.played.length, played);
+        assert.equal(windCallbacks, 0);
+        untouched(audio);
+        assert.deepEqual(warnings, []);
+      }));
+  }
+
+  test(`${name} expected AbortError is quiet and does not activate a fallback`, () =>
+    withSampleRequests(async ({ requests, warnings }) => {
+      const audio = make(fakeContext());
+      for (const r of requests) r.reject(Object.assign(new Error('cancelled'), { name: 'AbortError' }));
+      await Promise.all(audio.pendingLoads);
+      untouched(audio);
+      assert.deepEqual(warnings, []);
+      audio.dispose();
+    }));
+
+  for (const stage of ['fetch', 'HTTP', 'decode']) {
+    test(`${name} genuine ${stage} failure retains its warning and normal fallback policy`, () =>
+      withSampleRequests(async ({ requests, warnings }) => {
+        const ctx = fakeContext(), audio = make(ctx);
+        for (const r of requests) {
+          if (stage === 'fetch') r.reject(new Error('offline'));
+          else r.resolve({ ok: stage !== 'HTTP', status: 503, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+        }
+        await Promise.all(audio.pendingLoads);
+        assert.equal(warnings.length, keys.length);
+        if (name === 'EUC') {
+          for (const key of keys) assert.equal(audio.buffers[key], null);
+          assert.equal(audio.windSource.buffer, audio.noise, 'genuine failure still installs synthesized wind');
+        } else {
+          assert.deepEqual([audio.far, audio.close], [null, null], 'unavailable cop samples stay silent');
+        }
+        audio.dispose();
+      }));
+  }
+}

@@ -44,7 +44,7 @@ const RADAR_SCALE = 0.32; // radar pixels per metre on the ground (zooms out wit
 const GRID_BEARING = (GEO.frame && GEO.frame.bearingDeg) || 29.02; // Manhattan's grid north, degrees east of true north
 
 // Map palette, shared by the radar & the atlas (in step with css/style.css): graphite ground with the streets a shade
-// lighter than the blocks they run between, muted parks & water; a taxi-yellow GPS route, white landmarks & player,
+// lighter than the blocks they run between, muted parks & water; a taxi-yellow waypoint line, white landmarks & player,
 // cyan search hits and amber highways
 const MAP = {
   water: '#0a1118',
@@ -399,7 +399,7 @@ function drawPlayerArrow(ctx, tipY, halfWidth, tailY) {
   ctx.fill();
 }
 
-// GPS route from the player to the waypoint, along the grid (x first, then z): taxi yellow on a dark casing
+// Direction cue only: the dogleg is not a navigable route and does not follow streets or avoid obstacles.
 function drawRoute(ctx, x0, y0, x1, y1, width) {
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -484,9 +484,16 @@ class NYCMapSystem {
     this.elHoverInfo = document.getElementById('fullmap-hover-info');
     this.elPlayerInfo = document.getElementById('fullmap-player-info');
     this.elSearchInput = document.getElementById('fullmap-search');
+    this.elSearchResults = document.getElementById('fullmap-search-results');
+    this.elSearchList = document.getElementById('fullmap-search-list');
+    this.elSearchStatus = document.getElementById('fullmap-search-status');
+    this.elSearchSummary = document.getElementById('fullmap-search-summary');
+    this.elActionStatus = document.getElementById('fullmap-action-status');
     if (this.elSearchInput) this.elSearchInput.placeholder = `Search ${ROAD_NAME_COUNT} streets & landmarks…`;
 
     this.isFullMapOpen = false;
+    this.returnFocus = null;
+    this.inertBackground = [];
     // Full map viewport state (world metres; zoom in CSS pixels per metre)
     this.viewCenterX = 0;
     this.viewCenterZ = 0;
@@ -495,12 +502,16 @@ class NYCMapSystem {
     this.panPointerId = null;
     this.panStart = { x: 0, y: 0, cx: 0, cz: 0 };
     this.dragMoved = false;
+    this.touchPointers = new Set();
+    this.multiTouch = false;
+    this.cancelTouchClick = false;
 
     this.hoverWorld = null;
     this.searchHighlight = '';
     this.searchPath = null;
+    this.searchResults = [];
     this.textWidths = new Map();
-    // Default GTA 6-style active GPS waypoint (Times Square / Broadway)
+    // Default active waypoint (Times Square / Broadway)
     const ts = NYC_LANDMARKS.find((l) => l.id === 'timessquare') || { x: 0, z: 0 };
     this.waypoint = { x: ts.x, z: ts.z, name: 'Times Square & 42nd St' };
 
@@ -510,6 +521,7 @@ class NYCMapSystem {
         this.textWidths.clear();
         this.miniCache = null;
         this.fullStaticKey = '';
+        if (this.isFullMapOpen) this.layoutStatus();
       });
     }
 
@@ -528,7 +540,7 @@ class NYCMapSystem {
       miniCard.addEventListener('click', () => this.toggleFullMap(true));
     }
     if (closeBtn) {
-      closeBtn.addEventListener('click', () => this.toggleFullMap(false));
+      closeBtn.addEventListener('click', (e) => this.toggleFullMap(false, { pointer: e.detail > 0 }));
     }
 
     if (zoomInBtn) {
@@ -566,20 +578,63 @@ class NYCMapSystem {
 
     if (this.elSearchInput) {
       this.elSearchInput.addEventListener('input', () => this.search(this.elSearchInput.value));
+      this.elSearchInput.addEventListener('keydown', (e) => {
+        if (e.code === 'ArrowDown' && this.searchResults.length) {
+          e.preventDefault();
+          this.elSearchList?.querySelector('button')?.focus();
+        }
+      });
     }
 
     window.addEventListener('keydown', (e) => {
+      if (e.defaultPrevented || e.repeat) return;
       if (e.code === 'Escape' && this.isFullMapOpen) {
+        e.preventDefault();
         this.toggleFullMap(false);
-      } else if (e.code === 'KeyM' && !isTypingInField(e)) {
+      } else if (e.code === 'KeyM' && !e.ctrlKey && !e.metaKey && !e.altKey && !isTypingInField(e)) {
+        e.preventDefault();
         this.toggleFullMap(!this.isFullMapOpen);
       }
     });
 
+    this.modal?.addEventListener('keydown', (e) => {
+      if (e.code !== 'Tab' || !this.isFullMapOpen) return;
+      const controls = [...this.modal.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+        .filter((el) => el.tabIndex >= 0 && !el.disabled && this.canFocus(el));
+      const index = controls.indexOf(document.activeElement);
+      if (!controls.length || index === -1 || (e.shiftKey ? index === 0 : index === controls.length - 1)) {
+        e.preventDefault();
+        (e.shiftKey ? controls.at(-1) : controls[0])?.focus({ preventScroll: true });
+        if (!controls.length) this.modal.focus({ preventScroll: true });
+      }
+    });
+    document.addEventListener('focusin', (e) => {
+      if (this.isFullMapOpen && this.modal && !this.modal.contains(e.target)) this.modal.focus({ preventScroll: true });
+    });
+
+    // A second finger anywhere on the map UI cancels the whole tap/drag until all fingers lift.
+    window.addEventListener('pointerdown', (e) => {
+      if (!this.isFullMapOpen) return;
+      if (!this.touchPointers.size) this.cancelTouchClick = false;
+      if (e.pointerType !== 'touch') return;
+      this.touchPointers.add(e.pointerId);
+      if (this.touchPointers.size > 1 || e.isPrimary === false) {
+        this.multiTouch = true;
+        this.cancelTouchClick = true;
+        this.cancelPan();
+      }
+    }, true);
+    for (const type of ['pointerup', 'pointercancel']) {
+      window.addEventListener(type, (e) => {
+        this.touchPointers.delete(e.pointerId);
+        if (!this.touchPointers.size) this.multiTouch = false;
+      }, true);
+    }
+
     if (this.fullCanvas) {
       this.fullCanvas.style.touchAction = 'none';
       this.fullCanvas.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || !this.isFullMapOpen || this.panPointerId !== null) return;
+        if (e.button !== 0 || !this.isFullMapOpen || this.panPointerId !== null || this.multiTouch) return;
         e.preventDefault();
         this.panPointerId = e.pointerId;
         this.fullCanvas.setPointerCapture(e.pointerId);
@@ -628,22 +683,9 @@ class NYCMapSystem {
           const mx = e.clientX - rect.left;
           const my = e.clientY - rect.top;
           if (mx >= 0 && mx <= rect.width && my >= 0 && my <= rect.height) {
-            const wPos = this.clampToManhattan(this.screenToWorld(mx, my, rect.width, rect.height));
-            this.waypoint = {
-              x: wPos.x,
-              z: wPos.z,
-              name: getLocationLabel(wPos.x, wPos.z)
-            };
-            if (this.onTeleport) {
-              // Only a deliberate pin click uses an authored arrival; ordinary ground clicks retain their exact X/Z
-              // and highest-surface selection. The researched marker itself stays at the real-world reference point.
-              const pin = NYC_LANDMARKS.find((lm) => lm.arrival && Math.hypot(lm.x - wPos.x, lm.z - wPos.z) * this.viewZoom <= (lm.icon === 'skateboard' ? 12 : 8));
-              if (pin) {
-                const a = pin.arrival;
-                this.onTeleport(a.x, a.z, a.heading, a.y);
-              } else this.onTeleport(wPos.x, wPos.z);
-            }
-            this.renderFullMap();
+            const point = this.screenToWorld(mx, my, rect.width, rect.height);
+            // Hit-test the researched pin before clamping ground coordinates back onto the island.
+            this.teleportToPoint(point, this.authoredPinAt(point));
           }
         }
       });
@@ -652,14 +694,15 @@ class NYCMapSystem {
           if (e.pointerId === this.panPointerId) this.cancelPan();
         });
       }
-      window.addEventListener('blur', () => this.cancelPan());
-      window.addEventListener('resize', () => this.cancelPan());
+      window.addEventListener('blur', () => this.cancelGestures());
+      window.addEventListener('resize', () => this.cancelGestures());
       document.addEventListener('visibilitychange', () => {
-        if (document.hidden) this.cancelPan();
+        if (document.hidden) this.cancelGestures();
       });
 
       // Wheel zoom about the cursor (the place under it stays put)
       this.fullCanvas.addEventListener('wheel', (e) => {
+        if (!this.isFullMapOpen) return;
         e.preventDefault();
         const rect = this.fullCanvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
@@ -682,9 +725,13 @@ class NYCMapSystem {
     const q = String(text || '').trim().toLowerCase();
     this.searchHighlight = q;
     this.searchPath = null;
+    this.searchBounds = null;
+    this.searchResults = [];
+    let roads = [];
     if (q.length > 0) {
-      const lmMatch = NYC_LANDMARKS.find((l) => l.name.toLowerCase().includes(q) || l.short.toLowerCase().includes(q));
-      const roads = ROAD_LABELS.filter((l) => l.lower.includes(q) || l.raw.includes(q));
+      this.searchResults = NYC_LANDMARKS.filter((l) => l.name.toLowerCase().includes(q) || l.short.toLowerCase().includes(q));
+      const lmMatch = this.searchResults[0];
+      roads = ROAD_LABELS.filter((l) => l.lower.includes(q) || l.raw.includes(q));
       if (roads.length) {
         this.searchPath = new Path2D();
         const b = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
@@ -710,7 +757,77 @@ class NYCMapSystem {
         this.viewZoom = Math.max(0.05, Math.min(1.2, fit));
       }
     }
+    if (this.elSearchList) {
+      this.elSearchList.replaceChildren(...this.searchResults.map((landmark) => {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `Teleport to ${landmark.name}`;
+        button.addEventListener('click', (e) => {
+          // A touch click can arrive after the final pointerup; do not turn a cancelled two-finger gesture into teleport.
+          if (this.cancelTouchClick && (e.pointerType === 'touch' || e.detail > 0)) return;
+          this.teleportToPoint(landmark, landmark);
+        });
+        item.appendChild(button);
+        return item;
+      }));
+    }
+    if (this.elSearchResults) this.elSearchResults.hidden = !q;
+    if (this.elSearchStatus) {
+      const count = this.searchResults.length;
+      const streetCount = new Set(roads.map((r) => r.text)).size;
+      this.elSearchStatus.textContent = !q ? '' : count
+        ? `${count} landmark ${count === 1 ? 'result' : 'results'}. Tab or press Down to choose a teleport.`
+        : streetCount ? `${streetCount} matching ${streetCount === 1 ? 'street' : 'streets'} highlighted. No landmark results.`
+          : `No streets or landmarks match “${String(text).trim()}”.`;
+      if (this.elSearchSummary) this.elSearchSummary.textContent = this.elSearchStatus.textContent;
+    }
     this.renderFullMap();
+  }
+
+  authoredPinAt(point) {
+    let nearest = null;
+    let distance = Infinity;
+    for (const landmark of NYC_LANDMARKS) {
+      if (!landmark.arrival) continue;
+      const pixels = Math.hypot(landmark.x - point.x, landmark.z - point.z) * this.viewZoom;
+      if (pixels <= (landmark.icon === 'skateboard' ? 12 : 8) && pixels < distance) {
+        nearest = landmark;
+        distance = pixels;
+      }
+    }
+    return nearest;
+  }
+
+  teleportToPoint(point, landmark = null) {
+    const target = landmark?.arrival || this.clampToManhattan(point);
+    const previous = this.waypoint;
+    // The placement owner may return { x, z, succeeded }; read succeeded directly (it may be nonenumerable).
+    const result = landmark?.arrival
+      ? this.onTeleport?.(target.x, target.z, target.heading, target.y)
+      : this.onTeleport?.(target.x, target.z);
+    const succeeded = result?.succeeded !== false;
+    if (succeeded) {
+      const x = Number.isFinite(result?.x) ? result.x : target.x;
+      const z = Number.isFinite(result?.z) ? result.z : target.z;
+      const name = landmark?.name || landmark?.short || getLocationLabel(x, z);
+      this.waypoint = { x, z, name };
+      if (this.elActionStatus) this.elActionStatus.textContent = this.onTeleport ? `Teleported to ${name}.` : `Waypoint set: ${name}.`;
+    } else {
+      this.waypoint = previous;
+      if (this.elActionStatus) this.elActionStatus.textContent = 'Teleport unavailable: no safe arrival here. Choose another spot or try again.';
+    }
+    if (this.elHoverInfo) this.elHoverInfo.hidden = Boolean(this.elActionStatus?.textContent);
+    this.layoutStatus();
+    this.renderFullMap();
+    return succeeded;
+  }
+
+  cancelGestures() {
+    if (this.touchPointers.size) this.cancelTouchClick = true;
+    this.cancelPan();
+    this.touchPointers.clear();
+    this.multiTouch = false;
   }
 
   cancelPan() {
@@ -721,27 +838,57 @@ class NYCMapSystem {
     if (id !== null && this.fullCanvas && this.fullCanvas.hasPointerCapture(id)) this.fullCanvas.releasePointerCapture(id);
   }
 
-  toggleFullMap(open) {
-    this.isFullMapOpen = Boolean(open);
-    if (!this.isFullMapOpen) this.cancelPan();
+  toggleFullMap(open, { pointer = false } = {}) {
+    open = Boolean(open);
+    if (open && this.enabled === false) return;
+    if (open === this.isFullMapOpen) return;
+    this.isFullMapOpen = open;
+    if (!open) this.cancelGestures();
     if (this.onToggle) this.onToggle(this.isFullMapOpen);
     if (!this.modal) return;
     this.modal.classList.toggle('hidden', !this.isFullMapOpen);
+    this.modal.inert = !open;
     if (this.isFullMapOpen) {
+      this.returnFocus = document.activeElement;
       // the HUD's popovers live in the top layer, above the map
       for (const pop of document.querySelectorAll('.popover[popover]')) {
         if (typeof pop.hidePopover === 'function' && pop.matches(':popover-open')) pop.hidePopover();
       }
-      const ent = this.controllerManager.getActiveEntity();
-      this.viewCenterX = ent.position.x;
-      this.viewCenterZ = ent.position.z;
+      // Inert siblings along the ancestor chain without changing the existing section/CSS layout.
+      for (let branch = this.modal; branch && branch !== document.body; branch = branch.parentElement) {
+        for (const element of branch.parentElement?.children || []) {
+          if (element === branch) continue;
+          this.inertBackground.push({ element, inert: element.inert });
+          element.inert = true;
+        }
+      }
+      if (!this.searchHighlight) {
+        const ent = this.controllerManager.getActiveEntity();
+        this.viewCenterX = ent.position.x;
+        this.viewCenterZ = ent.position.z;
+      }
       this.resizeFullCanvas();
       this.renderFullMap();
+      this.modal.focus({ preventScroll: true });
+    } else {
+      for (const { element, inert } of this.inertBackground) element.inert = inert;
+      this.inertBackground.length = 0;
+      const target = [...(pointer ? [document.getElementById('canvas-container')] : []),
+        this.returnFocus, document.getElementById('btn-open-map'), document.getElementById('btn-toggle-hud')]
+        .find((element) => this.canFocus(element));
+      this.returnFocus = null;
+      target?.focus({ preventScroll: true });
     }
+  }
+
+  canFocus(element) {
+    return Boolean(element?.isConnected && !element.disabled && !element.closest('[inert]') && element.getClientRects().length &&
+      window.getComputedStyle(element).visibility === 'visible');
   }
 
   resizeFullCanvas() {
     if (!this.fullCanvas) return;
+    this.layoutStatus();
     // Layout size (the opening animation's transforms don't change it), at most ~6 megapixels however large the screen
     const w = this.fullCanvas.clientWidth;
     const h = this.fullCanvas.clientHeight;
@@ -752,6 +899,16 @@ class NYCMapSystem {
     this.fullDpr = dpr;
     this.fullCanvas.width = width;
     this.fullCanvas.height = height;
+  }
+
+  // The credits wrap differently with viewport width/fonts. Measure only on opening, resize and feedback changes,
+  // not in the render loop; keep long refusal instructions above credits and the vertical controls above both.
+  layoutStatus() {
+    if (!this.modal?.style?.setProperty) return;
+    for (const [id, variable] of [['fullmap-credits', '--map-credits-height'], ['fullmap-footer', '--map-status-height']]) {
+      const height = document.getElementById(id)?.getBoundingClientRect?.().height;
+      if (height > 0) this.modal.style.setProperty(variable, `${Math.ceil(height)}px`);
+    }
   }
 
   // Full map size in CSS pixels
@@ -1075,7 +1232,7 @@ class NYCMapSystem {
       }
     }
 
-    // GPS route to the active waypoint
+    // Direction line to the active waypoint (not a navigable route)
     if (this.waypoint) {
       const wx = toX(this.waypoint.x);
       const wy = toY(this.waypoint.z);
@@ -1187,7 +1344,7 @@ class NYCMapSystem {
     const toX = (wx) => v.toX(wx);
     const toY = (wz) => v.toY(wz);
 
-    // GPS route on the full map
+    // Direction line on the full map (not a navigable route)
     if (this.waypoint) {
       const wx = toX(this.waypoint.x);
       const wy = toY(this.waypoint.z);

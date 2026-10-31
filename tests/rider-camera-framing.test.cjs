@@ -106,6 +106,53 @@ test('cinematic cameras retract before a wall or ceiling and ease out after clea
   }
 });
 
+for (const [id, ceiling] of [['chase', 2], ['action', 1.7]]) {
+  test(`${id} preserves the established wall lift when clear, but cannot lift into/through a thin ceiling`, async () => {
+    const { NycTerrainSampler } = await import(pathToFileURL(join(__dirname, '../js/euc-terrain.js')).href);
+    const h = await harness();
+    h.entity.chaseDistance = 4.8;
+    h.entity.chaseHeight = 1.9;
+    const wall = { centre: { x: 0, y: 3, z: -1.6 }, halfExtents: { x: 5, y: 3, z: .4 }, rotationY: 0 };
+    const roof = { centre: { x: 0, y: ceiling + .025, z: 0 }, halfExtents: { x: 10, y: .025, z: 10 }, rotationY: 0,
+      layered: true, support: false };
+    const wallOnly = new NycTerrainSampler({ boxes: [wall] });
+    const covered = new NycTerrainSampler({ boxes: [wall, roof] });
+    const roofOnly = new NycTerrainSampler({ boxes: [roof] });
+    h.manager.eucSampler = wallOnly;
+    h.camera.setCameraPreset(id, true);
+    h.camera.update(1 / 60, 0);
+    const anchor = new h.THREE.Vector3(0, 1.2, 0);
+    const arm = h.camera.currentPos.clone().sub(anchor);
+    const f = h.camera.armFraction;
+    const legacy = anchor.clone().addScaledVector(arm, f);
+    legacy.y += .9 * (1 - f);
+    assert.ok(h.camera.camera.position.distanceTo(legacy) < 1e-10, 'unobstructed lift/composition unchanged');
+    assert.ok(legacy.y > ceiling + .05, 'the old lift passes completely through the 5 cm slab');
+    const hit = wallOnly.raycast(anchor, arm, arm.length());
+    assert.equal(covered.raycast(anchor, arm, arm.length()), hit, 'the first arm ray sees the wall, not the roof');
+
+    h.manager.eucSampler = covered;
+    h.camera.setCameraPreset(id, true);
+    h.camera.update(1 / 60, 0);
+    assert.ok(h.camera.camera.position.y < ceiling, 'final endpoint remains below the roof');
+    assert.ok(h.camera.camera.position.z > -1.2, 'and in front of the wall');
+    assert.ok(h.camera.currentPos.clone().sub(anchor).distanceTo(arm) < 1e-10, 'correction does not feed back into follow smoothing');
+    const correctedArm = h.camera.camera.position.clone().sub(anchor);
+    assert.equal(covered.raycast(anchor, correctedArm, correctedArm.length()), null, 'the submitted segment is actually clear');
+    assert.ok(h.camera.camera.position.distanceTo(legacy) > .1, 'this fixture exercises the extra safety correction');
+
+    // The old pull-in persists during release. Continue testing that lifted view, even after the wall is gone.
+    h.manager.eucSampler = roofOnly;
+    for (let i = 0; i < 120; i++) {
+      h.camera.update(1 / 60, i / 60);
+      assert.ok(h.camera.camera.position.y < ceiling, `roof penetration during eased release at frame ${i}`);
+    }
+    h.manager.eucSampler = { raycast: () => null };
+    for (let i = 0; i < 180; i++) h.camera.update(1 / 60, i / 60);
+    assert.ok(h.camera.camera.position.distanceTo(h.camera.currentPos) < 1e-10, 'returns to the ordinary clear view');
+  });
+}
+
 test('side cameras choose a clearer side without rapid alternating cuts; panorama prefers nearby water', async () => {
   const h=await harness();
   h.manager.eucSampler={ raycast(o,d) { return d.x>0 ? 1 : null; }, isWater:()=>false };
@@ -123,7 +170,7 @@ test('Panorama distinguishes real river water from city land and floating pier s
   const { NycTerrainSampler } = await import(pathToFileURL(join(__dirname,'../js/euc-terrain.js')).href);
   const h=await harness();
   h.manager.eucSampler=new NycTerrainSampler({shoreRails:true});
-  assert.equal(h.manager.eucSampler.isWater(-3000,0),false,'pond query alone does not identify the Hudson');
+  assert.equal(h.manager.eucSampler.isWater(-3000,0),true,'height-aware wet-support query includes the Hudson');
   assert.equal(h.camera.waterSide(-3000,0,0),true,'Hudson water');
   assert.equal(h.camera.waterSide(0,-20,0),false,'street');
   h.manager.eucSampler=new NycTerrainSampler({shoreRails:true,tops:[{

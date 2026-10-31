@@ -1,11 +1,60 @@
 // NYC recovery policy — MIT, © 2026 VibezZzCoder.
-// Called only when recovering. Queries the existing terrain/bodies; never moves the rider.
+// Recovery and checked-placement policy. Queries the existing terrain/bodies; never moves the rider.
 import { createGroundSample } from './euc/simulation/world.js';
 import { EUC_DYNAMIC_HULL, overlaps } from './euc-dynamic.js';
+import { WHEEL, TERRAIN } from './euc/data/tuning.js';
 
 const MARGIN = 0.15;
 const DEPARTURE = 1.2;
 const SAMPLE_STEP = 0.2;
+
+/** One standing pose using native support, dry footprint and full-height static clearance.
+ * registeredSurfaceOnly requires matching city-ground/top registration: street building boxes can be capped/merged,
+ * so their tops alone do not prove a drawn roof. Native entity/recovery support remains the default.
+ * referenceY selects a layer; Infinity selects the highest surface. No search or movement here.
+ */
+export function findPlacementTarget(sampler, { x, z, headingY = 0, referenceY = Infinity,
+  maxStepUp = WHEEL.pedalHeight * TERRAIN.stepUpPedalFactor, hull = EUC_DYNAMIC_HULL,
+  registeredSurfaceOnly = false }, sample = createGroundSample()) {
+  if (![x, z, headingY].every(Number.isFinite) || (!Number.isFinite(referenceY) && referenceY !== Infinity)) return null;
+  const registered = registeredSurfaceOnly ? {} : null;
+  const matchesRegistration = (px, pz, y) => !registeredSurfaceOnly
+    || Math.abs(sample.height - sampler.cityGround(px, pz, registered, y).height) <= 1e-4;
+  sampler.sampleGround(x, z, sample, referenceY);
+  const floor = sample.height;
+  if (!Number.isFinite(floor) || !matchesRegistration(x, z, referenceY)) return null;
+  const hw = hull.halfWidthMetres + MARGIN, hl = hull.halfLengthMetres + MARGIN;
+  const c = Math.cos(headingY), s = Math.sin(headingY);
+  for (const u of [-1, 0, 1]) for (const v of [-1, 0, 1]) {
+    const px = x + u * hw * c + v * hl * s, pz = z - u * hw * s + v * hl * c;
+    sampler.sampleGround(px, pz, sample, floor);
+    if (!Number.isFinite(sample.height) || !matchesRegistration(px, pz, floor)
+      || Math.abs(sample.height - floor) > maxStepUp || sample.normal.y < 0.9
+      || sample.offCourse || sample.surface === 'spill' || sample.traction === 'spill'
+      || sampler.isOffLimits(px, pz, floor) || sampler.isWater(px, pz, floor)) return null;
+  }
+  const body = { x, z, headingY, halfWidthMetres: hw, halfLengthMetres: hl,
+    minY: floor + 0.03, maxY: floor + hull.heightMetres, velocityX: 0, velocityZ: 0 };
+  return recoveryVolumeClear(sampler, body) ? { x, y: floor, z, headingY } : null;
+}
+
+/** Preflight from an already validated standing target, using recovery's 0.2 m sampling / 1.2 m maximum departure.
+ * Moving occupancy is speculative at every sample; neither this helper nor canPlace may move the rider.
+ */
+export function placementDepartureClear(sampler, target, { departure = 0,
+  maxStepUp = WHEEL.pedalHeight * TERRAIN.stepUpPedalFactor, ...support } = {}, canPlace = () => true) {
+  if (!Number.isFinite(departure) || departure < 0 || departure > DEPARTURE) return false;
+  const steps = Math.ceil(departure / SAMPLE_STEP), h = target.headingY;
+  let y = target.y;
+  for (let i = 0; i <= steps; i++) {
+    const distance = steps ? departure * i / steps : 0;
+    const p = i === 0 ? target : findPlacementTarget(sampler, { ...support, maxStepUp,
+      x: target.x + Math.sin(h) * distance, z: target.z + Math.cos(h) * distance, headingY: h, referenceY: y });
+    if (!p || Math.abs(p.y - y) > maxStepUp || !canPlace(p)) return false;
+    y = p.y;
+  }
+  return Math.abs(y - target.y) <= maxStepUp;
+}
 
 /** Full standing volume against the city's indexed, as-drawn static boxes (including overhead solids). */
 export function recoveryVolumeClear(sampler, body) {
@@ -38,19 +87,7 @@ export function findRecoveryTarget(sampler, { fallen, safePoints, headingY, maxS
   function supported(x, z, y, heading) {
     const g = ground(x, z, y);
     if (!Number.isFinite(g.height) || Math.abs(g.height - y) > maxStepUp || g.normal.y < 0.9 || !dry(x, z, y)) return null;
-    const floor = g.height;
-    const hw = hull.halfWidthMetres + MARGIN, hl = hull.halfLengthMetres + MARGIN;
-    const c = Math.cos(heading), s = Math.sin(heading);
-    // Footprint perimeter plus centre: refuse edges, submerged support and abrupt/unrideable steps.
-    for (const u of [-1, 0, 1]) for (const v of [-1, 0, 1]) {
-      const px = x + u * hw * c + v * hl * s, pz = z - u * hw * s + v * hl * c;
-      ground(px, pz, floor);
-      if (Math.abs(sample.height - floor) > maxStepUp || sample.normal.y < 0.9 || !dry(px, pz, floor)) return null;
-    }
-    const body = { x, z, headingY: heading, halfWidthMetres: hw, halfLengthMetres: hl,
-      minY: floor + 0.03, maxY: floor + hull.heightMetres, velocityX: 0, velocityZ: 0 };
-    if (!recoveryVolumeClear(sampler, body)) return null;
-    return { x, y: floor, z, headingY: heading };
+    return findPlacementTarget(sampler, { x, z, headingY: heading, referenceY: y, maxStepUp, hull }, sample);
   }
 
   function connected(a, b, heading, dynamic) {

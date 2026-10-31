@@ -173,6 +173,7 @@ test('first three knockdowns are warnings; only the fourth successful knockdown 
   assert.equal(d.state.phase, 'captured');
   assert.equal(d.state.lastEvent, 'captured');
   const captured = { ...d.state };
+  d.observePlayer({ crashed: true, recovered: true, displaced: true });
   run(d, 100, { ...riding, sees: false, distance: 999 });
   assert.deepEqual(d.state, captured, 'capture hands control to booking; escape/ambush clocks cannot continue');
   assert.equal(d.knockedDown(), false, 'no repeated capture or fifth tally during booking');
@@ -206,6 +207,36 @@ test('menus/hidden-tab gate freeze pursuit, tally, banner age and escape clocks'
   const before = { ...d.state };
   run(d, 90, { ...riding, riding: false, sees: false, distance: 999 });
   assert.deepEqual(d.state, before);
+});
+
+test('clock-free crash/recovery observation clears banked escape without aging a frozen pursuit', () => {
+  const d = createChaseDirector();
+  d.soon();
+  run(d, 1, riding);
+  run(d, 5, { ...riding, sees: false, distance: 200 });
+  assert.ok(d.state.unseen > 0 && d.state.far > 0);
+  const before = { ...d.state };
+  d.observePlayer({ crashed: true });
+  d.observePlayer({ recovered: true, displaced: true });
+  assert.deepEqual(d.state, { ...before, recovery: R.recoverySeconds, unseen: 0, far: 0, sees: false });
+  const frozen = { ...d.state };
+  run(d, 90, { riding: false });
+  assert.deepEqual(d.state, frozen, 'observing does not spend the protection during a freeze');
+  run(d, R.recoverySeconds - .1, { ...riding, sees: false, distance: 200 });
+  assert.ok(d.state.recovery > 0);
+  assert.equal(d.state.unseen, 0);
+  assert.equal(d.state.far, 0);
+});
+
+test('a crash observed through the frozen update gate also protects the next ambush', () => {
+  const d = createChaseDirector();
+  d.soon();
+  const before = { ...d.state };
+  d.update(90, { riding: false, crashed: true });
+  d.update(90, { riding: false, recovered: true });
+  assert.deepEqual(d.state, { ...before, calm: R.calmSeconds });
+  assert.deepEqual(run(d, R.calmSeconds - .1, riding), []);
+  assert.deepEqual(run(d, .2, riding), ['ambush']);
 });
 
 test('an unrelated crash does not count as a paddle strike', () => {

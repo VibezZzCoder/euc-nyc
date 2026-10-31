@@ -282,11 +282,13 @@ function trafficHarness() {
     between(traffic, '  const carWheelLeftInst', '  // 3D Collision Spark') +
     ['flagRange', 'placeWheels', 'renderCar'].map(name => functionSource(traffic, name)).join('\n'), context);
   const reset = between(traffic, '    for (const m of bodyMeshes) m.count = 0;', '    for (let i = 0; i < vehicles.length; i++)');
+  const bodySync = between(traffic, '    for (const m of bodyMeshes) {', '    const syncInst = (inst, n) => {');
   const sync = between(traffic, '    const syncInst = (inst, n) => {', "    for (const kind of ['sedan', 'suv']) syncInst");
   const state = vm.runInContext('({ carWheelStyles, carWheelLeftInst, carWheelRightInst })', context);
   return { ...state, context, frame(vehicles) {
     vm.runInContext(reset, context);
     for (const c of vehicles) context.renderCar(c);
+    vm.runInContext(bodySync, context);
     vm.runInContext(`{ ${sync} }`, context);
   } };
 }
@@ -389,6 +391,47 @@ test('pending wheel styles survive shrink/reappear at 60→30 FPS, including two
   assert.equal(tick([first]), true);
   assert.deepEqual(gpu.uploads.at(-1), [{ start: 0, count: 2 }], 'after consumption, a later small update stays small');
 });
+
+for (const lod of ['near', 'far']) {
+  test(`street ${lod} body paint/state pending tails survive shrink, hidden callbacks and unchanged reappearance`, () => {
+    const h = trafficHarness(), mesh = h.context.bodies.sedan[lod];
+    const first = vehicle('sedan', 0, lod === 'near' ? 10 : 110);
+    const second = vehicle('sedan', 0, lod === 'near' ? 20 : 120);
+    const attrs = ['paintColor', 'carState'].map(name => mesh.geometry.attributes[name]);
+    const copies = attrs.map(a => new Float32Array(a.array));
+    const versions = attrs.map(a => a.version);
+    const consume = () => attrs.forEach((a, i) => {
+      if (!mesh.visible || versions[i] === a.version) return;
+      const ranges = a.updateRanges.length ? a.updateRanges : [{ start: 0, count: a.array.length }];
+      for (const { start, count } of ranges) copies[i].set(a.array.subarray(start, start + count), start);
+      versions[i] = a.version;
+      a.clearUpdateRanges();
+    });
+    h.frame([first, second]); consume();
+    for (let run = 0; run < 2; run++) {
+      first.paint = [0.25, 0.5, 0.75]; second.paint = [0.75, 0.25, 0.5];
+      first.style = 64 + run; second.style = 128 + run; second.acc = -2;
+      h.frame([first, second]); // callback with no render
+      first.paint = [0.5, 0.75, 0.25]; first.style = 192 + run;
+      h.frame([first]);
+      const pending = attrs.map(a => a.updateRanges.map(r => ({ ...r })));
+      h.frame([]); consume(); // hidden meshes must not consume anything
+      attrs.forEach(a => assert.equal(a.updateRanges.length, 1));
+      h.frame([first]); consume(); // render only the smaller set, but upload its pending tail as well
+      const after = attrs.map(a => a.version);
+      h.frame([first, second]); consume();
+      assert.deepEqual(attrs.map(a => a.version), after, 'the returning CPU slot causes no repair write');
+      attrs.forEach((a, i) => assert.deepEqual([...copies[i].slice(0, 2 * a.itemSize)],
+        [...a.array.slice(0, 2 * a.itemSize)], 'simulated GPU must match both visible cars'));
+      attrs.forEach((a, i) => assert.deepEqual(pending[i], [{ start: 0, count: 2 * a.itemSize }]));
+      assert.equal(copies[1][4], 1, 'tail brake light survives too');
+      assert.equal(copies[1][7], second.style, 'tail livery/trim/wheel style survives');
+    }
+    first.paint = [1, 0, 0]; first.style = 8;
+    h.frame([first]);
+    attrs.forEach(a => assert.deepEqual(a.updateRanges, [{ start: 0, count: a.itemSize }], 'consumed unions retire'));
+  });
+}
 
 function build(material, backend) {
   const geometry = cars.buildSteerableWheelGeo(cars.BODY_SPECS.sedan, 1);

@@ -149,6 +149,7 @@ test('highway following accounts for both vehicle lengths and stops a van at its
     lanes: [{ cars, len: 1000, speed: 20 }], playerInLane: () => rider,
     D, brakeTerm: 2*Math.sqrt(D.a*D.b), HWY_CAR_LEN: 4.6, HWY_RIDER_HALF_LEN: .5,
     HWY_CONTACT: .4, HWY_HIT_MEMORY: .25,
+    reportCollision() {},
   })(dt, rider ? { position: {x:0,y:0,z:rider.u}, speed:rider.v, heading:0 } : null);
   const short = make(4.6), long = make(CAR_KINDS.van.halfLength*2);
   step([short,{...make(4.6),u:120}]);step([long,{...make(CAR_KINDS.van.halfLength*2),u:120}]);
@@ -422,8 +423,57 @@ function riderHarness() {
   // a car coming up behind the rider along +Z
   const car = (z, speed) => ({ x: 0, z, tx: 0, tz: 1, speed, vx: 0, vz: 0, dlv: 0, bus: false, isSUV: false,
     hold: false, hitVX: 0, hitVZ: 0, hitTimer: 0, pitchVel: 0, rollVel: 0 });
-  return { entity, player, reports, collideWithPlayer, car };
+  return { entity, player, reports, collideWithPlayer, car, context };
 }
+
+test('recycled cars clear holds and impact memory, expose fresh velocity, and report their next contact', () => {
+  const h = riderHarness(), v = h.car(-2.6, 8);
+  h.collideWithPlayer(v, 0, 0.86, 2.18, 1 / 60);
+  assert.equal(v.touch, true);
+  const body = { source: v }, paint = [0.2, 0.3, 0.4], edge = { occ: [[]] };
+  Object.assign(v, { body, paint, bodyType: 'sedan', style: 197, v0: 16, wheelSpin: 1.7 });
+  Object.assign(h.context, {
+    locate(car) { Object.assign(car, { x: 100, z: 100, tx: 1, tz: 0 }); },
+    chooseMove: () => ({ turn: 'S' }), occupy() {}
+  });
+  trafficFunction('place', h.context)(v, edge, 0, 20);
+  assert.equal(v.touch, false);
+  assert.equal(v.hold, false);
+  assert.deepEqual([v.hitTimer, v.hitVX, v.hitVZ], [0, 0, 0]);
+  assert.equal(v.body, body, 'cached body identity survives recycling');
+  assert.equal(v.paint, paint);
+  assert.equal(v.style, 197);
+  assert.equal(v.wheelSpin, 1.7, 'persistent wheel phase is retained');
+  const bodies = [];
+  trafficFunction('dynamicBodiesNear', { Math, vehicles: [v], peds: [], BODY_SPECS, carCrashProfile, CAR_KINDS,
+    vehicleHalfW: () => 0.86, vehicleHalfL: () => 2.18, PED_HALF: 0.3 })(100, 100, 5, bodies);
+  assert.equal(bodies[0], body);
+  assert.equal(body.velocityX, 8, 'new heading and speed replace old impact velocity');
+  assert.equal(body.velocityZ, 0);
+  Object.assign(h.player, { x: 102.5, z: 100 });
+  h.collideWithPlayer(v, Math.PI / 2, 0.86, 2.18, 1 / 60);
+  assert.equal(h.reports.length, 2, 'new contact is not swallowed by the old touching flag');
+});
+
+test('respawn clears pedestrian dodge/stumble state without resetting identity or complaint count', () => {
+  const context = populationContext();
+  context.nearEdges.push(straightEdge(200));
+  context.sidewalkTrack = () => {
+    Object.assign(context.track, { ax: 0, az: 200, ux: 0, uz: 1, len: 20, node: null });
+    return true;
+  };
+  const p = { speed: 1.4, crossesStreets: false, rig: { placed: true }, waiting: true,
+    dodge: 0.6, bumpOX: 0.4, bumpOZ: -0.3, bumpVX: 2, bumpVZ: -1, bumpCooldown: 2, bumped: 7 };
+  const rig = p.rig;
+  assert.equal(trafficFunction('spawnPed', context)(p, 60, 280, true), true);
+  assert.deepEqual([p.dodge, p.bumpOX, p.bumpOZ, p.bumpVX, p.bumpVZ, p.bumpCooldown], [0, 0, 0, 0, 0, 0]);
+  assert.equal(p.waiting, false);
+  assert.equal(p.bumped, 7, 'resetting this monotonic counter would create a false audio complaint');
+  assert.equal(p.rig, rig);
+  assert.equal(rig.placed, false);
+  trafficFunction('stumble', { Math, BUMP_FRICTION: 7, BUMP_RETURN: 0.5 })(p, 1 / 60);
+  assert.deepEqual([p.x, p.z], [0, 210], 'first new pose stays on its new track');
+});
 
 test('a car that runs into the rider stops, remembers its impact velocity and reports it, never moving the rider', () => {
   const { entity, reports, collideWithPlayer, car } = riderHarness();

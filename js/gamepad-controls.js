@@ -142,6 +142,9 @@ class GamepadControls {
     const typing = isTypingInField({ target }) || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
     if (!this.focused || document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || typing) {
       this.suppressedButtons = pressed.slice();
+      // A stick/partial trigger may move after focus was lost (or while typing). Snapshot every
+      // blocked poll so restoring focus cannot treat that displacement as fresh riding/look input.
+      this.suppressAnalog(pad);
       this.controller.clearGamepadInput();
       return;
     }
@@ -150,11 +153,13 @@ class GamepadControls {
     const revision = this.revision;
     if (toggleMap) {
       this.controller.clearGamepadInput();
+      this.suppressAnalog(pad);
       this.callbacks.onToggleMap?.();
       return;
     }
-    if (!this.enabled) {
+    if (!this.enabled || this.controller.inputEnabled === false) {
       this.controller.clearGamepadInput();
+      this.suppressAnalog(pad);
       for (let i = 0; i < BUTTON_COUNT; i++) if (i !== 1 && i !== 9) this.suppressedButtons[i] = pressed[i];
       if (closeMap) this.callbacks.onCloseMap?.();
       return;

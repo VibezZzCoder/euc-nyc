@@ -828,7 +828,7 @@ const fromOldFrame = (x, z) => ({ x: oldAxis(OLD_AVE_X, x, 20, 0.6), z: oldAxis(
 
 // Keyboard shortcuts are ignored while typing into a form field (e.g. the map's street search box)
 function isTypingInField(e) {
-  return e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT');
+  return e.target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable);
 }
 
 // Traffic signal cycle shared by the signal heads (street-details.js) and the traffic (traffic.js), in seconds:

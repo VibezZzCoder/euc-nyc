@@ -175,6 +175,31 @@ test('the swoop: he comes alongside, to the player\'s left, low, at their pace a
   assert.ok(Math.abs(f.vx - vx) < 1e-9 && Math.abs(f.vz - vz) < 1e-9);
 });
 
+test('a committed strike cannot read or steer to hidden heading/floor, including its last striking slice', () => {
+  const g = buildPursuitGraph(grid());
+  const a = createFlightBrain(g), b = createFlightBrain(g);
+  const known = { x: 0, y: 12, z: 0, vx: 0, vz: 5, heading: .4 };
+  const options = { lateral: 1.64, height: .1 };
+  for (const brain of [a, b]) {
+    brain.place(2, 12.1, -1, .4);
+    for (let i = 0; i < 42; i++) brain.swoop(1 / 60, known, options);
+  }
+  const hidden = new Proxy({}, { get(_object, key) { throw new Error(`read hidden ${String(key)}`); } });
+  for (let i = 0; i < 12; i++) {
+    a.swoop(1 / 60, known, { ...options, commit: true });
+    b.swoop(1 / 60, hidden, { ...options, commit: true });
+    assert.deepEqual(b.state, a.state, 'all motion/pose channels remain committed, not just XZ velocity');
+  }
+  assert.ok(Math.abs(b.state.y - 12.1) < .01);
+  assert.ok(Math.abs(b.state.heading - .4) < .01);
+
+  // Placement clears the previous wind-up; committing without one must continue the new pose, not old intel.
+  b.place(0, 3, 0, -1);
+  b.swoop(1 / 60, hidden, { ...options, commit: true });
+  assert.equal(b.state.heading, -1);
+  assert.equal(b.state.y, 3);
+});
+
 test('search follows last-seen facts, not hidden live motion; sight reacquisition resumes pursuit', () => {
   const m = createPursuitMemory(buildPursuitGraph(grid()));
   const q = { ...still(100, 50, 12), heading: 0 };

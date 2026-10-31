@@ -336,6 +336,7 @@ export function createFlightBrain(graph, { groundAt = () => 0, clearLine = () =>
   let inSight = false;
   let overSight = false;
   let lastHeading = 0;
+  let swoopAimed = false, swoopHeading = 0, swoopY = 0;
   // A node in clear line from (x, z) at the height he follows the streets (over the posts and kiosks; the nearest one
   // can be behind a block), and of those the one on the way to (ox, oz): mid-block, the nearer end of a street can be
   // the wrong way
@@ -410,9 +411,11 @@ export function createFlightBrain(graph, { groundAt = () => 0, clearLine = () =>
       seg = replanIn = sightIn = 0;
       inSight = overSight = false;
       lastHeading = heading;
+      swoopAimed = false;
     },
     update(dt, target) {
       if (!(dt > 0)) return f;
+      swoopAimed = false;
       const dx = target.x - f.x, dz = target.z - f.z;
       const distance = Math.hypot(dx, dz);
 
@@ -541,9 +544,12 @@ export function createFlightBrain(graph, { groundAt = () => 0, clearLine = () =>
      */
     swoop(dt, target, { lateral, height, commit = false }) {
       if (!(dt > 0)) return f;
-      const h = target.heading;
       let wantVx = f.vx, wantVz = f.vz;
       if (!commit) {
+        swoopAimed = true;
+        swoopHeading = target.heading;
+        swoopY = target.y + height;
+        const h = swoopHeading;
         const sx = target.x + Math.cos(h) * lateral + target.vx * 0.1;
         const sz = target.z - Math.sin(h) * lateral + target.vz * 0.1;
         wantVx = target.vx + (sx - f.x) * t.swoopGain;
@@ -554,7 +560,11 @@ export function createFlightBrain(graph, { groundAt = () => 0, clearLine = () =>
           wantVz *= t.swoopSpeed / speed;
         }
       }
-      move(dt, wantVx, wantVz, t.swoopAccel, Math.max(target.y + height, groundAt(f.x, f.z) + 0.1), t.swoopTurnRate, () => h, 7);
+      // Once striking, keep the last wind-up's heading AND floor as well as its velocity. Even a hidden target's
+      // rotation/elevation must not steer the committed paddle. Without a wind-up, continue from our own pose.
+      const h = swoopAimed ? swoopHeading : f.heading;
+      const aimY = swoopAimed ? swoopY : f.y;
+      move(dt, wantVx, wantVz, t.swoopAccel, Math.max(aimY, groundAt(f.x, f.z) + 0.1), t.swoopTurnRate, () => h, 7);
       f.mode = 'swoop';
       return f;
     },

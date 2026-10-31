@@ -144,6 +144,29 @@ function cityModule(text, paintAPI) {
     './ride-geometry.js': ride, './jefferson-skatepark.js': jefferson, './road-paint.js': paintAPI,
     './tsl-materials.js': factories }, globals: { document: { createElement: () => ({ getContext: () => ctx }) } } });
 }
+function withCurrentStoneBridges(text) {
+  // The independently raycast/controller-tested exception lives in stone-arch-bridges.test.mjs.
+  // Apply that exact production function to BOTH road-paint versions; never omit ride/geometry from the comparison.
+  const declaration = /^function addStoneArchBridge\([^]*?^\}/gm;
+  const oldFunctions = text.match(declaration) || [], newFunctions = current['city-grid'].match(declaration) || [];
+  assert.equal(oldFunctions.length, 1, 'one baseline stone-bridge function');
+  assert.equal(newFunctions.length, 1, 'one current stone-bridge function');
+  assert.equal(oldFunctions[0].split('\n')[0],
+    'function addStoneArchBridge(parent, cx, cz, rotY, span, width, archRise, wallMat, deckMat) {');
+  assert.equal(newFunctions[0].split('\n')[0], oldFunctions[0].split('\n')[0].replace('deckMat)', 'deckMat, rideBuilder)'));
+
+  const invocation = /^  if \((gapstow|bow)\) addStoneArchBridge\([^\n]+\);$/gm;
+  const oldCalls = [...text.matchAll(invocation)], newCalls = [...current['city-grid'].matchAll(invocation)];
+  assert.deepEqual(oldCalls.map(m => m[1]), ['gapstow', 'bow'], 'exactly the two accepted baseline call sites');
+  assert.deepEqual(newCalls.map(m => m[1]), ['gapstow', 'bow'], 'exactly the two accepted current call sites');
+  for (let i = 0; i < oldCalls.length; i++) {
+    assert.equal(newCalls[i][0], oldCalls[i][0].replace(/\);$/, ', { addRideMesh, addRideSolid });'),
+      `${oldCalls[i][1]}: preserve every existing location, heading, dimension and material argument`);
+  }
+  const calls = new Map(newCalls.map(m => [m[1], m[0]]));
+  // Replace only the one function and the two checked calls, leaving all old road-paint/world code intact.
+  return text.replace(declaration, () => newFunctions[0]).replace(invocation, (_line, name) => calls.get(name));
+}
 function worldSnapshot(text, paintAPI) {
   const module = cityModule(text, paintAPI), scene = new THREE.Scene(), city = module.buildCityGrid(scene);
   const result = {};
@@ -169,28 +192,46 @@ function worldSnapshot(text, paintAPI) {
   for (const g of geometries) g.dispose(); for (const m of materials) m.dispose();
   return result;
 }
-test('actual city: all physical/support/navigation data and non-paint geometry match baseline', { timeout: 120000 }, t => {
+// Preserve the original Node 24 fixture: the bridge exception must not refresh unrelated contracts.
+const BASELINE_CITY = {
+  sidewalks: '9e65a9ffc5863c539e4217daac53538d9a107fef36bbf1189909709d40fbeea2',
+  footprints: '26706a5688600dceb8336adf2e4c3e8f171e427190d4b10e5d490018a904464e',
+  highwayLanes: '1d640f3a8135e11d7f09aead9d37982e091a6a86d0a4045794c1ee8cdce587bb',
+  colliders: '16a8fe6b82d3a6c5a6dc72aaf4721775ef87309d58d59894b382be937dbae4d4',
+  trafficColliders: '1721e79c44846c6b466e6ef8257a1e3b6f6968e9b574a68a89c15cfb60cef960',
+  ride: '5e280ddc2c371880da1a77f538d30bfd66625c14ba2c6e3a5f283d29f265c965',
+  centralParkClearings: '2303346782bac2f134ddb484b8907529d1fcb7e43692c4754cd0e8bbc4037e84',
+  parkTreeSites: '64f8b93981e7ea1a69963c513f4a1899884f222e635851f05b90f14166dac261',
+  parkLampSites: '6bf6f202baa15c383239f6cd667f74469a8f27e4da87f2ecdc4079a8f0489ed7',
+  pavedPlazaRects: 'e59d1bfde1832e9f30472b68be8a2c7d742ff5c0448e037895fb3cd752dd39ed',
+  sidewalkBlocks: 'c6f2003ffd7cabf9559a1720dffb2f55a2e8379b1d7b0277f03d52564906572e',
+  nonPaintGeometry: '36635d8c241b8393539e3b9816720fd67a39b99003a6133eda265bb79f79832b',
+  meshCount: 149,
+  paint: { count: 81158, hash: '8b41f8ab1abf16381b8abe5b8da4b4f43865e040dc9fc56bd85c4a9eda404278' }
+};
+test('actual city: road paint preserves all world contracts with the same accepted stone bridges', { timeout: 120000 }, t => {
   // Execute real city construction with real Three geometry; only canvas lettering and shared material factories are stubbed.
-  const before = compare ? worldSnapshot(baseline('js/city-grid.js'), paintModule(baseline('js/road-paint.js'))) : null;
+  const node24 = Number(process.versions.node.split('.')[0]) === 24;
   const after = worldSnapshot(current['city-grid'], paint);
   t.diagnostic(`city contracts ${JSON.stringify(after)}`);
-  if (compare) assert.deepEqual(after, before, 'includes Pier 62, Jefferson, gates, viaduct, waterfront and navigation reservations');
-  // Raw same-engine contracts above remain authoritative; these are captured using the required Node 24 runtime.
-  if (Number(process.versions.node.split('.')[0]) === 24) assert.deepEqual(after, {
-    sidewalks: '9e65a9ffc5863c539e4217daac53538d9a107fef36bbf1189909709d40fbeea2',
-    footprints: '26706a5688600dceb8336adf2e4c3e8f171e427190d4b10e5d490018a904464e',
-    highwayLanes: '1d640f3a8135e11d7f09aead9d37982e091a6a86d0a4045794c1ee8cdce587bb',
-    colliders: '16a8fe6b82d3a6c5a6dc72aaf4721775ef87309d58d59894b382be937dbae4d4',
-    trafficColliders: '1721e79c44846c6b466e6ef8257a1e3b6f6968e9b574a68a89c15cfb60cef960',
-    ride: '5e280ddc2c371880da1a77f538d30bfd66625c14ba2c6e3a5f283d29f265c965',
-    centralParkClearings: '2303346782bac2f134ddb484b8907529d1fcb7e43692c4754cd0e8bbc4037e84',
-    parkTreeSites: '64f8b93981e7ea1a69963c513f4a1899884f222e635851f05b90f14166dac261',
-    parkLampSites: '6bf6f202baa15c383239f6cd667f74469a8f27e4da87f2ecdc4079a8f0489ed7',
-    pavedPlazaRects: 'e59d1bfde1832e9f30472b68be8a2c7d742ff5c0448e037895fb3cd752dd39ed',
-    sidewalkBlocks: 'c6f2003ffd7cabf9559a1720dffb2f55a2e8379b1d7b0277f03d52564906572e',
-    nonPaintGeometry: '36635d8c241b8393539e3b9816720fd67a39b99003a6133eda265bb79f79832b',
-    meshCount: 149,
-    paint: { count: 81158, hash: '8b41f8ab1abf16381b8abe5b8da4b4f43865e040dc9fc56bd85c4a9eda404278' }
+  if (compare) {
+    const oldCity = baseline('js/city-grid.js'), oldPaint = paintModule(baseline('js/road-paint.js'));
+    const original = worldSnapshot(oldCity, oldPaint);
+    t.diagnostic(`original baseline city contracts ${JSON.stringify(original)}`);
+    if (node24) assert.deepEqual(original, BASELINE_CITY, 'the original accepted fixture remains authoritative');
+    const before = worldSnapshot(withCurrentStoneBridges(oldCity), oldPaint);
+    t.diagnostic(`baseline with current stone bridges ${JSON.stringify(before)}`);
+    assert.deepEqual(Object.keys(original).filter(key => hash(original[key]) !== hash(before[key])).sort(),
+      ['nonPaintGeometry', 'ride'], 'the bridge transplant changes only drawing/support/body geometry; mesh count, navigation, sites and paint stay exact');
+    assert.deepEqual(after, before,
+      'identical bridges on both sides: preserve all ride data and non-paint geometry, including Pier 62, Jefferson, gates, viaduct, waterfront and navigation reservations');
+  }
+  // Node 24 evidence: only the approved joined bridge walks, approaches and native registrations change these two hashes.
+  // All other frozen fields (including the 149 batched meshes and every complete paint quad) retain BASELINE_CITY exactly.
+  if (node24) assert.deepEqual(after, {
+    ...BASELINE_CITY,
+    ride: '35468fe1b1bb00a9d9fe4616b7ca633dade7e4c8a2c377c9d45d7d1ccdcc886d',
+    nonPaintGeometry: 'be86e461edd96d205c7b36ab7aad7356dc05fd4c8b6d6eb438cd7339603b5972'
   });
   assert.equal(after.paint.count, 81158);
 });

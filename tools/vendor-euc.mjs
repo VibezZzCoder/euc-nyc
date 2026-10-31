@@ -13,7 +13,8 @@
 // time. Hiding a character is not enough, so:
 //   1. riderLook.ts and machineLook.ts are sliced: only the kept sections stay, and every import not on the keep list
 //      is removed (OVERRIDES below).
-//   2. tuning.ts loses the excluded riders' colour entries (keys named after an excluded roster id).
+//   2. tuning.ts loses the excluded riders' colour entries (keys named after an excluded roster id) and the unused
+//      LIVE_TUNABLES debug-panel metadata. The TUNING root and its deepFreeze side effect stay intact.
 //   3. Comments are not carried (removeComments; /*! licence banners stay). Upstream prose names excluded riders.
 //   4. The runtime import closure of the output is walked and every file and its text is audited against the
 //      excluded ids and names. Any hit fails the run, and nothing is written.
@@ -46,7 +47,6 @@ const ENTRIES = [
   'simulation/planSampler.ts',
   'simulation/world.ts',
   'input/actions.ts',
-  'render/chaseCamera.ts',
   'render/ridingRig.ts',
   'render/riderLook.ts',
   'render/machineLook.ts',
@@ -175,6 +175,19 @@ function keepThrough(source, title) {
 function replaceOnce(source, before, after) {
   if (source.split(before).length !== 2) throw new Error(`EUC adaptation site changed: ${before.slice(0, 100)}`);
   return source.replace(before, after);
+}
+
+// Only this audited declaration is dead in the fork, not the tuning constants around it. Pin its complete source
+// text so upstream shape/value/side-effect changes require review. In particular, never cut at TUNING or truncate
+// the file: deepFreeze(TUNING) freezes live shared exports, and more active constants follow LIVE_TUNABLES.
+function pruneLiveTuningMetadata(source) {
+  const declarations = [...source.matchAll(/^export const LIVE_TUNABLES: readonly TunableSpec\[\] = deepFreeze\(\[\n[^]*?^\]\);/gm)];
+  if (declarations.length !== 1
+      || crypto.createHash('sha256').update(declarations[0][0]).digest('hex')
+        !== '5a9619b34bd2dee88fdef8a043e29f8e2397509259b29a3fc018aa793c2ae0cf') {
+    throw new Error('EUC LIVE_TUNABLES metadata changed; review before pruning');
+  }
+  return replaceOnce(source, declarations[0][0], '');
 }
 
 const OVERRIDES = {
@@ -446,7 +459,7 @@ export function machineLook(id: MachineId): MachineLook {
 }
 `;
   },
-  'data/tuning.ts': (src, removed) => src.split('\n').filter((line) => {
+  'data/tuning.ts': (src, removed) => pruneLiveTuningMetadata(src).split('\n').filter((line) => {
     const m = SCOPE.colourKey.exec(line);
     if (!m) return true;
     removed.push(line.trim().split(':')[0]);

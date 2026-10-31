@@ -124,11 +124,13 @@ export class NemesisAudio {
   constructor(context, output, { noise = null, reflections = null } = {}) {
     this.context = context;
     this.disposed = false;
+    this.loadController = new AbortController(); // Shared by this object's sample requests, not its mute/reset cycle.
     this.nodes = [];
     this.buffers = {};
     this.blend = 0;
     this.lastSting = -1;
     this.last = { windup: -1, swing: -1, hit: -1 };
+    this.oneShots = new Set();
     this.noise = noise;
     this.targets = {};
     const own = (node) => (this.nodes.push(node), node);
@@ -188,18 +190,20 @@ export class NemesisAudio {
   }
 
   load(key) {
+    if (this.disposed) return Promise.resolve(null);
     let url;
     try {
       url = new URL(`../audio/euc/${COP_SAMPLE_FILES[key]}`, import.meta.url);
     } catch {
       return Promise.resolve(null);
     }
-    return fetch(url)
+    return fetch(url, { signal: this.loadController.signal })
       .then((response) => {
+        if (this.disposed) return null;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.arrayBuffer();
       })
-      .then((data) => decode(this.context, data))
+      .then((data) => this.disposed ? null : decode(this.context, data))
       .then((buffer) => {
         if (this.disposed) return null;
         this.buffers[key] = buffer;
@@ -212,7 +216,8 @@ export class NemesisAudio {
         return buffer;
       })
       .catch((error) => {
-        if (!this.disposed) console.warn(`[audio] cop siren ${COP_SAMPLE_FILES[key]} unavailable`, error?.message ?? error);
+        if (this.disposed || error?.name === 'AbortError') return null;
+        console.warn(`[audio] cop siren ${COP_SAMPLE_FILES[key]} unavailable`, error?.message ?? error);
         return null;
       });
   }
@@ -269,6 +274,7 @@ export class NemesisAudio {
 
   /** The ambush: the close wail's opening, once, at the sting level. */
   sting(now) {
+    if (this.disposed) return;
     const buffer = this.buffers.sirenClose;
     if (!buffer) return;
     const S = COP_SIREN;
@@ -280,11 +286,8 @@ export class NemesisAudio {
     envelope.gain.setValueAtTime(S.stingLevel, now + S.stingSeconds - 0.6);
     envelope.gain.linearRampToValueAtTime(0, now + S.stingSeconds);
     source.connect(envelope).connect(this.out);
+    this.trackShot(source, envelope);
     source.start(now, 0, S.stingSeconds + 0.05);
-    source.onended = () => {
-      source.disconnect();
-      envelope.disconnect();
-    };
   }
 
   /** The paddle's one-shots: 'windup' (rising whoosh), 'swing' (whoosh), 'hit' (thump and slap). */
@@ -300,7 +303,7 @@ export class NemesisAudio {
 
   /** Band noise from fromHz to toHz over `seconds`, peaking at `peakAt` s. */
   burst(at, fromHz, toHz, q, seconds, level, peakAt) {
-    if (!this.noise) return;
+    if (this.disposed || !this.noise) return;
     const c = this.context;
     const source = c.createBufferSource();
     source.buffer = this.noise;
@@ -314,17 +317,14 @@ export class NemesisAudio {
     envelope.gain.exponentialRampToValueAtTime(level, at + peakAt);
     envelope.gain.exponentialRampToValueAtTime(0.0001, at + seconds);
     source.connect(band).connect(envelope).connect(this.out);
+    this.trackShot(source, band, envelope);
     source.start(at, Math.random() * (this.noise.duration - seconds - 0.05));
     source.stop(at + seconds + 0.02);
-    source.onended = () => {
-      source.disconnect();
-      band.disconnect();
-      envelope.disconnect();
-    };
   }
 
   /** A falling sine thump. */
   thump(at, fromHz, toHz, seconds, level) {
+    if (this.disposed) return;
     const c = this.context;
     const osc = c.createOscillator();
     osc.frequency.setValueAtTime(fromHz, at);
@@ -334,18 +334,30 @@ export class NemesisAudio {
     envelope.gain.exponentialRampToValueAtTime(level, at + 0.004);
     envelope.gain.exponentialRampToValueAtTime(0.0001, at + seconds);
     osc.connect(envelope).connect(this.out);
+    this.trackShot(osc, envelope);
     osc.start(at);
     osc.stop(at + seconds + 0.02);
-    osc.onended = () => {
-      osc.disconnect();
-      envelope.disconnect();
+  }
+
+  trackShot(source, ...nodes) {
+    this.oneShots.add(source);
+    source.onended = () => {
+      if (!this.oneShots.delete(source)) return;
+      source.disconnect();
+      for (const node of nodes) node.disconnect();
     };
   }
 
   /** Silence at once (tab hidden, sound muted). */
-  reset() {
+  reset(view = null) {
     if (this.disposed) return;
     const now = this.context.currentTime;
+    for (const source of this.oneShots) {
+      try { source.stop(now); } catch { /* already ended */ }
+      source.onended(); // Disconnect now, even if the context is suspended and cannot deliver ended yet.
+    }
+    this.lastSting = view?.sting ?? -1;
+    for (const kind of ['windup', 'swing', 'hit']) this.last[kind] = view ? view[kind] ?? 0 : -1;
     for (const param of [this.farGain.gain, this.closeGain.gain, this.humGain.gain]) {
       param.cancelScheduledValues(now);
       param.setValueAtTime(0, now);
@@ -355,7 +367,9 @@ export class NemesisAudio {
 
   dispose() {
     if (this.disposed) return;
+    this.reset();
     this.disposed = true;
+    this.loadController.abort();
     for (const source of [...this.sources, this.far, this.close]) {
       try {
         source?.stop();

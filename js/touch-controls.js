@@ -44,6 +44,7 @@ export function stickAxes(originX, originY, x, y, viewportWidth = Infinity, trav
 }
 
 const BUTTON_ACTIONS = new Set(['up', 'boost', 'reset']);
+const BUTTON_KEYS = new Set(['Enter', 'NumpadEnter', 'Space']);
 
 class TouchControls {
   constructor(controllerManager) {
@@ -59,10 +60,24 @@ class TouchControls {
     this.origin = { x: 0, y: 0 };
     this.axes = { throttle: 0, steer: 0 };
     this.buttonPointers = new Map(); // pointerId -> { element, action }
+    this.buttonKeys = new Map(); // code -> { element, action }; separate from global riding keys
+    this.chargeLatched = false; // assistive click has no key/pointer release
     this.media = window.matchMedia('(any-pointer: coarse)');
     if (!this.root || !this.stick) return;
+    this.buttons = [...this.root.querySelectorAll('[data-touch]')].filter((el) => BUTTON_ACTIONS.has(el.dataset.touch));
+    this.chargeButton = this.buttons.find((el) => el.dataset.touch === 'boost');
+    this.chargeButton?.setAttribute('aria-pressed', 'false');
+    this.chargeButton?.setAttribute('aria-label', 'Crouch and charge a bigger hop; hold in the air to tuck. '
+      + 'Hold with Enter or Space. Assistive activation toggles charge until activated again, held, or HOP is released.');
 
     this.root.addEventListener('pointerdown', (event) => this.onPointerDown(event));
+    this.root.addEventListener('keydown', (event) => this.onButtonKey(event, true));
+    this.root.addEventListener('keyup', (event) => this.onButtonKey(event, false));
+    window.addEventListener('keyup', (event) => this.onButtonKey(event, false));
+    this.root.addEventListener('focusout', (event) => {
+      for (const [code, owned] of this.buttonKeys) if (owned.element === event.target) this.releaseKey(code);
+    });
+    this.root.addEventListener('click', (event) => this.onButtonClick(event));
     for (const type of ['pointerup', 'pointercancel']) {
       window.addEventListener(type, (event) => this.release(event.pointerId), { passive: true });
     }
@@ -87,7 +102,75 @@ class TouchControls {
   }
 
   canInteract() {
-    return this.enabled && this.available && !document.hidden;
+    return this.enabled && this.available && !document.hidden && this.controller.inputEnabled !== false;
+  }
+
+  buttonFromTarget(target) {
+    const element = target instanceof Element ? target.closest('[data-touch]') : null;
+    return element && this.root.contains(element) && BUTTON_ACTIONS.has(element.dataset.touch) ? element : null;
+  }
+
+  canPressButton(element) {
+    return this.canInteract() && !element.disabled && (element.dataset.touch !== 'reset' || this.down);
+  }
+
+  writeButton(element, pulse = false) {
+    const action = element.dataset.touch;
+    const pressed = pulse || (action === 'boost' && this.chargeLatched)
+      || [...this.buttonPointers.values(), ...this.buttonKeys.values()].some((owned) => owned.element === element);
+    const wasPressed = element.dataset.pressed === 'true';
+    element.dataset.pressed = String(pressed);
+    if (action === 'boost') element.setAttribute('aria-pressed', String(pressed));
+    if (pressed !== wasPressed) this.controller.setTouchInput(action, Number(pressed));
+    // Keep an assistive charge through the hop hold (including a one-foot/tuck), then release it.
+    // Physical CHARGE holds and the keyboard/gamepad sources remain independently owned.
+    if (action === 'up' && wasPressed && !pressed && this.chargeLatched) {
+      this.chargeLatched = false;
+      this.writeButton(this.chargeButton);
+    }
+  }
+
+  onButtonKey(event, isDown) {
+    if (!BUTTON_KEYS.has(event.code)) return;
+    const element = this.buttonFromTarget(event.target);
+    if (!element && !this.buttonKeys.has(event.code)) return;
+    // We implement a hold, not the native Enter click/Space key-up click. Keep both defaults and
+    // bubbling riding bindings out of this path; detail-zero clicks without keys remain accessible.
+    const prevented = event.defaultPrevented;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isDown) { this.releaseKey(event.code); return; }
+    if (prevented || event.repeat || this.buttonKeys.has(event.code) || event.ctrlKey || event.metaKey
+      || event.altKey || event.isComposing || !this.canPressButton(element) || document.activeElement !== element) return;
+    if (element.dataset.touch === 'boost') this.chargeLatched = false; // transfer a toggle to the physical hold
+    this.buttonKeys.set(event.code, { element, action: element.dataset.touch });
+    this.writeButton(element);
+  }
+
+  releaseKey(code) {
+    const owned = this.buttonKeys.get(code);
+    if (!owned) return;
+    this.buttonKeys.delete(code);
+    this.writeButton(owned.element);
+  }
+
+  onButtonClick(event) {
+    const element = this.buttonFromTarget(event.target);
+    if (!element) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // A pointer already acted on down/up. Its compatibility click must never add another hop
+    // or latch CHARGE. Native keyboard clicks were prevented by onButtonKey.
+    if (event.detail !== 0 || event.pointerType || !this.canPressButton(element)) return;
+    if ([...this.buttonPointers.values(), ...this.buttonKeys.values()].some((owned) => owned.element === element)) return;
+    if (element.dataset.touch === 'boost') {
+      this.chargeLatched = !this.chargeLatched;
+      this.writeButton(element);
+    } else {
+      // The manager buffers these one-shots even when the complete pulse falls between frames.
+      this.writeButton(element, true);
+      this.writeButton(element);
+    }
   }
 
   updateAvailability() {
@@ -120,6 +203,7 @@ class TouchControls {
     if (!value) {
       // a finger still on GET UP must not leave reset held into the next crash
       for (const [id, owned] of this.buttonPointers) if (owned.action === 'reset') this.release(id);
+      for (const [code, owned] of this.buttonKeys) if (owned.action === 'reset') this.releaseKey(code);
     }
   }
 
@@ -141,12 +225,12 @@ class TouchControls {
         this.writeStick(0, 0);
         accepted = true;
       }
-    } else if (BUTTON_ACTIONS.has(control)) {
+    } else if (BUTTON_ACTIONS.has(control) && this.canPressButton(element) && event.button === 0) {
       const busy = [...this.buttonPointers.values()].some((owned) => owned.element === element);
       if (!busy && event.pointerId !== this.stickPointer && !this.buttonPointers.has(event.pointerId)) {
         this.buttonPointers.set(event.pointerId, { element, action: control });
-        element.dataset.pressed = 'true';
-        this.controller.setTouchInput(control, 1);
+        if (control === 'boost') this.chargeLatched = false;
+        this.writeButton(element);
         accepted = true;
       }
     }
@@ -183,16 +267,21 @@ class TouchControls {
     const owned = this.buttonPointers.get(pointerId);
     if (!owned) return;
     this.buttonPointers.delete(pointerId);
-    owned.element.dataset.pressed = 'false';
-    this.controller.setTouchInput(owned.action, 0);
+    this.writeButton(owned.element);
   }
 
   reset() {
-    if (this.stickPointer !== null) this.release(this.stickPointer);
-    for (const pointerId of [...this.buttonPointers.keys()]) this.release(pointerId);
+    this.stickPointer = null;
+    if (this.stick) this.stick.dataset.active = 'false';
+    this.buttonPointers.clear();
+    this.buttonKeys.clear();
+    this.chargeLatched = false;
+    for (const element of this.buttons || []) this.writeButton(element);
     this.axes = { throttle: NaN, steer: NaN };
     if (this.root) this.writeStick(0, 0);
-    this.controller.clearTouchInput();
+    // Resize cancels queued touch taps and trick intent, not just levels. Retain other sources.
+    if (this.controller.cancelTouchInput) this.controller.cancelTouchInput();
+    else this.controller.clearTouchInput();
   }
 }
 

@@ -16,6 +16,52 @@ const top = (y, extra = {}) => ({ minX: 1, maxX: 9, minZ: fallen.z - 4, maxZ: fa
   top: y, surface: 'pavement', ...extra });
 const box = (x, y, z, hx, hy, hz) => ({ centre: { x, y, z }, halfExtents: { x: hx, y: hy, z: hz }, rotationY: 0, surface: 'pavement', support: false });
 
+test('placement target uses native roofs, the entire standing footprint and actual overhead/body-only solids', () => {
+  const roof = { ...box(fallen.x, 3, fallen.z, 3, 3, 3), support: true };
+  const s = new NycTerrainSampler({ boxes: [roof] });
+  assert.deepEqual(s.findPlacementTarget({ x: fallen.x, z: fallen.z }), { x: fallen.x, y: 6, z: fallen.z, headingY: 0 });
+  assert.equal(s.findPlacementTarget({ x: fallen.x, z: fallen.z, registeredSurfaceOnly: true }), null,
+    'registered-only manager policy does not silently become the native recovery default');
+  assert.equal(s.findRecoveryTarget(request({ fallen: { ...fallen, y: 6.3 } }), () => true).y, 6,
+    'native recovery retains existing low-solid support');
+  assert.equal(s.findPlacementTarget({ x: fallen.x + 2.8, z: fallen.z }), null, 'centre support cannot hide an unsupported shoulder');
+  for (const solid of [box(fallen.x, 7.4, fallen.z, 3, 0.1, 3), box(fallen.x + 0.45, 7, fallen.z, 0.05, 0.5, 0.1)]) {
+    const obstructed = new NycTerrainSampler({ boxes: [roof, solid] });
+    assert.equal(obstructed.findPlacementTarget({ x: fallen.x, z: fallen.z }), null);
+  }
+});
+
+test('placement target refuses wet/steep/unsupported perimeter even when the centre is dry and level', () => {
+  const x = fallen.x, z = fallen.z;
+  const small = top(6, { layered: true }); small.maxX = x + 0.2; small.poly[1].x = small.poly[2].x = small.maxX;
+  assert.equal(new NycTerrainSampler({ tops: [small] }).findPlacementTarget({ x, z }), null);
+  const pond = top(1, { water: { level: 1, floor: 0.88, band: 0 } });
+  const dry = top(1.1); dry.maxX = x + 0.2; dry.poly[1].x = dry.poly[2].x = dry.maxX;
+  assert.equal(new NycTerrainSampler({ tops: [pond, dry] }).findPlacementTarget({ x, z }), null);
+  const steep = top(6, { plane: { x, y: 6, z, dx: 1, dz: 0 } });
+  assert.equal(new NycTerrainSampler({ tops: [steep] }).findPlacementTarget({ x, z }), null);
+  const dryBridge = new NycTerrainSampler({ tops: [pond, top(6, { layered: true })] });
+  assert.equal(dryBridge.findPlacementTarget({ x, z, referenceY: 0.9 }), null);
+  assert.equal(dryBridge.findPlacementTarget({ x, z, referenceY: 6 }).y, 6);
+});
+
+test('registered-only placement checks registration under the whole footprint and retains overhead static clearance', () => {
+  const x = fallen.x, z = fallen.z, roof = { ...box(x, 13, z, 3, 13, 3), support: true };
+  const narrow = { ...top(26), minX: x - 0.2, maxX: x + 0.2,
+    poly: [{ x: x - 0.2, z: z - 4 }, { x: x + 0.2, z: z - 4 },
+      { x: x + 0.2, z: z + 4 }, { x: x - 0.2, z: z + 4 }] };
+  const centreOnly = new NycTerrainSampler({ boxes: [roof], tops: [narrow] });
+  assert.equal(centreOnly.findPlacementTarget({ x, z }).y, 26, 'native collision support covers the footprint');
+  assert.equal(centreOnly.findPlacementTarget({ x, z, registeredSurfaceOnly: true }), null,
+    'a tiny registration cannot authorize an entire capped collision footprint');
+  const full = top(26);
+  assert.equal(new NycTerrainSampler({ boxes: [roof], tops: [full] })
+    .findPlacementTarget({ x, z, registeredSurfaceOnly: true }).y, 26);
+  const ceiling = new NycTerrainSampler({ boxes: [roof, box(x, 27.4, z, 3, 0.1, 3)], tops: [full] });
+  assert.equal(ceiling.findPlacementTarget({ x, z, registeredSurfaceOnly: true }), null,
+    'matching support does not bypass body-only overhead solids');
+});
+
 test('recovery uses the fallen body rather than the old wheel/safe point and checks departure', () => {
   const s = new NycTerrainSampler();
   const p = s.findRecoveryTarget(request(), () => true);

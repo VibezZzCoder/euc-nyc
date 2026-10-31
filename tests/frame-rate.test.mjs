@@ -356,3 +356,22 @@ test('first frame bypasses admission and retains GPU completion/rejection boot p
   failed.step(1000);
   assert.equal(failed.calls.trees.length, 1, 'failed startup stops further tree presentation');
 });
+
+test('production loop keeps player simulation frozen during loading/title and hidden tabs, with final-view pursuit', () => {
+  const f = loopFixture('auto');
+  f.env.titleScreen.started = false;
+  for (const now of [10, 30, 50]) f.step(now);
+  assert.equal(f.calls.rider, undefined, 'no simulation advances before Ride');
+  assert.deepEqual(f.calls.entity.map(args => args[0]), [0, 0, 0]);
+  assert.equal(f.calls.input, undefined, 'no riding gamepad polling before Ride');
+  f.env.titleScreen.started = true;
+  f.order.length = 0;
+  f.step(70);
+  assert.equal(f.calls.rider.length, 1);
+  assert.ok(f.order.indexOf('camera') < f.order.indexOf('pursuit'), 'ambush visibility uses the final view');
+  f.env.document.hidden = true;
+  f.step(90);
+  assert.equal(f.calls.rider.length, 1, 'hidden updates cannot move the rider');
+  assert.equal(f.calls.entity.at(-1)[0], 0);
+  assert.equal(f.calls.pursuit.at(-1)[1], false, 'chase clocks remain frozen');
+});

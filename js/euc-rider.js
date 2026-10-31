@@ -20,6 +20,7 @@ import { createRidingRig } from './euc/render/ridingRig.js';
 import { riderLook } from './euc/render/riderLook.js';
 import { machineLook } from './euc/render/machineLook.js';
 import { RiderTricks } from './euc-tricks.js';
+import { findPlacementTarget, placementDepartureClear } from './euc-recovery.js';
 import { cityUniforms } from './tsl-materials.js';
 import { EUC_HEADLIGHT, headlightBeamScale, createEucHeadlight, placeEucHeadlight } from './vehicle-lights.js';
 
@@ -34,7 +35,7 @@ export const RIDERS = Object.freeze({
 // Who the player may ride. Officer Dorkins is kept for a future chasing character, not as a player.
 export const PLAYABLE_RIDERS = Object.freeze(['cool-rider', 'trollina']);
 const MAX_EVENTS = 64;
-const MAX_CATCH_UP = 5; // the shipped EUC Thrills ceiling (src/app/loop.ts)
+const MAX_CATCH_UP = 6; // bounded catch-up covers main's full 0.05 s clamp at 120 Hz
 
 // Stock EUC Thrills wheel tuning (owner decision 2026-10-23: kerb hopping matters). Manhattan's curbs are 0.22 m
 // (city-config.js ISLAND_BOUNDS.sidewalkHeight); the stock wheel levers itself onto 1.35 x its 0.16 m pedal height
@@ -174,16 +175,17 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       // EUC: positive steer is the rider's right. The city's "left" key turns toward +heading.
       const steer = (keys.right ? Number(keys.right) : 0) - (keys.left ? Number(keys.left) : 0);
       const hopHeld = !!keys.up;
-      if (hopHeld && !hopWasHeld) hopPendingUntil = simSeconds + INPUT.actionBufferSeconds;
+      if (keys.hopPressed || (hopHeld && !hopWasHeld)) hopPendingUntil = simSeconds + INPUT.actionBufferSeconds;
       hopWasHeld = hopHeld;
 
       const resetHeld = !!keys.reset;
-      if (resetHeld && !resetWasHeld && controller.crashed) recoveryPending = true;
+      if ((keys.resetPressed || (resetHeld && !resetWasHeld)) && controller.crashed) recoveryPending = true;
       resetWasHeld = resetHeld;
 
-      accumulator = Math.min(accumulator + dt, MAX_CATCH_UP * STEP);
-      while (accumulator >= STEP) {
-        accumulator -= STEP;
+      accumulator = Math.min(accumulator + (Number.isFinite(dt) ? Math.max(0, dt) : 0), MAX_CATCH_UP * STEP);
+      const steps = Math.min(MAX_CATCH_UP, Math.floor(accumulator / STEP + 1e-9));
+      for (let i = 0; i < steps; i++) {
+        accumulator = Math.max(0, accumulator - STEP);
         let hop = false;
         if (hopPendingUntil >= simSeconds && (controller.canAcceptHop || controller.canAcceptSpin)) {
           hop = true;
@@ -261,10 +263,27 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       return true;
     },
 
-    /** Place the rider (teleport, respawn) and drop the interpolation history so nothing streaks across the city. */
-    placeAt(px, pz, h = this.heading, referenceY = 0) {
+    /** Place the rider and reset interpolation only on success. Checked callers may preflight departure (0–1.2 m). */
+    placeAt(px, pz, h = this.heading, referenceY = 0, { requireClear = false, departure = 0 } = {}) {
+      if (![px, pz, h].every(Number.isFinite) || (!Number.isFinite(referenceY) && referenceY !== Infinity)) return false;
+      const placementWorld = controller.dynamicWorld;
+      const support = { maxStepUp: controller.tuning.maxStepUp, hull: placementWorld?.hull };
+      const target = requireClear ? findPlacementTarget(sampler, { x: px, z: pz, headingY: h, referenceY, ...support }) : null;
+      if (requireClear && !target) return false;
       const g = sampler.sampleGround(px, pz, { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false }, referenceY);
+      // Booking/checked teleports opt into recovery's occupancy admission locally. Ordinary resets retain their
+      // native policy. Speculative admission must happen before reset (which mutates controller transaction state).
+      if (requireClear && !placementDepartureClear(sampler, target, { ...support, departure }, (p) => {
+        if (!placementWorld?.canPlace) return true;
+        const floor = p === target ? g : sampler.sampleGround(p.x, p.z,
+          { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false }, p.y);
+        return placementWorld.canPlace({ reason: 'recover', initialSpeedMetresPerSecond: 0,
+          discontinuitySerial: controller.placementSerial + 1,
+          occupancyPose: controller.proposedPlacementOccupancyPose(p.x, p.z, h, floor),
+          body: controller.dynamicBody(p.x, p.z, p.y, h, 0, 0) });
+      })) return false;
       const placed = controller.reset({ position: { x: px, y: g.height, z: pz }, headingY: h });
+      if (!placed) return false;
       controller.writePose(current);
       copyPose(current, previous);
       copyPose(current, render);
@@ -284,11 +303,11 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       return placed;
     },
 
-    clearInput() {
+    clearInput(held = {}) {
       tricks.cancel();
       hopPendingUntil = -1;
-      hopWasHeld = false;
-      resetWasHeld = false;
+      hopWasHeld = !!held.up;
+      resetWasHeld = !!held.reset;
       recoveryPending = false;
     },
 

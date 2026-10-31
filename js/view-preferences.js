@@ -1,33 +1,50 @@
 // Only explicit camera/time choices are preferences; temporary title and teleport views are not.
 const VIEW_STATE_KEY = 'euc-newyork-view-state';
 
+function readSaved(storage) {
+  try {
+    const saved = JSON.parse(storage.getItem(VIEW_STATE_KEY));
+    if (saved?.version === 1) return saved;
+  } catch { /* Private mode, disabled storage or an invalid save. */ }
+  return null;
+}
+
 export function createViewPreferences({ cameraIds, timeIds, getStorage = () => globalThis.localStorage }) {
   const cameras = new Set(cameraIds), times = new Set(timeIds);
   let camera = 'chase', time = 'golden';
+  let cameraPending = false, timePending = false;
   try {
-    const saved = JSON.parse(getStorage().getItem(VIEW_STATE_KEY));
-    if (saved?.version === 1) {
-      if (cameras.has(saved.camera)) camera = saved.camera;
-      if (times.has(saved.time)) time = saved.time;
-    }
-  } catch { /* Private mode, disabled storage or an invalid save: use the defaults. */ }
+    const saved = readSaved(getStorage());
+    if (cameras.has(saved?.camera)) camera = saved.camera;
+    if (times.has(saved?.time)) time = saved.time;
+  } catch { /* Use the defaults when the storage accessor is unavailable. */ }
 
-  const save = () => {
-    try { getStorage().setItem(VIEW_STATE_KEY, JSON.stringify({ version: 1, camera, time })); }
+  const save = (selected) => {
+    try {
+      const storage = getStorage(), latest = readSaved(storage);
+      // Another tab may have changed the other field. Unsaved local choices take precedence
+      // until a successful write, so a quota failure cannot roll them back to stale storage.
+      if (selected === 'camera' && !timePending && times.has(latest?.time)) time = latest.time;
+      if (selected === 'time' && !cameraPending && cameras.has(latest?.camera)) camera = latest.camera;
+      storage.setItem(VIEW_STATE_KEY, JSON.stringify({ version: 1, camera, time }));
+      cameraPending = timePending = false;
+    }
     catch { /* Preferences remain usable in memory when storage is unavailable. */ }
   };
   return {
     get camera() { return camera; },
     get time() { return time; },
     setCamera(id) {
-      if (!cameras.has(id) || id === camera) return;
+      if (!cameras.has(id)) return;
       camera = id;
-      save();
+      cameraPending = true;
+      save('camera');
     },
     setTime(id) {
-      if (!times.has(id) || id === time) return;
+      if (!times.has(id)) return;
       time = id;
-      save();
+      timePending = true;
+      save('time');
     }
   };
 }

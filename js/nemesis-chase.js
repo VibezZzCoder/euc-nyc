@@ -60,8 +60,21 @@ export function createChaseDirector({ rules = CHASE_RULES, random = Math.random 
     s.eventAge = 0;
     return event;
   };
+  // Observation is independent of simulation time: a crash/get-up can straddle a map or hidden-tab freeze.
+  const observePlayer = ({ crashed = false, recovered = false, displaced = false } = {}) => {
+    if (s.phase === 'captured') return;
+    if (displaced) s.sees = false;
+    if (!crashed && !recovered) return;
+    if (s.phase === 'waiting') s.calm = r.calmSeconds;
+    else if (s.phase === 'chasing') {
+      s.recovery = r.recoverySeconds;
+      s.unseen = s.far = 0;
+    }
+  };
   return {
     state: s,
+    /** Record lifecycle boundaries without aging any chase, escape, banner or waiting clock. */
+    observePlayer,
     /** His spawn failed: stay waiting and try again shortly. */
     postpone(seconds = r.retrySeconds) {
       s.phase = 'waiting';
@@ -98,7 +111,8 @@ export function createChaseDirector({ rules = CHASE_RULES, random = Math.random 
         s.calm = 0;
       }
     },
-    update(dt, { riding = false, crashed = false, distance = Infinity, sees = false, inView = false } = {}) {
+    update(dt, { riding = false, crashed = false, recovered = false, distance = Infinity, sees = false, inView = false } = {}) {
+      observePlayer({ crashed, recovered });
       if (!(dt > 0) || !riding) return null;
       if (s.phase === 'captured') return null; // booking owns the lifecycle until a successful release
       s.eventAge += dt;

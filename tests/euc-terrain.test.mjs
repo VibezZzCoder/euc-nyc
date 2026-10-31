@@ -586,4 +586,30 @@ test('an inlet in the bulkhead line is water, not the island\'s ground', () => {
   assert.ok(xs.length >= 4, `crossings ${xs.map(Math.round)}`);
   const mid = (xs[1] + xs[2]) / 2;
   assert.ok(s.sampleGround(mid, z, probe()).height < ISLAND_BOUNDS.waterLevel, 'the middle of the inlet is water');
+  assert.equal(s.isWater(mid, z, Infinity), true);
+  assert.equal(s.isOffLimits(mid, z, Infinity), true);
+  assert.equal(s.findPlacementTarget({ x: mid, z }), null, 'map placement cannot stand on the inlet floor');
+  const deck = { poly: [{ x: mid - 4, z: z - 4 }, { x: mid + 4, z: z - 4 },
+    { x: mid + 4, z: z + 4 }, { x: mid - 4, z: z + 4 }],
+    minX: mid - 4, maxX: mid + 4, minZ: z - 4, maxZ: z + 4, top: 6, surface: 'wood', shore: true, layered: true };
+  const covered = new NycTerrainSampler({ tops: [deck] });
+  assert.equal(covered.isWater(mid, z, 0), true, 'water remains water below a layered deck');
+  assert.equal(covered.isOffLimits(mid, z, 0), true);
+  assert.equal(covered.isWater(mid, z, 6), false);
+  assert.equal(covered.isOffLimits(mid, z, 6), false);
+  assert.equal(covered.findPlacementTarget({ x: mid, z }).y, 6, 'map can still select the dry deck');
+});
+
+test('water classification accounts for real solid support above a pond without drying submerged support', () => {
+  const x = ROAD.x, z = ROAD.z;
+  const pond = { poly: [{ x: x - 4, z: z - 4 }, { x: x + 4, z: z - 4 }, { x: x + 4, z: z + 4 }, { x: x - 4, z: z + 4 }],
+    minX: x - 4, maxX: x + 4, minZ: z - 4, maxZ: z + 4, top: 1,
+    surface: 'stone', water: { level: 1, floor: 0.88, band: 0 } };
+  for (const y of [0.9, 2]) {
+    const s = new NycTerrainSampler({ tops: [pond], boxes: [{ centre: { x, y: y / 2, z },
+      halfExtents: { x: 2, y: y / 2, z: 2 }, rotationY: 0, surface: 'pavement' }] });
+    assert.equal(s.isWater(x, z, y), y < 1);
+    assert.equal(s.isOffLimits(x, z, y), y < 1);
+    assert.equal(!!s.findPlacementTarget({ x, z }), y > 1);
+  }
 });

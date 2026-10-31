@@ -4,6 +4,9 @@ The long version of the [README](README.md): how the wheel rides, the city, ever
 The riding comes from [*EUC Thrills*](https://github.com/VibezZzCoder/EUC-thrills) by VibezZzCoder; the city is a fork
 of Mr.doob's three.js New York.
 
+The game is about the freedom to explore Manhattan. Tricks and skateparks are optional ways to enjoy the ride;
+there is no required trick progression or scoring objective.
+
 ## What you need
 
 An up-to-date browser with hardware acceleration. WebGPU is preferred; the renderer automatically tries WebGL2 if
@@ -28,6 +31,10 @@ If the game cannot start, the loading screen shows an explanation and a **Retry*
 browser and hardware-acceleration tips; a failed download suggests checking your connection. **Technical details** can
 be expanded to help troubleshoot. Retry reloads the page and keeps your saved settings. If a link opened inside another
 app fails, try opening it directly in Safari or Chrome.
+
+If the graphics device is interrupted during a ride, the same screen offers Retry rather than leaving the game
+silently frozen. Your existing position save is protected during loading and the title screen; saving a new session
+starts when you choose Ride.
 
 The title screen links to the [EUC Thrills website](https://euc.erodmen.com/). While riding, **Website ↗** sits beside
 **GitHub ↗** in the top-left header. Both open in a new tab, keeping the game open.
@@ -114,6 +121,8 @@ more space. During a wipeout, a low hood or covered pickup bed behaves different
   not ground: the wheel stops at the shore, and hit it fast and you go in. The Reservoir's running track is a raised
   loop you can hop onto. Ramped openings also serve the park-road mouths near W65, W81, E79 and W106/Great Hill;
   the W106 ramps meet grass inside the park rather than a continuous paved path.
+  **Gapstow and Bow bridges** have connected walking decks and matching gentle approach ramps: ride across from
+  either bank. Their stone parapets are solid; the pond beneath remains water.
 - **Bryant Park** stands on a raised terrace. Ride up by the two ramps on its 6th Ave side, either side of the
   fountain; the lawn is a kerb higher again.
 - **The squares** (Madison, Union, Washington and Tompkins Square Parks) have iron fences: ride in by their gates.
@@ -148,8 +157,9 @@ more space. During a wipeout, a low hood or covered pickup bed behaves different
   pier terraces now support riding at their own heights. You can still ride underneath where the ground route is
   open. Brooklyn's approach has a clear paved route through the park; the FDR's entrance follows a continuous road.
   A raised bridge anchorage lip may still need a hop. At **Pier 15**, enter the ramp near the outer end of the pier and
-  ride back toward shore to reach the upper lawn through its open landing. Other high rooftops can be reached with
-  the map. The surrounding boroughs and distant outer bridges remain scenery rather than a fully rideable second city.
+  ride back toward shore to reach the upper lawn through its open landing. The map selects clear city ground and
+  registered bridge, pier or rooftop riding surfaces; ordinary building collision caps are not rooftop destinations.
+  The surrounding boroughs and distant outer bridges remain scenery rather than a fully rideable second city.
 
 ## Officer Dorkins
 
@@ -253,10 +263,15 @@ screen still circles the rider; teleporting and booking release temporarily sele
 ## Getting around
 
 - **Map** (`M`, Start, the map button, or tap the minimap): the whole of Manhattan with street and landmark search.
-  **Click or tap any spot on the map and you are there,** exactly where you pointed: a street corner, a lawn, a
-   plaza, a courtyard. It is the quickest way to get anywhere. The map also carries the credits.
+  Click/tap a spot to request a safe arrival at or near that point: a street corner, lawn, plaza or courtyard.
+  Placement checks your full standing space, support, water and moving occupants. If no safe arrival is available,
+  you stay where you were; map feedback explains that you can choose another spot or try again. The map also carries the credits.
   A click on a registered bridge deck or pier terrace selects its highest surface; reloading restores the saved
   elevation, including a lower walkway beneath an upper one.
+  Riding controls and background shortcuts are disabled while the map is open, but traffic keeps moving. Search
+  results include native landmark buttons: press Down or Tab from search, then Enter/Space on the desired result.
+  Escape closes the map and returns focus. Multi-finger map gestures do not teleport; use + / − to zoom.
+  The yellow **waypoint line** shows direction only; it is not a road-following or obstacle-aware route.
 - **Skate locations on the map:** search for Coleman, Tribeca / Pier 25, Pier 62, Andy Kessler / Riverside,
   Thomas Jefferson, Brooklyn Banks or Tompkins Square. They have named map pins and nearby location labels.
   **Pier 62 has a larger authored skatepark**, marked by a **skateboard icon** on both the map and minimap. Its connected
@@ -280,6 +295,10 @@ screen still circles the rider; teleporting and booking release temporarily sele
 - **Time of day** (top right): golden hour, midday, blue hour and night. At blue hour and night the wheel's headlight
   comes on with the cars' and lights the road ahead. Distant haze follows the sky colour at the horizon.
   Your selected time of day is remembered for the next visit.
+
+The touch action buttons also support Enter/Space while focused. Assistive click activation taps HOP/GET UP;
+clicking CHARGE toggles its held state, announced as pressed. Activate it again to release, or use HOP (its release
+clears the click-toggle). Physical finger holds continue to work normally.
 
 ## Frame rate
 

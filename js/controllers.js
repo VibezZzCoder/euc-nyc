@@ -15,18 +15,26 @@ import { createEucEntity } from './euc-rider.js';
 
 // Spawn on 5th Ave at 37th St, facing south down the avenue toward the Empire State Building (34th St)
 const SPAWN_Z = streetZ(37);
-const RIDER_RADIUS = 0.48; // teleport clearance: the wheel, the rider's shoulders and a little air
-const RIDER_HEIGHT = 2.0;
-
 // Actions the rider reads as presses (edges), not levels: hop and get up
 const ONE_SHOT_ACTIONS = new Set(['up', 'reset']);
+const INPUT_ACTIONS = ['forward', 'backward', 'left', 'right', 'up', 'boost', 'reset'];
+
+function interactiveTarget(target) {
+  return !!target && (target.isContentEditable
+    || ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'A', 'SUMMARY'].includes(target.tagName)
+    || !!target.closest?.('button, input, select, textarea, a[href], summary, audio[controls], video[controls],'
+      + ' [contenteditable]:not([contenteditable="false"]), [tabindex]:not([tabindex="-1"]),'
+      + ' [role="button"], [role="link"], [role="slider"], [role="textbox"], [role="combobox"], [role="listbox"],'
+      + ' [role="checkbox"], [role="radio"], [role="switch"], [role="menuitem"], [role="tab"]'));
+}
 
 class ThirdPersonControllerManager {
-  constructor(scene, colliders = [], { ride = null, rider = 'cool-rider', dynamicWorld } = {}) {
+  constructor(scene, colliders = [], { ride = null, rider = 'cool-rider', dynamicWorld, inputEnabled = true } = {}) {
     this.scene = scene;
     this.colliders = colliders;
     this._colliderCells = null; // built on first use, see nearColliders()
     this.activeMode = 'euc'; // the only mode; kept as a field for the systems that read it
+    this.inputEnabled = !!inputEnabled;
     // The EUC rides the building colliders and the drawn tops / solids from city-grid.js and street-details.js.
     // Traffic's padded furniture footprints never reach the rider (euc-terrain.js).
     this.eucSampler = new NycTerrainSampler({
@@ -43,7 +51,9 @@ class ThirdPersonControllerManager {
       right: false,
       up: false, // hop
       boost: false, // crouch
-      reset: false // get up after a crash
+      reset: false, // get up after a crash
+      hopPressed: false,
+      resetPressed: false
     };
 
     this.entities = {
@@ -81,19 +91,24 @@ class ThirdPersonControllerManager {
     };
     const actionsByCode = new Map(Object.entries(bindings).flatMap(([action, codes]) => codes.map((code) => [code, action])));
     this._pressedCodes = new Set();
-    this._tapped = new Set(); // one-shot presses since the last frame (see update)
+    this._tapped = new Map(); // action -> sources pressed since the last frame (including subframe taps)
     this._keyboardKeys = {};
     this._touchKeys = {};
     this._gamepadKeys = {};
 
     const onKey = (e, isDown) => {
       const action = actionsByCode.get(e.code);
-      if (!action || (isDown && isTypingInField(e))) return;
+      if (!action) return;
+      // Key-up always clears, including a release over a focused native control or with modifiers held.
+      if (isDown && (this.inputEnabled === false || e.ctrlKey || e.metaKey || e.altKey || e.isComposing
+        || e.defaultPrevented || isTypingInField(e) || interactiveTarget(e.target) || interactiveTarget(document.activeElement)
+        || (e.repeat && !this._pressedCodes.has(e.code)))) return;
+      const pressed = isDown && !this._pressedCodes.has(e.code);
       if (isDown) this._pressedCodes.add(e.code);
       else this._pressedCodes.delete(e.code);
       // Releasing one binding must not cancel another key held for the same action.
       this._keyboardKeys[action] = bindings[action].some((code) => this._pressedCodes.has(code));
-      this._blendInput(action);
+      this._blendInput(action, pressed ? 'keyboard' : null);
     };
 
     window.addEventListener('keydown', (e) => onKey(e, true));
@@ -104,40 +119,67 @@ class ThirdPersonControllerManager {
     });
   }
 
-  _blendInput(action) {
+  _blendInput(action, pressedSource = null) {
     const keyboard = this._keyboardKeys[action] || false;
     const touch = this._touchKeys[action] || false;
     const gamepad = this._gamepadKeys[action] || false;
     const strength = Math.max(keyboard, touch, gamepad);
-    const was = this.keys[action];
     // Preserve digital button values while allowing either analog source to be strongest.
     this.keys[action] = keyboard === true || touch === true || gamepad === true ? true : strength || false;
-    if (!was && this.keys[action] && ONE_SHOT_ACTIONS.has(action)) this._tapped?.add(action);
+    if (pressedSource && ONE_SHOT_ACTIONS.has(action)) {
+      if (!this._tapped.has(action)) this._tapped.set(action, new Set());
+      this._tapped.get(action).add(pressedSource);
+      this._syncPressEdges();
+    }
   }
 
-  _setAnalogInput(source, action, value) {
-    if (!Object.hasOwn(this.keys, action)) return;
+  _syncPressEdges() {
+    this.keys.hopPressed = this._tapped.has('up');
+    this.keys.resetPressed = this._tapped.has('reset');
+  }
+
+  _setAnalogInput(source, action, value, name) {
+    if (this.inputEnabled === false || !INPUT_ACTIONS.includes(action)) return;
+    const was = source[action];
     const strength = Number(value);
     source[action] = typeof value === 'boolean' ? value : Number.isFinite(strength) ? Math.max(0, Math.min(1, strength)) : 0;
-    this._blendInput(action);
+    this._blendInput(action, !was && source[action] ? name : null);
   }
 
   setTouchInput(action, value) {
-    this._setAnalogInput(this._touchKeys, action, value);
+    this._setAnalogInput(this._touchKeys, action, value, 'touch');
   }
 
   setGamepadInput(action, value) {
-    this._setAnalogInput(this._gamepadKeys, action, value);
+    this._setAnalogInput(this._gamepadKeys, action, value, 'gamepad');
   }
 
   clearTouchInput() {
     this._touchKeys = {};
-    for (const action of Object.keys(this.keys)) this._blendInput(action);
+    for (const action of INPUT_ACTIONS) this._blendInput(action);
+  }
+
+  /** Viewport boundary: cancel touch taps/trick intent, retaining keyboard and pad levels/presses. */
+  cancelTouchInput() {
+    this.clearTouchInput();
+    for (const [action, sources] of this._tapped) {
+      sources.delete('touch');
+      if (!sources.size) this._tapped.delete(action);
+    }
+    this._syncPressEdges();
+    this.entities?.euc?.clearInput(this.keys);
   }
 
   clearGamepadInput() {
     this._gamepadKeys = {};
-    for (const action of Object.keys(this.keys)) this._blendInput(action);
+    for (const action of INPUT_ACTIONS) this._blendInput(action);
+  }
+
+  setInputEnabled(enabled) {
+    enabled = !!enabled;
+    if (this.inputEnabled === enabled) return;
+    this.inputEnabled = enabled;
+    this.resetInput();
   }
 
   resetInput() {
@@ -161,18 +203,17 @@ class ThirdPersonControllerManager {
 
   teleportActiveTo(x, z, heading = Math.PI, referenceY = Infinity) {
     const ent = this.entities.euc;
-    this.resetInput();
     if (!Number.isFinite(heading)) heading = ent.heading;
     const destination = this.findTeleportPosition(x, z, heading, referenceY);
-    if (destination) ent.placeAt(destination.x, destination.z, heading, referenceY === Infinity ? this.getGroundHeight(destination.x, destination.z, referenceY) : referenceY);
-    return { x: ent.position.x, z: ent.position.z };
+    const succeeded = !!destination && ent.placeAt(destination.x, destination.z, heading, destination.y, { requireClear: true }) === true;
+    if (succeeded) this.resetInput();
+    return { x: ent.position.x, z: ent.position.z, succeeded };
   }
 
-  // Find a fully clear arrival before moving the player: test the whole footprint against every nearby building
-  // (sequential pushes could leave a rider trapped between overlapping ones); keep the old position if none fits.
+  // Search dry city-ground / registered deck arrivals with full static standing clearance. Building collision-box
+  // caps are not drawn roofs. Dynamic occupancy is rechecked by placeAt(requireClear) before committing placement.
   findTeleportPosition(x, z, heading, referenceY = Infinity) {
-    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(heading)) return null;
-    const ext = RIDER_RADIUS + 0.1;
+    if (![x, z, heading].every(Number.isFinite) || (!Number.isFinite(referenceY) && referenceY !== Infinity)) return null;
     const clampPoint = (px, pz) => {
       // A map click can select a bridge / upper pier surface; a saved pose supplies its own elevation instead.
       if (this.eucSampler?.topAt?.(px, pz, true, referenceY) && !this.eucSampler.isOffLimits(px, pz, referenceY)) return { x: px, z: pz };
@@ -186,23 +227,11 @@ class ThirdPersonControllerManager {
       }
       return { x: px, z: pz };
     };
-    const clear = (p) => {
-      if (!p) return false;
-      if (this.eucSampler?.isWater?.(p.x, p.z)) return false; // a click on a pond lands on its shore (clampPoint keeps off the river)
-      const y = this.getGroundHeight(p.x, p.z, referenceY) + 1;
-      for (const c of this.nearColliders(p.x, p.z, ext)) {
-        if (y > c.maxY + 1.5 || y + RIDER_HEIGHT < (c.minY ?? -Infinity)) continue;
-        if (p.x + ext <= c.minX || p.x - ext >= c.maxX || p.z + ext <= c.minZ || p.z - ext >= c.maxZ) continue;
-        if (c.obb) {
-          const o = c.obb, dx = p.x - o.cx, dz = p.z - o.cz;
-          if (Math.abs(dx * o.cs - dz * o.sn) >= o.hx + ext || Math.abs(dx * o.sn + dz * o.cs) >= o.hz + ext) continue;
-        }
-        return false;
-      }
-      return true;
-    };
+    const target = (p) => p && this.eucSampler.findPlacementTarget({ x: p.x, z: p.z, headingY: heading, referenceY,
+      registeredSurfaceOnly: true });
     const origin = clampPoint(x, z);
-    if (clear(origin)) return origin;
+    const exact = target(origin);
+    if (exact) return exact;
     // Four-metre rings cover nearby streets and courtyards, with bounded work even for a click inside a large block.
     const cx = origin ? origin.x : Math.max(ISLAND_BOUNDS.minX, Math.min(ISLAND_BOUNDS.maxX, x));
     const cz = origin ? origin.z : Math.max(ISLAND_BOUNDS.minZ + 30, Math.min(ISLAND_BOUNDS.maxZ, z));
@@ -210,7 +239,8 @@ class ThirdPersonControllerManager {
       for (let i = 0; i < 32; i++) {
         const angle = i * Math.PI / 16;
         const p = clampPoint(cx + Math.cos(angle) * distance, cz + Math.sin(angle) * distance);
-        if (clear(p)) return p;
+        const found = target(p);
+        if (found) return found;
       }
     }
     return null;
@@ -222,7 +252,7 @@ class ThirdPersonControllerManager {
     return !!b && !(b.park > 0.6 && !b.median);
   }
 
-  // The ground the wheel rides (euc-terrain.js cityGround), so teleports land on what is drawn
+  // City terrain before solid tops, shared with city-side systems. Teleports use the full placement sampler instead.
   getGroundHeight(x, z, referenceY = 0) {
     return this.eucSampler.cityGround(x, z, this._groundProbe ??= { height: 0, surface: 'pavement' }, referenceY).height;
   }
@@ -272,8 +302,9 @@ class ThirdPersonControllerManager {
     let keys = this.keys;
     if (this._tapped?.size) {
       keys = { ...this.keys };
-      for (const action of this._tapped) keys[action] = true;
+      for (const action of this._tapped.keys()) keys[action] = true;
       this._tapped.clear();
+      this._syncPressEdges();
     }
     this.entities.euc.update(dt, keys);
   }

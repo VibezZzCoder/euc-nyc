@@ -30,7 +30,7 @@
 // No three.js: the headless tests import this file directly.
 import { PlanTerrainSampler } from './euc/simulation/planSampler.js';
 import { WHEEL, TERRAIN } from './euc/data/tuning.js';
-import { findRecoveryTarget } from './euc-recovery.js';
+import { findRecoveryTarget, findPlacementTarget } from './euc-recovery.js';
 import {
   blockAt, getIslandBoundsAtZ, ISLAND_BOUNDS, CENTRAL_PARK_TOP, CENTRAL_PARK_GATE_SIZE, inCentralPark, centralParkGateAt, pointInPoly, WATER_RIDE,
   MANHATTAN_COASTLINE, SEAWALL_POLYGON, ESPLANADE_RAIL, BATTERY_RAIL, NORTH_BARRIER
@@ -324,6 +324,11 @@ export class NycTerrainSampler {
     return findRecoveryTarget(this, request, canPlace);
   }
 
+  // Map/manager callers require registeredSurfaceOnly; native recovery/entity callers retain box-top support.
+  findPlacementTarget(request) {
+    return findPlacementTarget(this, request);
+  }
+
   /** The highest top under (x, z), or null; shoreOnly restricts the search to pier ground surfaces. */
   topAt(x, z, shoreOnly = false, referenceY = 0) {
     const list = this.topGrid.get(Math.floor(x / TOP_CELL) * 100000 + Math.floor(z / TOP_CELL));
@@ -358,9 +363,15 @@ export class NycTerrainSampler {
     return true;
   }
 
-  /** True where (x, z) is on a pond or the Reservoir (shore band included): not a place to stand. */
+  /** Wet support at the selected elevation: ponds/bands, rivers and inlets, excluding dry decks/roofs. */
   isWater(x, z, referenceY = 0) {
-    return !!this.topAt(x, z, false, referenceY)?.water;
+    const top = this.topAt(x, z, false, referenceY);
+    if (top?.water) {
+      const g = this.sampleGround(x, z, this._waterProbe ??= { height: 0, normal: { x: 0, y: 1, z: 0 } }, referenceY);
+      const level = waterInterior(top, x, z) ? top.water.level : topHeight(top, x, z);
+      return g.height <= level;
+    }
+    return shoreAt(x, z, this.shoreRails) === SHORE_WATER && !this.topAt(x, z, true, referenceY);
   }
 
   /**

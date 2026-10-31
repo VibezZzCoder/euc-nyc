@@ -516,10 +516,17 @@ class CameraSystem {
     else this.armFraction += (target - this.armFraction) * (1 - Math.exp(-dt * CAMERA_ARM.easeOut));
     if (this.armFraction >= 0.999) return;
     const f = Math.min(1, this.armFraction);
-    // Pulled in, it also rises and tips down to look over the rider rather than into their back. Walls are upright
-    // boxes, so a point in front of one stays in front of it at any height.
+    // Retain the ordinary wall composition: rise and tip down to look over the rider. A suspended deck can block
+    // that rise even when the original arm was clear, so validate the lifted arm before submitting the view.
     const pull = 1 - f;
-    this.camera.position.set(o.x + d.x * f, o.y + d.y * f + CAMERA_ARM.lift * pull, o.z + d.z * f);
+    d.x *= f;
+    d.y = d.y * f + CAMERA_ARM.lift * pull;
+    d.z *= f;
+    const liftedLength = Math.hypot(d.x, d.y, d.z);
+    const liftedHit = sampler.raycast(o, d, liftedLength);
+    // No minimum arm length on this safety correction: a close ceiling may leave less than minDistance clear.
+    const safe = liftedHit === null ? 1 : Math.max(0, liftedHit - CAMERA_ARM.clearance) / liftedLength;
+    this.camera.position.set(o.x + d.x * safe, o.y + d.y * safe, o.z + d.z * safe);
     look.lerp(this._riderPoint.set(o.x, entity.position.y + CAMERA_ARM.lookHeight, o.z), Math.min(1, pull * CAMERA_ARM.lookPull));
   }
 }

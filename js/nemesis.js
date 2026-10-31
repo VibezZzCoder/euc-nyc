@@ -190,7 +190,9 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
   const lastFace = new THREE.Vector3();
   const quarry = { x: 0, z: 0, bottom: 0 };
   const lastQuarry = { x: 0, z: 0, bottom: 0 };
-  let quarryEntity = null;
+  let observedPlayer = null, observedController = null, placementSerial;
+  let wasCrashed = false, wasRecovering = false;
+  const observedPosition = { x: 0, y: 0, z: 0 };
   let faceValid = false;
   let struck = false;
   const director = createChaseDirector();
@@ -210,8 +212,11 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
     sphere.center.set(x, y, z);
     sphere.radius = radius;
     if (sphere.center.distanceTo(camera.position) > 250) return false;
+    // Rendering may be FPS-gated. Refresh the supplied transform rather than using its last submitted inverse.
+    // The host still owns updating this frame's final camera BEFORE a spawn visibility decision.
+    camera.updateWorldMatrix(true, false);
     viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(viewProjection);
+    frustum.setFromProjectionMatrix(viewProjection, camera.coordinateSystem, camera.reversedDepth);
     return frustum.intersectsSphere(sphere);
   }
   // Spawning: would the player see him drop in at (x, z)? (In the camera's view, and not behind a building.)
@@ -327,6 +332,41 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
       return brain.state;
     },
 
+    /** Clock-free lifecycle observation; also safe from a placement/visibility callback with no animation step. */
+    observePlayer() {
+      const p = getPlayer(), c = p.controller;
+      const serial = c?.placementSerial;
+      const changed = observedPlayer !== p || observedController !== c;
+      const placed = !changed && serial !== placementSerial;
+      const crashed = !!c?.crashed, recovering = c?.state === 'recovering';
+      const displaced = observedPlayer !== null && (changed || placed ||
+        Math.hypot(p.position.x - observedPosition.x, p.position.y - observedPosition.y, p.position.z - observedPosition.z) > 5);
+      // A serial change while upright may be a complete recovery missed during the freeze. Give the normal grace
+      // at every placement boundary rather than guessing from displacement size or reading/consuming event queues.
+      const recovered = observedPlayer !== null && (changed || placed || (wasCrashed && !crashed) || (recovering && !wasRecovering));
+      if (displaced) {
+        faceValid = false;
+        facts.sees = false;
+        sightIn = 0; // fresh LOS before memory can accept the new coordinates, not a cached pre-placement sight fact
+        lastRange = Infinity;
+      }
+      if (crashed || recovered) {
+        faceValid = false;
+        if (swing.phase === 'windup') swing.cancel();
+      }
+      facts.crashed = crashed;
+      director.observePlayer({ crashed, recovered, displaced });
+      observedPlayer = p;
+      observedController = c;
+      placementSerial = serial;
+      wasCrashed = crashed;
+      wasRecovering = recovering;
+      observedPosition.x = p.position.x;
+      observedPosition.y = p.position.y;
+      observedPosition.z = p.position.z;
+      return p;
+    },
+
     /** True when the camera could see him (his bounding sphere is in its frustum, within 250 m). */
     inView() {
       const f = brain.state;
@@ -380,13 +420,17 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
 
     /** One frame. `riding` is false while the title screen holds the game. */
     update(dt, riding) {
+      const p = nemesis.observePlayer();
       frames++;
       if (frames === 2) nemesis.hide(); // after the warm-up frame
       if (frames < 2) return;
-      if (!riding) return; // title, full map and hidden tab freeze the pursuit, including its escape clocks
-      const p = getPlayer();
+      if (!riding) {
+        // No swept travel or cached sight across a frozen interval, even without a controller placement.
+        faceValid = facts.sees = false;
+        sightIn = 0;
+        return; // title, full map and hidden tab freeze motion and all clocks, but not lifecycle observation
+      }
       facts.riding = riding;
-      facts.crashed = !!p.controller?.crashed;
       if (!nemesis.active) {
         facts.distance = Infinity;
         facts.sees = facts.inView = false;
@@ -426,7 +470,7 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
 
       let f;
       if (chasing && (swing.phase === 'windup' || swing.phase === 'active' || striking)) {
-        f = brain.swoop(dt, target, { lateral: SWING.lateral, height: SWING.swoopHeight, commit: swing.phase !== 'windup' });
+        f = brain.swoop(dt, pursuit, { lateral: SWING.lateral, height: SWING.swoopHeight, commit: swing.phase !== 'windup' });
       } else if (chasing) f = brain.update(dt, pursuit);
       else f = leave(dt);
       pose_(f);
@@ -439,9 +483,8 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
         quarry.x = p.position.x;
         quarry.z = p.position.z;
         quarry.bottom = p.position.y;
-        // A teleport/rider replacement has no swept travel path. Ordinary riding moves < 2 m at the frame-dt cap.
-        if (quarryEntity !== p || Math.hypot(quarry.x - lastQuarry.x, quarry.bottom - lastQuarry.bottom, quarry.z - lastQuarry.z) > 5) faceValid = false;
-        if (chasing && striking && faceValid && !struck && !p.controller?.crashed) {
+        // observePlayer invalidates placements (including sub-5 m moves) before either sight or swept contact.
+        if (chasing && striking && faceValid && !struck && !p.controller?.crashed && director.state.recovery <= 0) {
           if (sweptHit(lastFace.x, lastFace.y, lastFace.z, face.x, face.y, face.z, quarry, SWING, lastQuarry, swing.contact)) {
             if (p.controller?.hardKnock?.(face.x - lastFace.x, face.z - lastFace.z)) {
               struck = true;
@@ -453,7 +496,6 @@ export function createNemesis({ scene, sampler, network, getPlayer, camera }) {
         }
         lastFace.copy(face);
         lastQuarry.x = quarry.x; lastQuarry.z = quarry.z; lastQuarry.bottom = quarry.bottom;
-        quarryEntity = p;
         faceValid = paddleMesh.parent?.visible !== false;
       }
 

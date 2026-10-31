@@ -65,7 +65,7 @@ test('preset and map teleports share arrival resets and mark the resolved landin
   const end = main.indexOf('  const openMapBtn', start);
   const handlers = new Map();
   const calls = [];
-  const landed = { x: -305.7, z: 5210 };
+  const landed = { x: -305.7, z: 5210, succeeded: true };
   let map;
   const environment = {
     TELEPORT_LOCATIONS,
@@ -79,6 +79,7 @@ test('preset and map teleports share arrival resets and mark the resolved landin
     getLocationLabel: (x, z) => `${x}, ${z}`,
     cityBlocks: { allBlocks: [] },
     trafficSystem: {},
+    nemesis: { observePlayer() {} },
     NYCMapSystem: class {
       constructor(options) { this.onTeleport = options.onTeleport; map = this; }
     },
@@ -103,4 +104,11 @@ test('preset and map teleports share arrival resets and mark the resolved landin
   assert.equal(map.waypoint.x, landed.x, 'map marker follows the safe position returned by the controller');
   assert.equal(map.waypoint.z, landed.z);
   assert.equal(map.waypoint.name, `${landed.x}, ${landed.z}`);
+  landed.succeeded = false;
+  calls.length = 0;
+  const previous = map.waypoint;
+  const result = map.onTeleport(200, 400);
+  assert.equal(result.succeeded, false);
+  assert.equal(map.waypoint, previous, 'a refused arrival does not reset the waypoint/camera');
+  assert.deepEqual(calls, [['teleport', 200, 400, Math.PI, Infinity]]);
 });
