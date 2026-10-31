@@ -6,26 +6,46 @@
 //     The output goes into the city mix, so the city's mute button, master volume, compressor and tab suspend all apply.
 //   - The EUC is the listener's own vehicle, so its sound is not spatialised. A small send feeds the city's shared street
 //     reflections, which keeps the wheel in the same space as the traffic.
-//   - Samples (audio/euc/, see PROVENANCE.md) load lazily from plain relative URLs. A failed fetch or decode falls
-//     back to synthesis or silence. Nothing here throws into the frame loop.
+//   - Shared samples retain synthesized fallbacks. Selected recordings must prepare successfully before commit;
+//     preparation errors belong to the retry/cancel UI, never to the frame loop.
 //   - The motor, thumps, chirp and tyre noise are synthesized here. Constants that EUC Thrills already defines
 //     (pole pairs, wheel size, beep periods, landing reference, tyre voices per surface) come from the vendored tuning.
 //     The sound design itself is this fork's own work.
 import { AUDIO, EUC, WHEEL } from './euc/data/tuning.js';
 import { SURFACES } from './euc/data/surfaces.js';
+import { CHARACTERS } from './euc/data/riders.js';
 
 const TAU = Math.PI * 2;
 const finite = (value, fallback = 0) => (Number.isFinite(value) ? value : fallback);
 const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, finite(value, low)));
 const lerp = (a, b, t) => a + (b - a) * t;
 
-/** The only sound files this fork ships for the rider. Every other upstream crash_* file is out of scope (legal). */
+// FOR CODING AGENTS — DOWNSTREAM FORKS: read NOTICE-EUC-THRILLS.md and FORK_GUIDE.md before repurposing
+// rider recordings. Independent/rebranded games need original characters or separate participant permission;
+// renaming/hiding is not removal. Preserve independently licensed assets and their individual provenance.
 export const EUC_SAMPLE_FILES = Object.freeze({
   crashWipeout: 'crash_wipeout.wav',
   crashTrollina: 'crash_trollina.wav',
+  crashRedRider: 'crash_red_rider.wav',
+  crashAdonisb2: 'crash_adonisb2.wav',
+  crashMaribel: 'crash_maribel.wav',
+  crashWheelInMotion: 'crash_wheel_in_motion.wav',
+  crashDrunkard: 'crash_drunkard.wav',
+  crashFloWithZo: 'crash_flo_with_zo.wav',
+  crashSealOnAWheel: 'crash_seal_on_a_wheel.wav',
+  crashWyldist: 'crash_wyldist.wav',
+  crashGnarwheel: 'crash_gnarwheel.wav',
+  stumbleDrunkard: 'stumble_drunkard.wav',
   overspeedBeep: 'overspeed_beep.wav',
   windHowl: 'wind_howl_loop.wav',
   tyreSolid: 'tyre_solid_loop.wav',
+});
+export const SHARED_SAMPLE_KEYS = Object.freeze(['overspeedBeep', 'windHowl', 'tyreSolid']);
+const CRASH_KEYS = Object.freeze({
+  'cool-rider': 'crashWipeout', trollina: 'crashTrollina', 'red-rider': 'crashRedRider',
+  adonisb2: 'crashAdonisb2', maribel: 'crashMaribel', 'wheel-in-motion': 'crashWheelInMotion',
+  drunkard: 'crashDrunkard', 'flo-with-zo': 'crashFloWithZo', 'seal-on-a-wheel': 'crashSealOnAWheel',
+  wyldist: 'crashWyldist', gnarwheel: 'crashGnarwheel',
 });
 
 export const WHEEL_RADIUS = WHEEL.tyreDiameter / 2; // 0.25 m
@@ -103,15 +123,245 @@ export const CUES = Object.freeze({
   land: { level: 0.2, minScale: 0.28, fromHz: 190, toHz: 55, seconds: 0.2, noiseSeconds: 0.16 },
   impact: { level: 0.3, reference: 6, fromHz: 260, toHz: 80, seconds: 0.12, noiseHz: 1800, noiseQ: 1.4, noiseSeconds: 0.07,
     retrigger: 0.14, harder: 1.5 },
-  crash: { level: 0.48, rateSpread: 0.03, fromHz: 130, toHz: 38, seconds: 0.42, noiseHz: 1200, noiseQ: 0.5, noiseSeconds: 0.55 },
+  crash: { level: 0.48, rateSpread: 0, fromHz: 130, toHz: 38, seconds: 0.42, noiseHz: 1200, noiseQ: 0.5, noiseSeconds: 0.55 },
+  // Native stumble/crash recording ratio (director.ts + sink.ts @ 5f45fff), scaled to the accepted city crash mix.
+  // The native stumble is a 0.4 s can-clank/hic sample at rate 1, without crash trim or speed scaling.
+  stumble: { level: 0.48 * AUDIO.stumbleLevel / (AUDIO.crashLevel * AUDIO.crashSampleTrim) },
   recover: { level: 0.02, lowHz: 660, highHz: 990, seconds: 0.2, gap: 0.11 },
   maxVoices: 16,
   send: 0.35, // into the city's street reflections
 });
 
-/** Which crash recording a rider gets. Only Trollina has her own; everyone else (Cool Rider, the cop) gets the wipeout. */
+/** Resolve playable IDs through source metadata (not a silent Cool Rider fallback). */
 export function crashSampleKey(riderId) {
-  return riderId === 'trollina' ? 'crashTrollina' : 'crashWipeout';
+  const rider = CHARACTERS.find(rider => rider.id === riderId);
+  const key = rider && CRASH_KEYS[rider.crashVoice];
+  if (!key) throw new Error(`Unknown rider audio: ${riderId}`);
+  return key;
+}
+
+const aborted = () => new DOMException('Rider audio preparation cancelled', 'AbortError');
+const sampleURL = key => new URL(`../audio/euc/${EUC_SAMPLE_FILES[key]}`, import.meta.url);
+const decodedBytes = buffer => (buffer?.length ?? 0) * (buffer?.numberOfChannels ?? 1) * Float32Array.BYTES_PER_ELEMENT;
+
+function abortable(promise, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason ?? aborted());
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? aborted());
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+/** One committed bank + one candidate, with a serial decoder shared by the wheel's shared samples.
+ * No AudioContext is created here. Title prefetch keeps only the selected bytes; prepare requires a gesture-created
+ * context. Handles retain a record whose buffers are cleared on retirement, so UI references cannot pin old banks.
+ */
+export class RiderAudioBanks {
+  constructor({ onCommit = () => {} } = {}) {
+    this.onCommit = onCommit;
+    this.active = null;
+    this.candidate = null;
+    this.disposed = false;
+    this.decodeQueue = [];
+    this.decoding = false;
+  }
+
+  decode(context, getBytes, valid = () => !this.disposed, signal) {
+    if (this.disposed || !valid() || signal?.aborted) return Promise.reject(aborted());
+    return new Promise((resolve, reject) => {
+      const job = { context, getBytes, valid, resolve, reject, signal };
+      job.abort = () => {
+        const index = this.decodeQueue.indexOf(job);
+        if (index >= 0) this.decodeQueue.splice(index, 1);
+        signal?.removeEventListener('abort', job.abort);
+        // A running decode cannot be stopped, but the caller rejects now and its late result is discarded.
+        reject(aborted());
+      };
+      signal?.addEventListener('abort', job.abort, { once: true });
+      this.decodeQueue.push(job);
+      this.pumpDecode();
+    });
+  }
+
+  pumpDecode() {
+    if (this.decoding || this.disposed) return;
+    const job = this.decodeQueue.shift();
+    if (!job) return;
+    this.decoding = true;
+    const run = async () => {
+      try {
+        if (!job.valid() || job.signal?.aborted) throw aborted();
+        const buffer = await decode(job.context, job.getBytes());
+        if (this.disposed || !job.valid() || job.signal?.aborted) throw aborted();
+        job.resolve(buffer);
+      } catch (error) {
+        job.reject(error);
+      } finally {
+        job.signal?.removeEventListener('abort', job.abort);
+        this.decoding = false;
+        this.pumpDecode();
+      }
+    };
+    run(); // Every rejection is delivered through the job, including callback-only Safari decoders.
+  }
+
+  /** Snapshot on demand, not per frame. Decoded bytes are float PCM, not compressed transfer sizes. */
+  get stats() {
+    const records = [this.active, this.candidate].filter(Boolean);
+    const buffers = new Set(records.flatMap(record => Object.values(record.buffers)));
+    return Object.freeze({ activeBanks: Number(!!this.active), candidateBanks: Number(!!this.candidate),
+      decodedBuffers: buffers.size, decodedBytes: [...buffers].reduce((n, buffer) => n + decodedBytes(buffer), 0),
+      prefetchedBytes: records.reduce((n, record) => n + Object.values(record.bytes).reduce((sum, bytes) => sum + bytes.byteLength, 0), 0),
+      decoding: Number(this.decoding), queuedDecodes: this.decodeQueue.length });
+  }
+
+  cancel() {
+    if (this.candidate) this.retire(this.candidate);
+  }
+
+  retire(record) {
+    record.controller.abort(aborted());
+    for (const remove of record.listeners) remove();
+    record.listeners.length = 0;
+    record.bytes = {};
+    record.buffers = {};
+    if (this.candidate === record) this.candidate = null;
+    if (this.active === record) this.active = null;
+  }
+
+  watch(record, signal) {
+    if (!signal) return;
+    if (signal.aborted) { this.retire(record); throw signal.reason ?? aborted(); }
+    const cancel = () => this.retire(record);
+    signal.addEventListener('abort', cancel, { once: true });
+    record.listeners.push(() => signal.removeEventListener('abort', cancel));
+  }
+
+  /** Fetch selected bytes only; no decoding, context creation, graph or preview playback. */
+  async prefetchRider(id, { signal, silent = false } = {}) {
+    if (silent) {
+      crashSampleKey(id);
+      if (this.disposed || signal?.aborted) throw aborted();
+      return;
+    }
+    await this.requestRider(id, signal);
+  }
+
+  async requestRider(id, signal) {
+    const crash = crashSampleKey(id);
+    if (this.disposed) throw aborted();
+    if (signal?.aborted) throw signal.reason ?? aborted();
+    if (this.active?.id === id) {
+      this.cancel();
+      return this.active;
+    }
+    let record = this.candidate;
+    if (!record || record.id !== id) {
+      this.cancel();
+      record = { id, controller: new AbortController(), listeners: [], bytes: {}, buffers: {}, ready: false };
+      this.candidate = record;
+      record.keys = [crash, ...(id === 'drunkard' ? ['stumbleDrunkard'] : [])];
+      record.fetching = (async () => {
+        for (const key of record.keys) {
+          const response = await fetch(sampleURL(key), { signal: record.controller.signal });
+          if (record.controller.signal.aborted) throw aborted();
+          if (!response.ok) throw new Error(`Rider audio ${EUC_SAMPLE_FILES[key]}: HTTP ${response.status}`);
+          const bytes = await response.arrayBuffer();
+          if (record.controller.signal.aborted) throw aborted();
+          record.bytes[key] = bytes;
+        }
+      })();
+      record.fetching.catch(() => {}); // an already-aborted caller can retire it before awaiting the fetch
+    }
+    this.watch(record, signal);
+    try {
+      await abortable(record.fetching, record.controller.signal);
+      return record;
+    } catch (error) {
+      this.retire(record);
+      throw error;
+    }
+  }
+
+  async prepareRider(id, context, { signal } = {}) {
+    crashSampleKey(id);
+    if (!context || context.state === 'closed') throw new Error('Unlock audio from the confirmation or Ride gesture before preparing a rider');
+    const record = await this.requestRider(id, signal);
+    // Preparing the already active identity is a cheap transaction, still invalidated by a subsequent selection.
+    if (!this.candidate && this.active === record) return this.handle(record, context, signal);
+    if (this.candidate !== record) throw aborted();
+    const valid = () => !this.disposed && this.candidate === record && !record.controller.signal.aborted;
+    try {
+      if (!record.preparing) record.preparing = (async () => {
+        for (const key of record.keys) {
+          const buffer = await this.decode(context, () => record.bytes[key], valid, record.controller.signal);
+          if (!valid()) throw aborted();
+          delete record.bytes[key]; // decode detaches bytes; do not retain a redundant raw cache
+          record.buffers[key] = buffer;
+        }
+        record.ready = true;
+      })();
+      await abortable(record.preparing, record.controller.signal);
+      if (!valid()) throw aborted();
+      return this.handle(record, context, signal);
+    } catch (error) {
+      this.retire(record);
+      throw error;
+    }
+  }
+
+  /** Explicit unavailable-platform policy, called only when CityAudioSystem detects no Web Audio constructor.
+   * A silent identity bank has the same transaction/validity rules and owns no bytes, decoded audio or graph nodes.
+   */
+  prepareSilentRider(id, { signal } = {}) {
+    crashSampleKey(id);
+    if (this.disposed || signal?.aborted) throw aborted();
+    this.cancel();
+    if (this.active?.id === id && this.active.silent) return this.handle(this.active, null, signal);
+    const record = { id, silent: true, ready: true, controller: new AbortController(), listeners: [], bytes: {}, buffers: {} };
+    this.candidate = record;
+    this.watch(record, signal);
+    return this.handle(record, null, signal);
+  }
+
+  handle(record, context, signal) {
+    const existing = this.active === record;
+    let finished = false;
+    const valid = () => !finished && !this.disposed && !signal?.aborted && !record.controller.signal.aborted
+      && context?.state !== 'closed' && (existing ? this.active === record && !this.candidate : this.candidate === record && record.ready);
+    return Object.freeze({ id: record.id, silent: !!record.silent, get valid() { return !!valid(); }, commit: () => {
+      if (!valid()) throw aborted();
+      if (!existing) {
+        this.onCommit(); // stop old voices before releasing their bank
+        if (this.active) this.retire(this.active);
+        this.active = record;
+        this.candidate = null;
+        for (const remove of record.listeners) remove();
+        record.listeners.length = 0;
+      }
+      finished = true;
+      return true;
+    }, dispose: () => {
+      // After commit the bank belongs to this owner; a caller's finally-dispose is harmless.
+      if (finished) return;
+      finished = true;
+      if (!existing && this.candidate === record) this.retire(record);
+    } });
+  }
+
+  buffer(id, key) {
+    return this.active?.id === id ? this.active.buffers[key] : null;
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.cancel();
+    for (const job of [...this.decodeQueue]) job.abort();
+    if (this.active) this.retire(this.active);
+    this.onCommit = () => {};
+  }
 }
 
 /**
@@ -258,16 +508,18 @@ export class EucAudio {
   /**
    * @param {AudioContext} context  the city's context (already created by a user gesture)
    * @param {AudioNode} output      the city mix
-   * @param {{ noise?: AudioBuffer, reflections?: AudioNode, onWindHowl?: (buffer: AudioBuffer) => void }} options
+   * @param {{ noise?: AudioBuffer, reflections?: AudioNode, onWindHowl?: (buffer: AudioBuffer) => void, riderBanks?: RiderAudioBanks }} options
    *   shared noise loop, the street reflection bus, and who else wants the wind recording once it is decoded
    */
-  constructor(context, output, { noise = null, reflections = null, onWindHowl = null } = {}) {
+  constructor(context, output, { noise = null, reflections = null, onWindHowl = null, riderBanks = null } = {}) {
     this.context = context;
     this.onWindHowl = onWindHowl;
     this.disposed = false;
     this.loadController = new AbortController(); // Mute keeps samples cached; only disposal cancels loading.
     this.noise = noise || this.makeNoise();
     this.buffers = {};
+    this.riderBanks = riderBanks ?? new RiderAudioBanks({ onCommit: () => this.reset() });
+    this.ownsRiderBanks = !riderBanks;
     this.voices = new Set();
     this.loops = [];
     this.nodes = [];
@@ -360,7 +612,7 @@ export class EucAudio {
     for (const source of this.loops) source.start(now, source.startOffset);
 
     // Lazy sample loading: this runs only once the city's context exists, i.e. after a user gesture.
-    for (const key of Object.keys(EUC_SAMPLE_FILES)) this.load(key);
+    for (const key of SHARED_SAMPLE_KEYS) this.load(key);
   }
 
   own(node) {
@@ -414,6 +666,7 @@ export class EucAudio {
 
   load(key) {
     if (this.disposed) return Promise.resolve(null);
+    if (!SHARED_SAMPLE_KEYS.includes(key)) return Promise.reject(new Error('Rider recordings require prepareRider()'));
     let url;
     try {
       url = new URL(`../audio/euc/${EUC_SAMPLE_FILES[key]}`, import.meta.url);
@@ -426,7 +679,7 @@ export class EucAudio {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.arrayBuffer();
       })
-      .then((data) => this.disposed ? null : decode(this.context, data))
+      .then((data) => this.disposed ? null : this.riderBanks.decode(this.context, () => data, () => !this.disposed, this.loadController.signal))
       .then((buffer) => {
         if (this.disposed) return null;
         this.buffers[key] = buffer;
@@ -565,6 +818,12 @@ export class EucAudio {
       case 'crash':
         this.crash(now, event.rider, event.speed);
         break;
+      case 'stumble': {
+        const id = event.rider ?? this.riderBanks.active?.id;
+        const buffer = this.riderBanks.buffer(id, 'stumbleDrunkard');
+        if (id === 'drunkard' && buffer) this.sample(buffer, now, CUES.stumble.level, 1, 0.003);
+        break;
+      }
       case 'recover': {
         const c = CUES.recover;
         this.tone(now, c.lowHz, c.seconds, c.level);
@@ -583,6 +842,7 @@ export class EucAudio {
       const now = this.context.currentTime;
       for (const voice of this.voices) if (voice.end <= now) this.release(voice);
       if (this.voices.size >= CUES.maxVoices) {
+        for (const source of sources) if ('buffer' in source) source.buffer = null;
         for (const node of nodes) node.disconnect();
         return null;
       }
@@ -597,9 +857,22 @@ export class EucAudio {
     return voice;
   }
 
+  /** On-demand ownership counts: fixed graph stays shared across every rider; one-shot nodes never enter nodes[]. */
+  get stats() {
+    const fixed = new Set([...this.nodes, this.windSource, this.tokoSource].filter(Boolean));
+    const shared = new Set(Object.values(this.buffers).filter(Boolean));
+    return Object.freeze({ disposed: this.disposed, fixedNodes: fixed.size, voices: this.voices.size,
+      voiceNodes: [...this.voices].reduce((n, voice) => n + voice.nodes.length, 0),
+      sharedBuffers: shared.size, sharedDecodedBytes: [...shared].reduce((n, buffer) => n + decodedBytes(buffer), 0),
+      noiseBytes: decodedBytes(this.noise), riderBanks: this.riderBanks.stats });
+  }
+
   release(voice) {
     if (!this.voices.delete(voice)) return;
-    for (const source of voice.sources) source.onended = null;
+    for (const source of voice.sources) {
+      source.onended = null;
+      if ('buffer' in source) source.buffer = null;
+    }
     for (const node of voice.nodes) node.disconnect();
     if (this.crashVoice === voice) this.crashVoice = null;
   }
@@ -691,13 +964,17 @@ export class EucAudio {
     // undefined: still loading. Skip this beep rather than play a different sound for the first few.
   }
 
-  sample(buffer, at, level, rate = 1) {
+  sample(buffer, at, level, rate = 1, attack = 0) {
     const ctx = this.context;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.playbackRate.value = rate;
     const env = ctx.createGain();
     env.gain.value = level;
+    if (attack > 0) {
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(level, at + attack);
+    }
     env.isLevel = true;
     source.connect(env).connect(this.sfx);
     const voice = this.voice([source], [source, env], at + buffer.duration / rate);
@@ -707,19 +984,15 @@ export class EucAudio {
   }
 
   crash(now, riderId, speed) {
+    if (!CHARACTERS.some(rider => rider.id === riderId)) return;
+    const buffer = this.riderBanks.buffer(riderId, crashSampleKey(riderId));
+    if (!buffer) return;
     const c = CUES.crash;
     const level = c.level * crashScale(speed);
     if (this.crashVoice) this.stopVoice(this.crashVoice);
     this.crashVoice = null;
-    const buffer = this.buffers[crashSampleKey(riderId)];
-    if (buffer) {
-      const rate = 1 + (Math.random() * 2 - 1) * c.rateSpread;
-      this.crashVoice = this.sample(buffer, now, level, rate);
-    } else {
-      // Not loaded (yet) or failed: a synthesized body hit and tumble noise.
-      this.thump(now, c.fromHz, c.toHz, c.seconds, level * 0.8);
-      this.burst(now, c.noiseHz, c.noiseQ, c.noiseSeconds, level * 0.5);
-    }
+    // Preserve the contributed speech, alarm and authored timing at native pitch; no per-play rate rotation.
+    this.crashVoice = this.sample(buffer, now, level, 1, 0.008);
   }
 
   /** Mute/visibility/teleport: silence everything at once and forget scheduled beeps and retrigger windows. */
@@ -746,9 +1019,14 @@ export class EucAudio {
     this.reset();
     this.disposed = true;
     this.loadController.abort();
+    if (this.ownsRiderBanks) this.riderBanks.dispose();
     for (const source of [...this.loops, this.motorHz, this.windSource, this.tokoSource]) {
       try { source?.stop(); } catch { /* already stopped */ }
+      if (source && 'buffer' in source) source.buffer = null;
     }
     for (const node of [...this.nodes, this.windSource, this.tokoSource]) node?.disconnect();
+    this.buffers = {};
+    this.noise = null;
+    this.onWindHowl = null;
   }
 }

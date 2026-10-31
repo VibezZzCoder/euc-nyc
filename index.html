@@ -66,21 +66,26 @@
   <link rel="modulepreload" href="./js/euc-recovery.js" />
   <link rel="modulepreload" href="./js/barricades.js" />
   <link rel="modulepreload" href="./js/euc-rider.js" />
+  <link rel="modulepreload" href="./js/euc-roster.js" />
+  <link rel="modulepreload" href="./js/rider-preparation.js" />
+  <link rel="modulepreload" href="./js/game-menu.js" />
   <link rel="modulepreload" href="./js/euc-tricks.js" />
   <link rel="modulepreload" href="./js/euc-dynamic.js" />
   <link rel="modulepreload" href="./js/euc-audio.js" />
   <link rel="modulepreload" href="./js/euc-hud.js" />
   <!-- euc:preload:start (tools/vendor-euc.mjs) -->
   <link rel="modulepreload" href="./js/euc/app/oneFootPose.js" />
+  <link rel="modulepreload" href="./js/euc/data/machines.js" />
   <link rel="modulepreload" href="./js/euc/data/rideStyles.js" />
+  <link rel="modulepreload" href="./js/euc/data/riders.js" />
   <link rel="modulepreload" href="./js/euc/data/surfaces.js" />
   <link rel="modulepreload" href="./js/euc/data/tuning.js" />
   <link rel="modulepreload" href="./js/euc/input/actions.js" />
+  <link rel="modulepreload" href="./js/euc/render/appearanceImports.js" />
+  <link rel="modulepreload" href="./js/euc/render/appearanceLoader.js" />
+  <link rel="modulepreload" href="./js/euc/render/appearanceRegistry.js" />
   <link rel="modulepreload" href="./js/euc/render/blockoutKit.js" />
-  <link rel="modulepreload" href="./js/euc/render/coolRiderAtlas.js" />
-  <link rel="modulepreload" href="./js/euc/render/coolRiderLook.js" />
   <link rel="modulepreload" href="./js/euc/render/euc.js" />
-  <link rel="modulepreload" href="./js/euc/render/inkKit.js" />
   <link rel="modulepreload" href="./js/euc/render/machineLook.js" />
   <link rel="modulepreload" href="./js/euc/render/paddle.js" />
   <link rel="modulepreload" href="./js/euc/render/rider.js" />
@@ -90,7 +95,6 @@
   <link rel="modulepreload" href="./js/euc/render/ridingRig.js" />
   <link rel="modulepreload" href="./js/euc/render/rigConsolidation.js" />
   <link rel="modulepreload" href="./js/euc/shared/freeze.js" />
-  <link rel="modulepreload" href="./js/euc/shared/letterPaths.js" />
   <link rel="modulepreload" href="./js/euc/shared/maths.js" />
   <link rel="modulepreload" href="./js/euc/shared/ragdollBoot.js" />
   <link rel="modulepreload" href="./js/euc/shared/ragdollContact.js" />
@@ -193,14 +197,22 @@
       <p class="title-tagline">Ride an electric unicycle through Manhattan.</p>
     </div>
     <div class="title-foot">
-      <div class="title-riders" role="group" aria-label="Choose your rider">
-        <button class="title-rider" data-title-rider="cool-rider" type="button" aria-pressed="true">Cool Rider<kbd>1</kbd></button>
-        <button class="title-rider" data-title-rider="trollina" type="button" aria-pressed="false">Trollina<kbd>2</kbd></button>
-      </div>
+      <button id="title-rider" class="title-rider rider-entry" type="button" aria-haspopup="dialog" aria-controls="game-menu">
+        <span class="rider-entry-icon" aria-hidden="true"><svg class="icon"><use href="#i-euc"/></svg></span>
+        <span class="rider-entry-copy"><span class="rider-entry-label">Choose rider</span><strong id="title-rider-name">Cool Rider</strong></span>
+        <span class="rider-entry-action" aria-hidden="true">Change <svg class="icon icon-sm"><use href="#i-chevron-right"/></svg></span>
+      </button>
       <button id="title-ride" class="title-ride" type="button">Ride</button>
-      <p class="title-hint title-hint--keyboard"><kbd>Enter</kbd> to ride</p>
-      <p class="title-hint title-hint--gamepad"><kbd>A</kbd> to ride · <kbd>LB</kbd> <kbd>RB</kbd> rider</p>
+      <p id="title-status" class="title-status" role="status" aria-live="polite"></p>
+      <p id="title-audio-status" class="title-status" role="status" hidden></p>
+      <div class="title-preparation-actions">
+        <button id="title-retry" type="button" hidden>Retry</button>
+        <button id="title-cancel" type="button" hidden>Cancel</button>
+      </div>
+      <p class="title-hint title-hint--keyboard"><kbd>Enter</kbd> Activate · <kbd>C</kbd> Choose rider</p>
+      <p class="title-hint title-hint--gamepad"><kbd data-pad="A">A</kbd> Activate · <kbd>LB</kbd> <kbd>RB</kbd> Choose rider</p>
       <a class="website-link title-website" href="https://euc.erodmen.com/" target="_blank" rel="noopener noreferrer" aria-label="EUC Thrills website (opens in a new tab)">EUC Thrills website <span aria-hidden="true">↗</span></a>
+      <a id="title-main-menu" class="website-link title-return" href="https://vibezzzcoder.github.io/EUC-thrills/">← EUC Thrills main menu</a>
       <p class="title-credits">Riding and riders from <em>EUC Thrills</em> by VibezZzCoder · The city by Mr.doob · Map data
         © OpenStreetMap contributors</p>
     </div>
@@ -256,12 +268,13 @@
         <svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg><span class="tool-label">Teleport</span><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg>
       </button>
       <button id="btn-open-map" class="tool-btn" type="button" title="Full New York City street map [M]">
-        <svg class="icon" aria-hidden="true"><use href="#i-map"/></svg><span class="tool-label">Map</span><kbd>M</kbd>
+        <svg class="icon" aria-hidden="true"><use href="#i-map"/></svg><span class="tool-label">Map</span><kbd data-keyboard="M" data-gamepad="Start">M</kbd>
       </button>
       <span class="toolbar-divider" aria-hidden="true"></span>
-      <button id="btn-sound" class="tool-btn icon-only" type="button" title="Mute sound [N]" aria-label="Mute sound" aria-pressed="true">
+      <button id="btn-sound" class="tool-btn icon-only" type="button" title="Mute sound [N]" aria-label="Mute sound" aria-pressed="true" aria-describedby="sound-unavailable">
         <svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg>
       </button>
+      <span id="sound-unavailable" class="sound-unavailable" role="status" hidden></span>
       <button id="btn-toggle-hud" class="tool-btn icon-only" type="button" title="Clean view: hide the HUD [H]" aria-label="Hide HUD" aria-pressed="false">
         <svg class="icon icon-hide" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon icon-show" aria-hidden="true"><use href="#i-eye-off"/></svg>
       </button>
@@ -297,23 +310,75 @@
     <button id="minimap-card" class="panel radar" type="button" aria-label="Open the full New York City street map" aria-haspopup="dialog" aria-controls="fullmap-modal" title="Open the full New York City street map [M]">
       <canvas id="minimap-canvas" aria-hidden="true"></canvas>
       <span class="radar-north" aria-hidden="true">N</span>
-      <kbd class="radar-key" aria-hidden="true">M</kbd>
+      <kbd class="radar-key" data-keyboard="M" data-gamepad="Start" aria-hidden="true">M</kbd>
     </button>
   </div>
 
-  <!-- Bottom-Center: Controls Guide & Rider Chooser (keys 1-2, gamepad LB / RB) -->
+  <!-- Bottom-Center: metadata-only Rider picker and pause/menu -->
   <footer class="hud hud-bottom-center">
     <div id="hud-controls-hint" class="controls-hint"></div>
-    <nav id="rider-switch" class="panel mode-switch rider-switch" aria-label="Choose your rider">
-      <span class="mode-indicator" aria-hidden="true"></span>
-      <button id="rider-cool-rider" class="mode-btn active" data-rider="cool-rider" type="button" title="Cool Rider [1]" aria-pressed="true">
-        <svg class="icon" aria-hidden="true"><use href="#i-euc"/></svg><span class="mode-label">Cool Rider</span><kbd>1</kbd>
+    <nav id="rider-switch" class="panel mode-switch rider-switch" aria-label="Rider and game menu">
+      <button id="btn-rider" class="mode-btn" type="button" aria-haspopup="dialog" aria-controls="game-menu" title="Choose rider [C]">
+        <svg class="icon" aria-hidden="true"><use href="#i-euc"/></svg><span>Change rider <span id="rider-button-name">Cool Rider</span></span><kbd data-keyboard="C" data-gamepad="LB / RB">C</kbd>
       </button>
-      <button id="rider-trollina" class="mode-btn" data-rider="trollina" type="button" title="Trollina [2]" aria-pressed="false">
-        <svg class="icon" aria-hidden="true"><use href="#i-euc"/></svg><span class="mode-label">Trollina</span><kbd>2</kbd>
-      </button>
+      <button id="btn-game-menu" class="mode-btn" type="button" aria-haspopup="dialog" aria-controls="game-menu" title="Pause / menu [P / Escape]">Menu <kbd data-keyboard="P" data-gamepad="View">P</kbd></button>
     </nav>
   </footer>
+
+  <dialog id="game-menu" class="game-menu" aria-labelledby="game-menu-heading" data-view="pause">
+    <section data-menu-view="pause">
+      <p class="menu-kicker">NYC Spin-off: EUC Thrills</p>
+      <h2 id="game-menu-heading">Paused</h2>
+      <p id="menu-audio-status" role="status"></p>
+      <button id="menu-resume" class="menu-primary" type="button">Resume riding</button>
+      <button id="menu-rider" class="menu-rider-entry" type="button">Change rider <span aria-hidden="true">→</span></button>
+      <p class="menu-help keyboard-prompt">W / S lean · A / D carve · Space hop · Shift crouch<br>R get up · V camera · M map · C change rider · P menu</p>
+      <p class="menu-help gamepad-prompt">RT / LT lean · LS steer · A hop · X crouch · B get up<br>Y camera · RS orbit · Start map · View menu · LB / RB change rider<br>A activates the focused button · B goes back</p>
+      <p class="menu-help touch-prompt">Use the stick to ride and steer. HOP jumps; hold CHARGE to crouch. Tap Change rider to choose another rider.</p>
+      <div class="menu-departure">
+        <p>Leave NYC and open the main game's menu.</p>
+        <button id="menu-return" type="button">Return to EUC Thrills main menu</button>
+      </div>
+    </section>
+    <section data-menu-view="picker" class="rider-picker" hidden aria-labelledby="rider-heading">
+      <header class="picker-head">
+        <p class="menu-kicker">Find your style <span id="rider-count"></span></p>
+        <h2 id="rider-heading">Choose your rider</h2>
+        <p id="rider-current">Currently riding: Cool Rider</p>
+      </header>
+      <div class="rider-picker-body">
+        <div id="rider-options" class="rider-options" role="group" aria-label="Playable riders"></div>
+        <section class="rider-detail" aria-label="Highlighted rider profile">
+          <p class="rider-detail-kicker">Rider profile <span id="rider-detail-state"></span></p>
+          <h3 id="rider-detail-name"></h3>
+          <p id="rider-detail-blurb"></p>
+          <div class="rider-wheel">
+            <p class="rider-detail-kicker">The wheel</p>
+            <h4 id="rider-wheel-name"></h4>
+            <p id="rider-wheel-blurb"></p>
+          </div>
+          <p id="rider-style-note" class="rider-style-note"></p>
+        </section>
+      </div>
+      <footer class="picker-foot">
+        <p id="rider-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div class="menu-actions">
+          <button id="rider-confirm" class="menu-primary" type="button">Select rider</button>
+          <button id="rider-retry" class="menu-primary" type="button" hidden>Retry</button>
+          <button id="rider-cancel" type="button">Cancel</button>
+        </div>
+        <p class="picker-controls keyboard-prompt">↑ ↓ Browse · Enter Select · Esc Back</p>
+        <p class="picker-controls gamepad-prompt">LS / D-pad Browse · RS Scroll details · A Select / activate · B Back</p>
+        <p class="picker-controls touch-prompt">Tap a rider for details, then Select to change.</p>
+      </footer>
+    </section>
+    <section data-menu-view="return" hidden aria-labelledby="return-heading">
+      <h2 id="return-heading">Return to EUC Thrills main menu?</h2>
+      <p>This will leave NYC and open the main game's menu in this tab.</p>
+      <button id="return-keep" class="menu-primary" type="button">Keep riding</button>
+      <div class="menu-departure"><button id="return-confirm" type="button">Return to main menu</button></div>
+    </section>
+  </dialog>
 
   <!-- Bottom-Right: Wheel Cues, Speed Cluster & Camera Switcher -->
   <div class="hud hud-bottom-right">
@@ -341,7 +406,7 @@
           <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg>
         </button>
         <button id="cam-menu-btn" class="camera-current" type="button" popovertarget="camera-popover" title="All cameras [V cycles]">
-          <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg><span id="hud-active-camera">3rd-Person Chase</span><kbd>V</kbd>
+          <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg><span id="hud-active-camera">3rd-Person Chase</span><kbd data-keyboard="V" data-gamepad="Y">V</kbd>
         </button>
         <button id="cam-next" class="icon-btn" type="button" title="Next camera [V]" aria-label="Next camera">
           <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>
@@ -374,7 +439,7 @@
       </div>
       <p id="booking-note" class="booking-note"></p>
       <button id="booking-release" class="booking-release" type="button" disabled>Back to riding <span aria-hidden="true">→</span></button>
-      <p class="booking-pad-hint">A / Start to ride · B to skip</p>
+      <p class="booking-pad-hint">D-pad / left stick: select · A: activate</p>
     </section>
   </dialog>
   <!-- Get-up prompt after a crash (euc-hud.js). Outside the .hud blocks, so clean view never hides it. -->
@@ -445,7 +510,7 @@
         </div>
       </div>
       <button id="close-fullmap-btn" class="panel tool-btn fullmap-close" type="button" title="Close map [M / Esc]" aria-label="Close map">
-        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span class="tool-label">Close</span><kbd>Esc</kbd>
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span class="tool-label">Close</span><kbd data-keyboard="Esc" data-gamepad="B / Start">Esc</kbd>
       </button>
     </div>
 
@@ -472,16 +537,20 @@
     <div id="fullmap-footer" class="fullmap-footer">
       <div class="panel fullmap-status">
         <span id="fullmap-hover-info">Click to teleport · Drag to pan · Scroll to zoom · Waypoint line shows direction, not a route</span>
-      <span id="fullmap-action-status" class="fullmap-action-status" role="status" aria-live="polite" aria-atomic="true"></span>
-      </div>
-    </div>
+       <span id="fullmap-action-status" class="fullmap-action-status" role="status" aria-live="polite" aria-atomic="true"></span>
+        <p class="fullmap-pad-help gamepad-prompt">LS Cursor · RS Pan · LT / RT Zoom · A Select / teleport<br>X Center · Y All Manhattan · D-pad Controls · B / Start Close · View Menu</p>
+       </div>
+     </div>
 
     <!-- Credits the licences require to be shown in the game itself (see README "License and data") -->
     <p id="fullmap-credits" class="panel fullmap-credits">
       Map data: <a href="https://opendata.cityofnewyork.us/" target="_blank" rel="noopener noreferrer">NYC Open Data</a> ·
       © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a> (ODbL)<br />
       City: <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener noreferrer">Slop New York</a> by Mr.doob (MIT) ·
-      EUC riding &amp; riders: <a href="https://github.com/VibezZzCoder/EUC-thrills" target="_blank" rel="noopener noreferrer"><i>EUC Thrills</i></a> by VibezZzCoder (MIT, CC BY 4.0)
+      EUC riding: <a href="https://github.com/VibezZzCoder/EUC-thrills" target="_blank" rel="noopener noreferrer"><i>EUC Thrills</i></a> by VibezZzCoder (MIT). Assets from <i>EUC Thrills</i> by VibezZzCoder — CC BY 4.0 —
+      <a href="https://github.com/VibezZzCoder/EUC-thrills" target="_blank" rel="noopener noreferrer">source</a>, excluding real identities, supplied logos, contributed recordings, SMLS and generated vocals as detailed in the
+      <a href="NOTICE-EUC-THRILLS.md" target="_blank" rel="noopener noreferrer">rights notice</a>.
+      Independent forks: create original characters; keeping the name grants no participant rights. <a href="FORK_GUIDE.md" target="_blank" rel="noopener noreferrer">Fork guide</a>.
     </p>
 
     <div class="panel fullmap-legend">

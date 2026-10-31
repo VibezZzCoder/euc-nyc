@@ -22,8 +22,10 @@ function buttonValue(pad, index) {
 // Any stick past the dead zone or any pressed button: the player is using this pad (on-screen prompts follow it)
 function active(pad, pressed) {
   if (pressed.some(Boolean)) return true;
-  for (let i = 0; i < 4; i++) if (Math.abs(axis(pad.axes?.[i])) > 0.5) return true;
-  return false;
+  return [0, 2].some((offset) => {
+    const s = stick(pad, offset);
+    return Math.hypot(s.x, s.y) > 0;
+  }) || buttonValue(pad, 6) > 0.01 || buttonValue(pad, 7) > 0.01;
 }
 
 function buttons(pad) {
@@ -46,6 +48,9 @@ class GamepadControls {
     this.syncButtons = true;
     this.revision = 0;
     this.wasActive = false;
+    this.mapOwned = false;
+    this.mapNeedsNeutral = true;
+    this.mapFocus = null;
     this.focused = typeof document.hasFocus !== 'function' || document.hasFocus();
 
     window.addEventListener('blur', () => {
@@ -57,6 +62,7 @@ class GamepadControls {
       this.reset();
     });
     document.addEventListener('visibilitychange', () => this.reset());
+    window.addEventListener('resize', () => this.reset());
   }
 
   readPad() {
@@ -87,6 +93,7 @@ class GamepadControls {
 
   reset() {
     this.revision++;
+    this.mapNeedsNeutral = true;
     this.controller.clearGamepadInput();
     const pad = this.readPad();
     this.suppressAnalog(pad);
@@ -108,9 +115,18 @@ class GamepadControls {
 
   update(dt) {
     const pad = this.readPad();
+    // Map polling is independent of the riding gate. The host supplies its authoritative owner,
+    // not merely whether a covered map happens to remain visible behind another dialog.
+    const mapOwned = Boolean(this.callbacks.isMapOpen?.());
+    if (mapOwned !== this.mapOwned) {
+      this.mapOwned = mapOwned;
+      this.mapFocus = document.activeElement;
+      this.reset();
+    }
     const connected = Boolean(pad);
     const changedPad = pad ? pad.index !== this.padIndex || pad.id !== this.padId : this.connected;
     if (changedPad) {
+      this.mapNeedsNeutral = true;
       this.controller.clearGamepadInput();
       this.padIndex = pad ? pad.index : null;
       this.padId = pad ? pad.id : null;
@@ -131,16 +147,19 @@ class GamepadControls {
     const edge = (i) => pressed[i] && !this.previousButtons[i] && !this.suppressedButtons[i];
     const held = (i) => pressed[i] && !this.suppressedButtons[i];
     // Capture edges before callbacks: changing rider or opening the map may synchronously call reset().
-    const toggleMap = edge(9), closeMap = edge(1);
+    const toggleMap = edge(9), toggleMenu = edge(8), closeMap = edge(1);
     const cycleRider = Number(Boolean(edge(5))) - Number(Boolean(edge(4)));
     const cycleCamera = edge(3), recenter = edge(11);
+    const mapActions = { activate: edge(0), recenter: edge(2), fit: edge(3),
+      navigate: Number(Boolean(edge(13) || edge(15))) - Number(Boolean(edge(12) || edge(14))) };
     const wasActive = this.wasActive;
     this.wasActive = active(pad, pressed);
     this.previousButtons = pressed;
 
     const target = document.activeElement;
     const typing = isTypingInField({ target }) || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-    if (!this.focused || document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || typing) {
+    if (!this.focused || document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || (typing && !mapOwned)) {
+      this.mapNeedsNeutral = true;
       this.suppressedButtons = pressed.slice();
       // A stick/partial trigger may move after focus was lost (or while typing). Snapshot every
       // blocked poll so restoring focus cannot treat that displacement as fresh riding/look input.
@@ -151,9 +170,45 @@ class GamepadControls {
 
     if (this.wasActive && !wasActive) this.callbacks.onActivity?.();
     const revision = this.revision;
-    if (toggleMap) {
+    if (mapOwned) {
       this.controller.clearGamepadInput();
-      this.suppressAnalog(pad);
+      if (this.mapFocus !== target) {
+        this.mapFocus = target;
+        this.mapNeedsNeutral = true;
+      }
+      const movement = stick(pad, 0), look = stick(pad, 2);
+      const neutral = !Math.hypot(movement.x, movement.y, look.x, look.y) &&
+        pressed.every((value, i) => !value && buttonValue(pad, i) <= 0.01);
+      if (this.mapNeedsNeutral) {
+        this.suppressAnalog(pad);
+        this.suppressedButtons = pressed.slice();
+        if (neutral) {
+          this.mapNeedsNeutral = false;
+          this.callbacks.onMapInput?.({ movement, look, zoom: 0, actions: {}, neutral: true }, 0);
+        }
+        return;
+      }
+      // Closing or changing owner consumes the entire sample, including simultaneous A/sticks.
+      if (toggleMenu || toggleMap || closeMap) {
+        this.reset();
+        if (toggleMenu) this.callbacks.onToggleMenu?.();
+        else if (toggleMap) this.callbacks.onToggleMap?.();
+        else this.callbacks.onCloseMap?.();
+        return;
+      }
+      this.callbacks.onMapInput?.({ movement, look,
+        zoom: buttonValue(pad, 7) - buttonValue(pad, 6), neutral,
+        actions: mapActions
+      }, Number.isFinite(dt) ? Math.max(0, Math.min(0.05, dt)) : 0);
+      return;
+    }
+    if (toggleMenu) {
+      this.reset();
+      this.callbacks.onToggleMenu?.();
+      return;
+    }
+    if (toggleMap) {
+      this.reset();
       this.callbacks.onToggleMap?.();
       return;
     }

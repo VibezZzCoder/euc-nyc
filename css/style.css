@@ -407,7 +407,7 @@ body::after {
 /* The hint names the device in use (main.js sets body[data-input]); touch has the button and nothing else */
 .title-hint--gamepad,
 body[data-input='gamepad'] .title-hint--keyboard,
-body.touch-enabled .title-hint { display: none; }
+body[data-input='touch'] .title-hint { display: none; }
 body[data-input='gamepad'] .title-hint--gamepad { display: block; }
 
 .title-credits {
@@ -428,10 +428,157 @@ body[data-input='gamepad'] .title-hint--gamepad { display: block; }
 }
 .title-website + .title-credits { margin-top: 0; }
 
+/* Shared confirmed-rider/pause flow. Names and swatches are DOM only; the city owns the only preview. */
+#title-rider {
+  width: min(340px, 100%); min-height: 70px; padding: 12px 16px; text-align: left;
+  background: linear-gradient(120deg, rgba(255,194,26,.10), rgba(18,20,24,.90));
+  border: 1px solid rgba(255,194,26,.46); border-radius: 16px; white-space: normal;
+  box-shadow: 0 8px 28px rgba(0,0,0,.2);
+}
+#title-rider:hover { border-color: var(--taxi); background-color: rgba(255,194,26,.1); }
+.rider-entry-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: rgba(255,194,26,.12); color: var(--taxi); flex: none; }
+.rider-entry-copy { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.rider-entry-label { font-size: 11px; color: var(--taxi); font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+#title-rider-name { color: var(--text); font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.rider-entry-action { display: flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 12px; flex: none; }
+.title-return { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; }
+.title-status { max-width: 360px; font-size: 12px; line-height: 1.4; color: var(--text); }
+.title-status:empty, .title-preparation-actions:has(button:not([hidden])) ~ .title-hint { display: none; }
+.title-status[hidden], .sound-unavailable[hidden] { display: none; }
+.sound-unavailable {
+  position: absolute; right: 0; top: calc(100% + 8px);
+  max-width: min(280px, calc(100vw - var(--safe-left) - var(--safe-right)));
+  padding: 8px 12px; border: 1px solid var(--glass-border); border-radius: 10px;
+  background: var(--glass-strong); color: var(--text); font-size: 11px; line-height: 1.4;
+  pointer-events: none;
+}
+.title-preparation-actions { display: flex; gap: 8px; }
+.title-preparation-actions button { min-height: 44px; padding: 6px 16px; background: var(--glass-strong); color: var(--text); border: 1px solid var(--glass-border); border-radius: 10px; font: inherit; }
+.title-preparation-actions button[hidden] { display: none; }
+.title-preparation-actions button:focus-visible, .title-return:focus-visible { outline: 2px solid var(--taxi); outline-offset: 2px; }
+.game-menu {
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
+  margin: auto max(12px, env(safe-area-inset-right)) auto auto;
+  padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--glass-strong);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+  font: 14px/1.45 var(--font-sans);
+}
+.game-menu:not([open]), .game-menu [hidden] { display: none; }
+.game-menu::backdrop { background: rgba(0, 0, 0, .36); }
+.game-menu h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.2; }
+.game-menu p { margin: 8px 0; overflow-wrap: anywhere; }
+.game-menu button {
+  display: block; width: 100%; min-height: 44px; margin-top: 8px; padding: 9px 12px;
+  border: 1px solid var(--glass-border); border-radius: 10px;
+  color: var(--text); background: var(--hover); font: 600 14px/1.3 var(--font-sans);
+  cursor: pointer; white-space: normal; overflow-wrap: anywhere;
+}
+.game-menu button:hover { background: rgba(255,255,255,.14); }
+.game-menu button.menu-primary { background: var(--taxi); color: var(--taxi-ink); }
+.game-menu button:disabled, .title-ride:disabled, #title-rider:disabled { opacity: .6; cursor: wait; }
+.game-menu button:focus-visible, .game-menu[data-pad-focus='true'] button:focus { outline: 2px solid var(--taxi); outline-offset: 2px; }
+.menu-kicker { color: var(--taxi); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.game-menu .menu-help { color: var(--text-2); font-size: 12px; }
+.menu-departure { margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--divider); }
+.menu-departure p { color: var(--text-2); font-size: 12px; }
+.menu-actions { display: flex; gap: 8px; }
+.fullmap-pad-help { padding-top: 8px; margin: 8px 0 0; border-top: 1px solid var(--divider); color: var(--text-2); font-size: 11px; line-height: 1.65; text-align: center; white-space: normal; }
+.game-menu[data-view='picker'] {
+  width: min(560px, calc(100% - 32px)); height: min(620px, calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))));
+  padding: 0; overflow: hidden; border-radius: 22px;
+  background: linear-gradient(145deg, rgba(34,36,39,.98), rgba(14,17,21,.98));
+  border-color: rgba(255,255,255,.15); box-shadow: 0 24px 90px rgba(0,0,0,.5);
+}
+.rider-picker { height: 100%; display: grid; grid-template-rows: auto minmax(0,1fr) auto; min-height: 0; }
+.picker-head { padding: 22px 24px 16px; background: linear-gradient(105deg, rgba(255,194,26,.075), transparent); }
+.game-menu .picker-head .menu-kicker { display: flex; justify-content: space-between; margin: 0 0 8px; font-size: 10px; letter-spacing: .12em; font-weight: 750; }
+#rider-count { color: var(--text-3); letter-spacing: .03em; font-weight: 500; }
+.game-menu .picker-head h2 { font-size: 27px; letter-spacing: -.035em; margin: 0; }
+.game-menu #rider-current { color: var(--text-2); font-size: 12px; margin: 8px 0 0; }
+.rider-picker-body { display: grid; grid-template-columns: minmax(0,.95fr) minmax(0,1.1fr); min-height: 0; border-block: 1px solid var(--divider); }
+.rider-options { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 10px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.24) transparent; }
+.game-menu .rider-option { display: grid; grid-template-columns: 13px minmax(0,1fr) auto; min-height: 48px; gap: 10px; align-items: center; text-align: left; margin: 0 0 5px; padding: 10px; border-color: transparent; background: transparent; border-radius: 10px; font-size: 13px; }
+.game-menu .rider-option:hover { background: rgba(255,255,255,.06); }
+.game-menu .rider-option[aria-pressed='true'] { border-color: rgba(255,194,26,.6); background: rgba(255,194,26,.09); }
+.game-menu .rider-option:focus-visible, .game-menu[data-pad-focus='true'] .rider-option:focus { outline-offset: -3px; }
+.rider-swatch { width: 12px; height: 12px; border: 1px solid rgba(255,255,255,.6); border-radius: 50%; }
+.rider-active { color: var(--taxi); font-size: 10px; font-weight: 500; }
+.rider-detail { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 22px; border-left: 1px solid var(--divider); background: rgba(0,0,0,.1); scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.24) transparent; }
+.game-menu .rider-detail-kicker { margin: 0 0 10px; color: var(--text-3); font-size: 10px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+#rider-detail-state { display: block; color: var(--taxi); font-size: 10px; margin-top: 5px; letter-spacing: .025em; text-transform: none; }
+.rider-detail h3 { margin: 0 0 12px; font-size: 23px; line-height: 1.1; letter-spacing: -.03em; }
+.game-menu #rider-detail-blurb, .game-menu #rider-wheel-blurb { color: var(--text-2); font-size: 12px; line-height: 1.65; margin: 0; }
+.rider-wheel { border-top: 1px solid var(--divider); margin-top: 20px; padding-top: 16px; }
+.rider-wheel h4 { margin: 0 0 7px; font-size: 14px; font-weight: 650; line-height: 1.35; }
+.game-menu .rider-style-note { margin: 18px 0 0; padding-left: 10px; border-left: 2px solid rgba(255,194,26,.45); font-size: 10px; line-height: 1.6; color: var(--text-3); }
+.picker-foot { padding: 14px 22px 16px; }
+.game-menu #rider-status { margin: 0 0 10px; min-height: 32px; font-size: 12px; line-height: 1.4; color: var(--text-2); }
+.picker-foot .menu-actions { gap: 10px; }
+.picker-foot .menu-actions button { margin-top: 0; min-height: 46px; }
+.picker-foot .menu-actions button:not(.menu-primary) { width: 35%; flex: none; background: transparent; }
+.game-menu .picker-controls { margin: 10px 0 0; color: var(--text-3); font-size: 10px; text-align: center; }
+.game-menu .menu-rider-entry { display: flex; align-items: center; justify-content: space-between; border-color: rgba(255,194,26,.35); background: rgba(255,194,26,.06); }
+.gamepad-prompt, .touch-prompt, body[data-input='gamepad'] .keyboard-prompt, body[data-input='touch'] .keyboard-prompt { display: none; }
+body[data-input='gamepad'] .gamepad-prompt, body[data-input='touch'] .touch-prompt { display: block; }
+kbd[hidden], body[data-input='gamepad'] .cam-btn kbd { display: none !important; }
+.game-menu[data-state='error'] #rider-status { color: var(--bad); }
+.gauge-label { overflow-wrap: anywhere; }
+#rider-button-name { display: block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--text-2); }
+body.game-menu-open .getup-prompt, body.game-menu-open .chase-banner { visibility: hidden; }
+@media (max-width: 500px) and (min-height: 501px) {
+  .game-menu { margin: auto auto max(12px, env(safe-area-inset-bottom)); padding: 14px; }
+  .title-credits { margin-top: 4px; }
+  .title-head .brand-badge { margin-bottom: 6px; }
+}
+@media (max-height: 500px) {
+  .game-menu { width: min(330px, calc(100% - 24px)); padding: 12px; }
+  .game-menu h2 { font-size: 18px; margin-bottom: 6px; }
+  .game-menu .menu-help { font-size: 11px; }
+  .menu-departure { margin-top: 12px; padding-top: 8px; }
+  .title-status { flex-basis: 100%; }
+  .title-return { font-size: 12px; }
+}
+@media (max-width: 560px) and (min-height: 501px) {
+  .game-menu[data-view='picker'] { width: calc(100% - 24px); margin: auto; }
+  .picker-head { padding: 16px 18px 12px; }
+  .game-menu .picker-head h2 { font-size: 23px; }
+  .rider-picker-body { grid-template-columns: 1fr; grid-template-rows: minmax(88px,.8fr) minmax(0,1.4fr); }
+  .rider-options { padding: 7px 12px; }
+  .game-menu .rider-option { min-height: 44px; margin-bottom: 2px; padding-block: 8px; }
+  .rider-detail { border-left: 0; border-top: 1px solid var(--divider); padding: 14px 18px; }
+  .rider-detail h3 { font-size: 20px; margin-bottom: 8px; }
+  .game-menu .rider-detail-kicker { margin-bottom: 6px; }
+  #rider-detail-state { display: inline; margin-left: 8px; }
+  .rider-wheel { margin-top: 12px; padding-top: 10px; }
+  .picker-foot { padding: 12px 16px; }
+}
+@media (max-height: 500px) {
+  #title-rider { min-height: 54px; padding: 8px 12px; }
+  .game-menu[data-view='picker'] { width: min(660px, calc(100% - 24px)); margin: auto; }
+  .picker-head { padding: 12px 18px 10px; }
+  .game-menu .picker-head .menu-kicker { margin-bottom: 4px; }
+  .game-menu .picker-head h2 { font-size: 21px; }
+  .game-menu #rider-current { margin-top: 4px; }
+  .rider-detail { padding: 12px 16px; }
+  .picker-foot { padding: 10px 16px; }
+  .game-menu #rider-status { min-height: 0; margin-bottom: 7px; }
+  .game-menu .picker-controls { margin-top: 7px; }
+}
+
 /* While the title is up, the game's HUD and touch controls are out of the way */
 body.title-open .hud,
 body.title-open #touch-controls,
 body.title-open .getup-prompt { visibility: hidden; }
+/* Keep the in-world rider as the preview without inactive title actions behind the profile. */
+body.title-open.game-menu-open .title-head, body.title-open.game-menu-open .title-foot { visibility: hidden; }
 
 /* Short screens (a phone in landscape): tighter, with the rider and Ride side by side so the rider stays in view */
 @media (max-height: 500px) {
@@ -1807,6 +1954,7 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 6px;
+  background: var(--grain), var(--glass-strong);
 }
 
 .fullmap-search-results[hidden] { display: none; }
@@ -1879,11 +2027,13 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
   bottom: var(--safe-bottom);
   translate: -50% 0;
   display: flex;
+  width: max-content;
   max-width: min(560px, calc(100% - 2 * var(--edge) - 2 * 200px));
 }
 
 .fullmap-status {
   min-width: 0;
+  width: 100%;
   padding: 10px 16px;
   font-size: 12.5px;
   font-weight: 500;
@@ -1891,6 +2041,7 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  background: var(--grain), var(--glass-strong);
 }
 
 .fullmap-action-status { display: block; white-space: normal; }
@@ -2228,10 +2379,10 @@ body.booking-open .hud, body.booking-open .getup-prompt, body.booking-open .chas
 /* ------------------------------------------------------------------------------------------------------------------
    The HUD on a touch screen: no key caps, no guide row, the speed and camera at the top right
    ------------------------------------------------------------------------------------------------------------------ */
-body.touch-enabled .controls-hint,
+body[data-input='touch'] .controls-hint,
 body.touch-enabled .radar,
 body.touch-enabled .gauge-top,
-body.touch-enabled kbd,
+body[data-input='touch'] kbd,
 body.touch-enabled .toolbar-divider,
 body.touch-enabled .seg-label { display: none; }
 
@@ -2244,10 +2395,14 @@ body.touch-enabled .tool-label { display: none; }
 body.touch-enabled .hud-bottom-center { bottom: max(var(--edge), env(safe-area-inset-bottom)); }
 body.touch-enabled .mode-label { display: block; font-size: 10px; }
 body.touch-enabled .mode-btn { width: 62px; height: 48px; padding: 0; flex-direction: column; justify-content: center; gap: 3px; }
-body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 62px); right: max(var(--edge), env(safe-area-inset-right)); bottom: auto; }
+body.touch-enabled #btn-rider { width: 96px; height: auto; min-height: 48px; padding: 4px; }
+body.touch-enabled #btn-rider > .icon { display: none; }
+body.touch-enabled #rider-button-name { max-width: 88px; }
+body.touch-enabled .sound-unavailable { max-width: 230px; }
+body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 62px + var(--sound-notice-space, 0px)); right: max(var(--edge), env(safe-area-inset-right)); bottom: auto; }
 body.touch-enabled .wheel-cues { order: 2; }
 /* Leave the top-right speed/camera/heat stack clear, and the centred get-up prompt below. */
-body.touch-enabled .chase-banner { top: calc(max(var(--edge), env(safe-area-inset-top)) + 248px); }
+body.touch-enabled .chase-banner { top: calc(max(var(--edge), env(safe-area-inset-top)) + 248px + var(--sound-notice-space, 0px)); }
 body.touch-enabled .cluster { width: 230px; }
 /* Speed stays on screen on every phone and tablet, compact: mph large, km/h beside it */
 body.touch-enabled .gauge { display: block; padding: 8px 12px 9px; }
@@ -2263,6 +2418,19 @@ body.touch-enabled .map-controls .icon-btn { width: 44px; height: 44px; }
 /* Keep Safari's search-focus zoom from changing the game's presentation; leave user zoom available. */
 body.touch-enabled .fullmap-search { font-size: 16px; }
 body.touch-enabled .pop-item { min-height: 44px; }
+@media (max-width: 560px) {
+  /* Pad help plus credits can consume a portrait phone's lower half. Use the same
+     header-side horizontal actions as short landscape instead of lifting a tall stack over Close. */
+  .fullmap-modal[data-input='gamepad'] .map-controls { top: calc(var(--safe-top) + 62px); bottom: auto; flex-direction: row; translate: none; }
+  .fullmap-modal[data-input='gamepad'] .map-zoom { flex-direction: row; }
+  .fullmap-modal[data-input='gamepad'] .map-controls .icon-btn { width: 44px; height: 44px; }
+  .fullmap-modal[data-input='gamepad'] .fullmap-search-results { margin-top: 72px; }
+}
+@media (max-width: 820px) {
+  /* Keep compact toolbar targets at their touch-safe width; device-specific map/menu help
+     stays visible in its own panel, and title/dialog prompts follow the active device. */
+  body.touch-enabled .hud-top-right kbd, body.touch-enabled .camera-current kbd { display: none; }
+}
 
 @media (min-height: 501px) {
   /* Street signs end 254px above the safe bottom; the hop button starts below
@@ -2286,7 +2454,7 @@ body.touch-enabled .pop-item { min-height: 44px; }
 
 @media (max-width: 381px) {
   body.touch-enabled .toolbar { width: 194px; height: auto; flex-wrap: wrap; justify-content: center; }
-  body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 114px); }
+  body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 114px + var(--sound-notice-space, 0px)); }
   body.touch-enabled .touch-look-hint {
     left: max(var(--edge), env(safe-area-inset-left));
     width: 58px;
@@ -2295,21 +2463,48 @@ body.touch-enabled .pop-item { min-height: 44px; }
   }
   body.touch-enabled .touch-look-hint-full { display: none; }
   body.touch-enabled .touch-look-hint-short { display: block; white-space: nowrap; }
-  body.touch-enabled .chase-banner { top: calc(max(var(--edge), env(safe-area-inset-top)) + 300px); }
+  body.touch-enabled .chase-banner { top: calc(max(var(--edge), env(safe-area-inset-top)) + 300px + var(--sound-notice-space, 0px)); }
 }
 
 @media (max-height: 500px) {
   /* A vertical map stack overlaps Close on short windows. Keep every action below the header. */
   .map-controls { top: calc(var(--safe-top) + 62px); bottom: auto; flex-direction: row; translate: none; }
   .map-controls .map-zoom { flex-direction: row; }
-  /* Results start below that horizontal row, above the footer, and scroll without covering actions. */
-  .fullmap-search-results { margin-top: 72px; max-height: min(264px, calc(100dvh - var(--safe-top) - var(--safe-bottom) - 240px)); }
+  .map-controls .icon-btn { width: 44px; height: 44px; }
+  /* Height, not phone width, owns this layout: a short-wide viewport must never inherit the
+     desktop's narrow side column. Keep all attribution, with scroll access if text size grows. */
+  .fullmap-credits {
+    left: var(--safe-left); right: var(--safe-right); bottom: var(--safe-bottom);
+    width: auto; max-width: none;
+    max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 176px);
+    overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere;
+  }
+  .fullmap-footer {
+    left: var(--safe-left); right: var(--safe-right); translate: none;
+    width: fit-content; margin-inline: auto;
+    max-width: calc(100% - var(--safe-left) - var(--safe-right));
+    bottom: calc(var(--safe-bottom) + var(--map-credits-height, 70px) + 10px);
+  }
+  .fullmap-legend { display: none; }
+  /* Results start below the header + horizontal zoom row; layoutStatus() already measures
+     credits and wrapped action feedback, so reserve both instead of overlapping the footer. */
+  .fullmap-search-results {
+    margin-top: 72px;
+    max-height: min(264px, calc(100dvh - var(--safe-top) - var(--safe-bottom) - var(--map-credits-height, 70px) - var(--map-status-height, 40px) - 142px));
+  }
+  /* In short controller layouts, search is the active task: retire the long general
+     legend while results are open, keep its aria-live instructions, and expose an entire target. */
+  .fullmap-modal[data-input='gamepad']:has(#fullmap-search-results:not([hidden]) button) .fullmap-pad-help { display: none; }
+  .fullmap-modal[data-input='gamepad'] .fullmap-search-results {
+    max-height: max(60px, min(264px, calc(100dvh - var(--safe-top) - var(--safe-bottom) - var(--map-credits-height, 70px) - var(--map-status-height, 40px) - 142px)));
+  }
+  .fullmap-modal[data-input='gamepad'] .fullmap-search-results:has(button) #fullmap-search-summary { display: none; }
   body.touch-enabled .hud-bottom-left { display: none; }
-  body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 58px); }
+  body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 58px + var(--sound-notice-space, 0px)); }
   body.touch-enabled .gauge-meter { display: none; }
   body.touch-enabled .chase-banner {
     left: 32%;
-    top: calc(max(var(--edge), env(safe-area-inset-top)) + 84px);
+    top: calc(max(var(--edge), env(safe-area-inset-top)) + 84px + var(--sound-notice-space, 0px));
     max-width: calc(62vw - 24px);
     font-size: 14px;
     padding: 8px 16px;

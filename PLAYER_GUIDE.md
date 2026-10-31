@@ -7,6 +7,10 @@ of Mr.doob's three.js New York.
 The game is about the freedom to explore Manhattan. Tricks and skateparks are optional ways to enjoy the ride;
 there is no required trick progression or scoring objective.
 
+**Full-roster update (2026-10-31):** the eleven-rider picker includes rider and wheel profiles, selected sounds,
+NYC pause/return controls and a controller-operated map cursor. The controls below cover keyboard, gamepad and touch.
+Main-game menu launch integration and coordinated cross-game round trips remain pending.
+
 ## What you need
 
 An up-to-date browser with hardware acceleration. WebGPU is preferred; the renderer automatically tries WebGL2 if
@@ -21,8 +25,15 @@ to reach **Back to riding**. Foldable-sized layouts have automated coverage; phy
 
 ## Starting
 
-After loading, the title screen shows the city with your rider in it. Pick **Cool Rider** or **Trollina**, then
-press **Ride** (or Enter, or A on a gamepad). You can still change rider at any time while riding.
+After loading, the title screen shows the city with your current rider in it. Open **Choose rider** to browse the
+roster, rider profiles and original wheel descriptions. Your current rider is marked **Riding**; **Browsing** shows
+whose details you are reading. Use the named **Select** button to change, or **Cancel** to keep your current rider.
+Browsing neither constructs another rig nor plays crash samples. Wait for preparation to finish before choosing **Ride** (or Enter / gamepad A
+on the Ride action). Audio/worker preparation failures offer **Retry** or **Cancel**. An appearance-module download
+failure offers **Reload NYC** because its failed import may stay cached in the current page. Reload keeps your
+committed rider/checkpoint and corrects any older URL rider override; the pending choice is never saved. You can
+also cancel or choose a different rider. Leaving/reloading before Ride does not authorize a new position save.
+The same confirmed picker is available from gameplay; its dialog holds riding input while you choose.
 
 The loader names the current stage and counts completed shader batches. After shader compilation, it prepares shadows
 and waits for the first graphics frame before showing the title.
@@ -39,9 +50,28 @@ starts when you choose Ride.
 The title screen links to the [EUC Thrills website](https://euc.erodmen.com/). While riding, **Website ↗** sits beside
 **GitHub ↗** in the top-left header. Both open in a new tab, keeping the game open.
 
+### Pause and return to EUC Thrills
+
+Open **Menu** with `Escape` / `P`, gamepad **Back / View (button 8)**, or the on-screen menu button. Choose
+**Resume riding** to continue. Start still opens the map. In a picker/map/return dialog, Escape/B dismisses that
+dialog first; booking has its own controls and cannot be skipped with those shortcuts.
+
+The menu, Rider picker and full map freeze riding, traffic and pursuit clocks and silence playback. Returning to
+the city does not catch up the paused time. Keyboard focus returns to the control that opened a dialog; click/tap
+the city canvas to resume riding keys after using a button. Held keys/buttons must be released before fresh actions.
+
+The separated **Return to EUC Thrills main menu** action asks **Return to EUC Thrills main menu?** and explains that
+NYC will close in this tab. **Keep riding** is initially focused; Escape/B cancels back to the menu. **Return to main
+menu** requires a separate fresh confirmation. On the title screen, **← EUC Thrills main menu** is a direct same-tab
+link, distinct from the website links above. Leaving before Ride does not authorize a new NYC save.
+
+The reference main game opens its top-level menu at **https://vibezzzcoder.github.io/EUC-thrills/**, without a special
+menu query. Offering NYC from that menu and verifying round trips against the updated main game are still pending.
+NYC and the main game keep separate saves; no cross-game progress or rider transfer is promised.
+
 ## Riding
 
-Both riders' wheels have rubber tread, moulded sidewalls and detailed metal hubs. These turn with the wheel's actual
+The wheels have rubber tread, moulded sidewalls and detailed metal hubs. These turn with the wheel's actual
 travel, including in reverse; the shell and pedals stay with the rider.
 
 You ride an electric unicycle through Manhattan, from the Battery to Harlem. A few things are specific to a real
@@ -83,7 +113,9 @@ After a landed 180, rolling backward continuously for at least **0.8 seconds and
 Ordinary reversing from a standstill does not count. These are trick labels, not a points/leaderboard mode.
 
 Try the clear central line at **Thomas Jefferson Skatepark** or the flat run-ups at **Pier 62**. **Action** and
-**Side Tracking** are useful for watching the foot lift and tuck. Both playable riders support the same tricks.
+**Side Tracking** are useful for watching the foot lift and tuck. The full roster uses the same trick controls;
+all-eleven native riding/one-foot/landing/crash/recovery and booking checks passed on both graphics backends.
+Animation polish and costume/mark fidelity still benefit from owner playtest.
 
 ### Crashes
 
@@ -210,14 +242,17 @@ siren gets louder the closer he is, his blip flashes on the radar, and at night 
 | Hop | `Space` | A |
 | Crouch (charge a hop) | `Shift` | X |
 | Get up after a crash | `R` | B |
-| Rider | `1` / `2` | LB / RB |
+| Rider picker | `C`; legacy `1` / `2` open/highlight Cool Rider / Trollina | LB / RB open/highlight picker |
 | Camera | `V` cycles (`Shift`+`V` back), `5`–`0` pick | Y cycles; right stick orbits |
 | Orbit the camera | Drag with the mouse | Right stick |
 | Map | `M` | Start |
+| Pause / menu | `Escape` or `P` | Back / View (button 8) |
 | Sound on / off | `N` | |
 | Clean view (hide the HUD) | `H` | |
 
-The hints at the bottom of the screen follow whichever you used last.
+The hints at the bottom of the screen follow whichever you used last. `1` / `2` and LB/RB do **not** immediately
+switch riders: confirm in the picker. Camera keys `5`–`0`
+are unchanged. Release held riding controls at menu boundaries and use fresh confirmations so selecting never hops.
 
 ### Touch screens
 
@@ -229,8 +264,36 @@ The hints at the bottom of the screen follow whichever you used last.
 
 ## Riders
 
-**Cool Rider** and **Trollina**, both from *EUC Thrills*. Switch at any time with the buttons at the bottom; the ride
-carries on, only the rider changes. Each has their own crash voice.
+The reviewed roster from *EUC Thrills* v1.1.0, in source order:
+
+| Rider | URL / saved rider ID |
+|---|---|
+| Cool Rider (default) | `cool-rider` |
+| Trollina | `trollina` |
+| Red Rider | `red-rider` |
+| Adonisb2 | `adonisb2` |
+| Maribel Vargas | `maribel-vargas` |
+| Wheel in Motion | `wheel-in-motion` |
+| The Drunkard | `drunkard` |
+| FloWithZo | `flo-with-zo` |
+| Seal on a Wheel | `seal-on-a-wheel` |
+| Wyldist | `wyldist` |
+| Gnarwheel | `gnarwheel` |
+
+Use **Choose rider** on the title screen, **Change rider** / `C` during gameplay, or the picker shortcuts above.
+Browse with **LS / D-pad**; **RS** scrolls rider/wheel details on smaller screens; **A** selects or activates the
+focused action, **B** returns. The named Select button makes the change explicit. Preparation keeps the committed
+rider until the replacement is ready. **Retry** retries an audio/worker preparation failure; appearance-module failure
+uses **Reload NYC** as described above. **Cancel** keeps the committed choice.
+Each rider maps to their reviewed wheel/look/crash sound; not every crash sound contains that rider's voice.
+The Drunkard is a fictional parody with native weave/sway/stumble style and a separate stumble sound, not a real
+participant or a new character-stat system. Officer Dorkins (`cop`) remains NPC-only.
+
+Eight riders represent real people. Their identities, supplied logos and contributed recordings have separate rights;
+the owner considers their EUC Thrills permissions applicable to NYC, without claiming independently verified expanded
+grants. City signage stays fictional/generic, with a narrow owner exception for reviewed rider marks including SMLS
+on Wyldist's left sleeve. That decision conveys no additional third-party permission. See
+[the notice](NOTICE-EUC-THRILLS.md) and [fork guide](FORK_GUIDE.md) for credits and reuse boundaries.
 
 ## Cameras
 
@@ -268,10 +331,16 @@ screen still circles the rider; teleporting and booking release temporarily sele
   you stay where you were; map feedback explains that you can choose another spot or try again. The map also carries the credits.
   A click on a registered bridge deck or pier terrace selects its highest surface; reloading restores the saved
   elevation, including a lower walkway beneath an upper one.
-  Riding controls and background shortcuts are disabled while the map is open, but traffic keeps moving. Search
+  Riding controls and background shortcuts are disabled while the map is open; traffic and chase clocks freeze. Search
   results include native landmark buttons: press Down or Tab from search, then Enter/Space on the desired result.
   Escape closes the map and returns focus. Multi-finger map gestures do not teleport; use + / − to zoom.
   The yellow **waypoint line** shows direction only; it is not a road-following or obstacle-aware route.
+  **Controller map controls:** **LS** moves the visible cursor (pushing outward at an edge also pans); **RS** pans;
+  **LT / RT** zoom out/in; **A** activates a map button under the cursor or requests a safe teleport on the map.
+  **X** centers on you, **Y** fits all Manhattan, **D-pad** selects controls/existing search results, **B / Start**
+  closes and **View** opens the menu. Select a control/result, release, then press a fresh A. Search text entry uses
+  the keyboard; map movement works even if the search field has focus. After opening/resizing, changing controllers
+  or returning to the tab, center both sticks and release buttons/partial triggers before moving again.
 - **Skate locations on the map:** search for Coleman, Tribeca / Pier 25, Pier 62, Andy Kessler / Riverside,
   Thomas Jefferson, Brooklyn Banks or Tompkins Square. They have named map pins and nearby location labels.
   **Pier 62 has a larger authored skatepark**, marked by a **skateboard icon** on both the map and minimap. Its connected
@@ -313,14 +382,17 @@ storage is unavailable, it lasts for the current visit. The FPS readout reports 
 
 ## What the game saves
 
-In your browser only: the rider you chose and where you were (every few seconds and when you leave), whether
+In your browser only: the successfully committed rider and where you were (every few seconds and when you leave), whether
 sound is on, and your manually selected camera and time of day (saved when changed). View preferences are separate
 from the rider's position save. If browser storage is unavailable, the game still works with preferences kept for
-the current visit. Nothing is sent anywhere.
+the current visit. Position saving starts only after Ride; browsing, failed/cancelled preparation and pending rider
+choices never overwrite the checkpoint. Reload NYC keeps the committed identity, not the failed candidate.
+Nothing is sent anywhere.
 
 ## Credits
 
 - Riding, riders and wheel sounds: [*EUC Thrills*](https://github.com/VibezZzCoder/EUC-thrills) by VibezZzCoder (code
-  MIT, assets CC BY 4.0; see [NOTICE-EUC-THRILLS.md](NOTICE-EUC-THRILLS.md)).
+  MIT, original assets CC BY 4.0 with identity/logo/contributed-recording/generated-vocal exceptions; see
+  [NOTICE-EUC-THRILLS.md](NOTICE-EUC-THRILLS.md) and [audio provenance](audio/euc/PROVENANCE.md)).
 - The city: [three.js New York](https://github.com/mrdoob/slop-newyork) by Mr.doob (MIT).
 - Map data: NYC Open Data and © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL).

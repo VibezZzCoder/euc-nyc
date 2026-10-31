@@ -32,13 +32,18 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   const all = preloads.map((match) => match[1]);
   assert.deepEqual(all.slice(0, three.length).sort(), [...three].sort(), 'every vendored three.js module is preloaded first');
   const links = all.slice(three.length);
-   // 32 city modules (29 upstream + pedestrian-routes.js, fire-escapes.js (upstream 8c17250) + solid-rects.js), the 22 fork modules
-  // (EUC terrain, recovery, rider, tricks, dynamic world, audio, HUD; the title screen; the chasing cop, his brain, chase rules, paddle swing and audio;
-  // the north end's barricades; construction-time ride geometry helpers; view preferences/frame pacing; the civic jail; booking lifecycle/scene; Jefferson skatepark) and every module tools/vendor-euc.mjs copied into
-  // js/euc/ (listed in its MANIFEST.json)
-  const vendored = Object.keys(JSON.parse(readFileSync(join(__dirname, '../js/euc/MANIFEST.json'), 'utf8')).files);
-   assert.equal(links.length, 32 + 22 + vendored.length);
-  for (const file of vendored) assert.ok(links.includes(`./js/euc/${file}`), `vendored module preloaded: ${file}`);
+  // Generated eager modules are boot dependencies; selected appearances/atlases/logos remain deferred.
+  // Derive native coverage from the actual static graph rather than a brittle native-module count.
+  const euc = JSON.parse(readFileSync(join(__dirname, '../js/euc/MANIFEST.json'), 'utf8'));
+  const generated = Object.keys(euc.files).sort();
+  assert.ok(Array.isArray(euc.eager) && Array.isArray(euc.deferred));
+  assert.deepEqual([...euc.eager, ...euc.deferred].sort(), generated,
+    'eager/deferred partition covers every generated file exactly once');
+  const eager = euc.eager.map(file => `./js/euc/${file}`);
+  const deferred = new Set(euc.deferred.map(file => `./js/euc/${file}`));
+  assert.deepEqual(links.filter(src => src.startsWith('./js/euc/')).sort(), [...eager].sort(),
+    'preload exactly the generated eager set, never all roster modules');
+  for (const file of deferred) assert.ok(!all.includes(file), `selected appearance is not eagerly preloaded: ${file}`);
   assert.equal(new Set(links).size, links.length, 'each module is preloaded once');
   assert.equal(entries.length, 1);
   assert.equal(entries[0][1], './js/boot.js');
@@ -53,6 +58,36 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
     const prefix = Object.keys(imports).find((k) => k.endsWith('/') && specifier.startsWith(k));
     return prefix ? new URL(imports[prefix] + specifier.slice(prefix.length), base).href : null;
   };
+  const staticImports = source => [...source.matchAll(/^\s*(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|^\s*import\s*['"]([^'"]+)['"]/gm)]
+    .map(([, from, sideEffect]) => from || sideEffect);
+  const canonical = url => {
+    assert.ok(url && url.startsWith(base), `module stays local to the Pages subpath: ${url}`);
+    return `./${url.slice(base.length)}`;
+  };
+  const expected = new Set([...three, ...eager, './js/main.js']);
+  const queue = [...expected];
+  for (let i = 0; i < queue.length; i++) {
+    const src = queue[i];
+    const source = readFileSync(join(__dirname, '..', src), 'utf8');
+    for (const specifier of staticImports(source)) {
+      const dependency = canonical(resolve(specifier, src));
+      assert.ok(!deferred.has(dependency), `${src} statically imports deferred appearance code: ${specifier}`);
+      if (!expected.has(dependency)) { expected.add(dependency); queue.push(dependency); }
+    }
+  }
+  assert.deepEqual([...all].sort(), [...expected].sort(),
+    'preload the static boot closure plus manifest eager dependencies, without stale native preloads');
+  const lazyTargets = new Set();
+  for (const src of eager) {
+    const source = readFileSync(join(__dirname, '..', src), 'utf8');
+    for (const [, specifier] of source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      const dependency = canonical(resolve(specifier, src));
+      assert.ok(deferred.has(dependency), `${src} lazy import is listed in manifest.deferred: ${specifier}`);
+      assert.ok(!all.includes(dependency), `lazy appearance has no preload: ${dependency}`);
+      lazyTargets.add(dependency);
+    }
+  }
+  assert.ok(lazyTargets.size >= euc.roster.length, 'loader retains explicit lazy targets for the reviewed roster');
   for (const target of Object.values(imports)) {
     assert.match(target, /^\.\/vendor\/three\//, 'the import map points into vendor/three/');
     if (!target.endsWith('/')) assert.ok(urls.has(new URL(target, base).href), `import map target preloaded: ${target}`);
@@ -70,13 +105,18 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   }
 });
 
-test('the title screen is in the page from the start, hidden, with a Ride button and a button per playable rider', () => {
+test('the title has one shared picker entry, selected-audio readiness and a same-tab main-menu link', () => {
   const overlay = html.match(/<section id="title-overlay"[^>]*>([\s\S]*?)<\/section>/);
   assert.ok(overlay, 'title overlay present');
   assert.match(overlay[0], /<section id="title-overlay"[^>]*\bhidden\b/, 'hidden until the city is ready');
   assert.match(overlay[1], /id="title-ride"/);
-  const riders = [...overlay[1].matchAll(/data-title-rider="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(riders, ['cool-rider', 'trollina']);
+  assert.match(overlay[1], /id="title-rider"/);
+  assert.doesNotMatch(overlay[1], /data-title-rider=/, 'roster entries come from the shared metadata, not duplicate HTML');
+  for (const id of ['title-status', 'title-retry', 'title-cancel']) assert.ok(overlay[1].includes(`id="${id}"`));
+  const home = overlay[1].match(/<a\b[^>]*id="title-main-menu"[^>]*>/)?.[0];
+  assert.ok(home, 'title return is an ordinary anchor');
+  assert.match(home, /href="https:\/\/vibezzzcoder\.github\.io\/EUC-thrills\/"/);
+  assert.doesNotMatch(home, /target=/, 'return stays in the same tab');
   assert.match(overlay[1], /OpenStreetMap contributors/, 'map credit on the title too');
 });
 

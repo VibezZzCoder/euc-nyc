@@ -1,6 +1,6 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/blockoutKit.ts.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 export function loftProfile(rings) {
     if (rings.length < 2)
         throw new Error('a loft profile needs at least two rings');

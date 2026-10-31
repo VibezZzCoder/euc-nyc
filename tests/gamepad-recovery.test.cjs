@@ -25,7 +25,7 @@ function harness() {
   });
   const input = new GamepadControls(controller, { resetOrbit() { actions.push('recenter'); },
     applyGamepadInput(...args) { look.push(args); } }, {
-    onToggleMap() { actions.push('map'); }, onCloseMap() { actions.push('close'); },
+    onToggleMap() { actions.push('map'); }, onCloseMap() { actions.push('close'); }, onToggleMenu() { actions.push('menu'); },
     onCycleCamera() { actions.push('camera'); }, onCycleRider() { actions.push('rider'); }
   });
   input.update(1 / 60); // discover a neutral pad
@@ -138,4 +138,19 @@ test('map controls retain fresh Start/B edges while riding is disabled', () => {
   h.pad.buttons[1] = { pressed: true, value: 1 }; h.tick(); h.tick();
   assert.deepEqual(h.actions, ['map', 'close']);
   assert.equal(Object.values(h.keys).some(Boolean), false);
+});
+
+test('View/Back opens menu once, Start stays map, and LB/RB delegate browsing without hop carryover', () => {
+  const h = harness();
+  h.pad.buttons[8] = { pressed: true, value: 1 }; h.tick(); h.tick();
+  assert.deepEqual(h.actions, ['menu']);
+  h.pad.buttons[8] = { pressed: false, value: 0 }; h.tick();
+  h.pad.buttons[9] = { pressed: true, value: 1 }; h.tick();
+  assert.deepEqual(h.actions, ['menu', 'map']);
+  h.pad.buttons[9] = { pressed: false, value: 0 }; h.tick();
+  h.input.callbacks.onCycleRider = () => { h.actions.push('browse'); h.input.setEnabled(false); };
+  h.pad.buttons[5] = { pressed: true, value: 1 };
+  h.pad.buttons[0] = { pressed: true, value: 1 }; h.tick();
+  assert.equal(h.actions.at(-1), 'browse');
+  assert.equal(h.keys.up, 0, 'picker boundary clears simultaneous A rather than hopping');
 });

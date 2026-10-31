@@ -29,7 +29,8 @@ function interactiveTarget(target) {
 }
 
 class ThirdPersonControllerManager {
-  constructor(scene, colliders = [], { ride = null, rider = 'cool-rider', dynamicWorld, inputEnabled = true } = {}) {
+  // Await prepareEucRider(rider) before construction, and pass the returned appearance here.
+  constructor(scene, colliders = [], { ride = null, rider = 'cool-rider', appearance, dynamicWorld, inputEnabled = true } = {}) {
     this.scene = scene;
     this.colliders = colliders;
     this._colliderCells = null; // built on first use, see nearColliders()
@@ -58,7 +59,7 @@ class ThirdPersonControllerManager {
 
     this.entities = {
       // On the 5th Ave roadway, facing south toward the Empire State Building
-      euc: createEucEntity(this.scene, this.eucSampler, { x: 2.4, z: SPAWN_Z - 14, heading: 0, rider, dynamicWorld })
+      euc: createEucEntity(this.scene, this.eucSampler, { x: 2.4, z: SPAWN_Z - 14, heading: 0, rider, appearance, dynamicWorld })
     };
 
     this.bindKeyboard();
@@ -111,12 +112,13 @@ class ThirdPersonControllerManager {
       this._blendInput(action, pressed ? 'keyboard' : null);
     };
 
-    window.addEventListener('keydown', (e) => onKey(e, true));
-    window.addEventListener('keyup', (e) => onKey(e, false));
-    window.addEventListener('blur', () => this.resetInput());
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.resetInput();
-    });
+    this._inputListeners = [
+      [window, 'keydown', (e) => onKey(e, true)],
+      [window, 'keyup', (e) => onKey(e, false)],
+      [window, 'blur', () => this.resetInput()],
+      [document, 'visibilitychange', () => { if (document.hidden) this.resetInput(); }],
+    ];
+    for (const [target, type, listener] of this._inputListeners) target.addEventListener(type, listener);
   }
 
   _blendInput(action, pressedSource = null) {
@@ -196,9 +198,26 @@ class ThirdPersonControllerManager {
     return this.entities.euc;
   }
 
-  /** Swap the player's rider (euc-rider.js PLAYABLE_RIDERS). Returns true when the rider changed. */
-  setRider(id) {
-    return this.entities.euc.setRider(id);
+  /** Host owns the input/pause gate and atomically commits this candidate with its audio bank. */
+  prepareRider(id, options) {
+    return this.entities.euc.prepareRider(id, options);
+  }
+
+  cancelRiderPreparation() {
+    return this.entities.euc.cancelRiderPreparation();
+  }
+
+  setRider(id, options) {
+    return this.entities.euc.setRider(id, options);
+  }
+
+  /** Terminal teardown; await GPU preparation before the host disposes its renderer. */
+  dispose() {
+    this.setInputEnabled(false);
+    this.resetInput();
+    for (const [target, type, listener] of this._inputListeners ?? []) target.removeEventListener(type, listener);
+    this._inputListeners = [];
+    return this.entities.euc.dispose();
   }
 
   teleportActiveTo(x, z, heading = Math.PI, referenceY = Infinity) {

@@ -1,6 +1,6 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/rigConsolidation.ts.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 const DEFAULT_ON_BEFORE_RENDER = THREE.Object3D.prototype.onBeforeRender;
 const DEFAULT_ON_AFTER_RENDER = THREE.Object3D.prototype.onAfterRender;
 function isIdentity(object) {

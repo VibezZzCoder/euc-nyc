@@ -1,13 +1,13 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/rider.ts.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/rider.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 import { solveRagdollLeg, solveRagdollLimb } from '../shared/ragdollBoot.js';
 import { joinRiderSurface } from './riderJointSurface.js';
 import { drapeRiderHem } from './riderClothDrape.js';
 import { EUC, RIDER, RIDER_BLOCKOUT, WHEEL } from '../data/tuning.js';
 import { clamp, clamp01, lerp } from '../shared/maths.js';
 import { loftGeometry, mapUvInto, mergeGeometries, patchGeometry, vAtHeight, } from './blockoutKit.js';
-import { COOL_RIDER_LOOK, MOTION_STILL, } from './riderLook.js';
+import { riderLook, MOTION_STILL, } from './riderLook.js';
 export function armEaseForSpeed(speed) {
     const t = clamp01((Math.abs(speed) - RIDER_BLOCKOUT.armEaseFullBelow)
         / (RIDER_BLOCKOUT.armEaseGoneAbove - RIDER_BLOCKOUT.armEaseFullBelow));
@@ -137,7 +137,7 @@ function solveChain(chain, upperOut, lowerOut) {
 function outboardAngle(side) {
     return side > 0 ? 0 : Math.PI;
 }
-export function createPlaceholderRider(look = COOL_RIDER_LOOK) {
+export function createPlaceholderRider(look = riderLook('cool-rider')) {
     const root = new THREE.Group();
     root.name = 'rider-blockout';
     const geometries = [];

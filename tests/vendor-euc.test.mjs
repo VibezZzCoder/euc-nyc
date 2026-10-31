@@ -1,4 +1,4 @@
-// Generated-content pruning contracts. No browser, GPU, or execution of the upstream game/tests.
+// Reviewed roster generation and metadata-pruning contracts. No browser or GPU.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -16,7 +16,7 @@ const seamEnd = tool.indexOf('\nconst OVERRIDES =', seamStart);
 assert.ok(seamStart >= 0 && seamEnd > seamStart);
 const prune = new Function('crypto', `${tool.slice(seamStart, seamEnd)}\nreturn pruneLiveTuningMetadata;`)(crypto);
 
-// Before-prune generated tuning at fork d3e36d8 / upstream 5f45fff; excludes only LIVE_TUNABLES.
+// Full reviewed colour inventory restored; only LIVE_TUNABLES is removed from pinned upstream tuning.
 // Record all retained exports, including currently unused constants: this is not a new tuning allowlist.
 const retainedExports = `AUDIO BARKS BIRDS BLOCKOUT_COLOURS CAMERA CHALLENGE CHASE CONTACT DIAGNOSTICS
 DISTRICT_EXTERIOR DRUNK ENVIRONMENT_AMBIENCE ENVIRONMENT_BATCHING ENVIRONMENT_VEGETATION EUC FX
@@ -51,7 +51,7 @@ function tuningContract(exports) {
 test('all 64 retained tuning exports match before-prune values, object identities and frozen states', () => {
   assert.deepEqual(Object.keys(tuning).sort(), retainedExports);
   assert.equal(sha256(JSON.stringify(tuningContract(tuning))),
-    'a2a4686b6622f00dc4630bed5a5dca3d43c81daa8438901d7585dff7bf5a20df');
+    '0b9e6dc35a939debab5d558b45842ead3f5b5db27cd32c137a2f72568389b3c4');
   for (const [key, value] of Object.entries(tuning.TUNING)) {
     if (key in tuning) assert.equal(value, tuning[key], `TUNING aliases the named export ${key}`);
     if (value !== null && typeof value === 'object') assert.ok(Object.isFrozen(value), `${key} stays frozen`);
@@ -66,9 +66,8 @@ test('generated tuning preserves the freeze call and complete before/after sourc
   const generated = read('js/euc/data/tuning.js');
   assert.doesNotMatch(generated, /\bLIVE_TUNABLES\b/);
   assert.match(generated, /export const TUNING = deepFreeze\(\{/);
-  // SHA of the pre-prune generated file with exactly the LIVE_TUNABLES declaration removed. Covers constants
-  // both before and after it, the root call and source ordering, independently of the runtime-value contract.
-  assert.equal(sha256(generated), 'ad7af1318a0e6a38b64b5a37723719c63ab3762790c8745a54651a31a377e6d8');
+  // Covers full original colours, live constants before/after metadata and the original freeze side effect.
+  assert.equal(sha256(generated), '3f903c034780b71c4241ce062ee38c76be23e35d9083ed4275702d4e8e865d96');
 });
 
 test('chase camera is absent from the generator entries, output, manifest and generated preloads', () => {
@@ -81,7 +80,8 @@ test('chase camera is absent from the generator entries, output, manifest and ge
   const block = read('index.html').match(/<!-- euc:preload:start \(tools\/vendor-euc\.mjs\) -->([^]*?)<!-- euc:preload:end -->/)?.[1];
   assert.ok(block);
   const preloads = [...block.matchAll(/href="\.\/js\/euc\/([^"]+)"/g)].map(m => m[1]);
-  assert.deepEqual(preloads, Object.keys(manifest.files).sort());
+  assert.deepEqual(preloads, manifest.eager);
+  assert.deepEqual([...manifest.eager, ...manifest.deferred].sort(), Object.keys(manifest.files).sort());
   const files = dir => readdirSync(new URL(`js/euc/${dir}`, root), { withFileTypes: true }).flatMap(entry =>
     entry.isDirectory() ? files(`${dir}${entry.name}/`) : [`${dir}${entry.name}`]);
   assert.deepEqual(files('').sort(), [...Object.keys(manifest.files), 'LICENSE', 'MANIFEST.json'].sort());
@@ -111,4 +111,11 @@ test('pinned read-only upstream source fixture loses only the metadata declarati
     assert.match(after, /export const POPULATION_CONTACT = Object.freeze\(\{/);
     assert.throws(() => prune(before.replace("path: 'EUC.maxLeanPitch'", "path: sideEffect()")), /metadata changed/);
     assert.throws(() => prune(`${before}\n${declaration}`), /metadata changed/);
+  });
+
+test('all live tuning, including physical constants, independently equals the pinned source fixture',
+  { skip: !existsSync(upstream) && 'optional upstream source fixture not present' }, async () => {
+    const original = await import(upstream.href);
+    const retained = Object.fromEntries(Object.entries(original).filter(([key]) => key !== 'LIVE_TUNABLES'));
+    assert.deepEqual(tuningContract(tuning), tuningContract(retained));
   });

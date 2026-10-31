@@ -2,7 +2,7 @@ import { createSynthResources, createMotorVoice, setControlRate } from './audio-
 import { createEventResources, playEvent, createWindVoice } from './audio-events.js';
 import { CityAudioSources } from './audio-sources.js';
 import { CityAcoustics } from './audio-acoustics.js';
-import { EucAudio } from './euc-audio.js';
+import { EucAudio, RiderAudioBanks } from './euc-audio.js';
 import { NemesisAudio } from './nemesis-audio.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -92,6 +92,12 @@ class CityAudioSystem {
     this.sources = new CityAudioSources(simulation);
     this.controllerManager = simulation.controllerManager;
     this.euc = null;
+    this.riderBanks = new RiderAudioBanks({ onCommit: () => this.euc?.reset() });
+    this.paused = false;
+    this.pageHidden = false;
+    this.unlockPending = Promise.resolve(false);
+    this.riderPrepareSerial = 0;
+    this.riderRequestController = null;
     this.cop = null; // Officer Dorkins' siren and hum (nemesis-audio.js), heard when setChaser() gave a chaser
     this.chaser = null;
     this.acoustics = new CityAcoustics(simulation.controllerManager);
@@ -100,6 +106,9 @@ class CityAudioSystem {
     this.ready = false;
     this.disposed = false;
     this.supported = !!(globalThis.AudioContext || globalThis.webkitAudioContext);
+    // Only a genuinely unavailable platform gets a silent bank. Fetch/decode/unlock errors remain retryable failures.
+    this.audioUnavailable = !this.supported;
+    this.unavailableReason = this.audioUnavailable ? 'Web Audio is unavailable; riding continues silently.' : null;
     this.enabled = true;
     try { this.enabled = localStorage.getItem('nyc-sound') !== 'off'; } catch { /* Private browsing. */ }
     const smallDevice = navigator.hardwareConcurrency <= 4 || matchMedia('(pointer: coarse)').matches;
@@ -127,31 +136,157 @@ class CityAudioSystem {
     };
     this.onVisibility = () => {
       this.reset();
-      if (document.hidden) this.suspend();
-      else if (this.enabled && this.context) this.unlock();
+      if (document.hidden) { this.cancelRiderPreparation(); this.suspend(); }
+      else if (this.enabled && this.context && !this.paused) this.unlock();
+    };
+    this.onPageHide = () => {
+      this.pageHidden = true;
+      this.cancelRiderPreparation();
+      this.reset();
+      this.suspend();
+    };
+    this.onPageShow = () => {
+      this.pageHidden = false;
+      this.reset();
+      if (this.enabled && this.context && !this.paused) this.unlock();
     };
     // Keep gesture handlers: iOS can interrupt a previously running context, and resuming may need another tap.
     document.addEventListener('pointerdown', this.onGesture, { passive: true });
     document.addEventListener('keydown', this.onGesture);
     document.addEventListener('visibilitychange', this.onVisibility);
+    globalThis.addEventListener?.('pagehide', this.onPageHide);
+    globalThis.addEventListener?.('pageshow', this.onPageShow);
   }
 
+  /** Call synchronously in confirmation/Ride, before awaiting any rig or network work.
+   * Even muted confirmation may create a suspended context for selected-bank decoding. No menu sound is played.
+   * Menus gate playback and zero the master, rather than resume/suspend the context on competing gesture callbacks.
+   * Returns a boolean readiness promise; prepareRider converts an audible unlock failure into a retryable error.
+   */
   unlock() {
-    if (!this.supported || !this.enabled || this.disposed || document.hidden) return;
+    if (!this.supported || this.disposed || document.hidden || this.pageHidden) return Promise.resolve(false);
     try {
-      if (!this.context) this.initialize();
-      if (this.context.state !== 'running') {
-        this.context.resume().then(() => {
-          if (!this.enabled || document.hidden || this.disposed) return this.suspend();
-          this.onStateChange();
-        }).catch(() => {}); // A later user gesture can retry autoplay/interruption failures.
+      if (!this.context) {
+        try { this.initialize(); } catch (error) {
+          // A transient constructor/graph failure must allow a fresh confirmation to retry, not masquerade as unsupported.
+          this.euc?.dispose(); this.cop?.dispose(); this.wind?.dispose(true);
+          for (const key of ['mix', 'compressor', 'master', 'reflections', 'reverb', 'reflectionFilter']) {
+            this[key]?.disconnect(); this[key] = null;
+          }
+          this.context?.close().catch(() => {});
+          this.context = this.euc = this.cop = this.wind = this.resources = null;
+          throw error;
+        }
       }
+      if (!this.enabled) {
+        this.suspend();
+        return this.unlockPending = Promise.resolve(true); // suspended contexts can decode while muted/paused
+      }
+      const context = this.context;
+      if (this.context.state !== 'running') {
+        return this.unlockPending = this.context.resume().then(() => {
+          if (!this.enabled || document.hidden || this.disposed || this.pageHidden) {
+            this.suspend();
+            return this.context === context && context.state !== 'closed' && !this.disposed && !document.hidden && !this.pageHidden;
+          }
+          this.onStateChange();
+          // Fulfillment acknowledges that resume succeeded. A later intentional suspension can already be visible
+          // when this callback is delivered; that state snapshot is not evidence of a failed user activation.
+          return this.context === context && context.state !== 'closed';
+        }).catch(() => false); // A later gesture retries interruptions; selection reports failure explicitly.
+      }
+      return this.unlockPending = Promise.resolve(true);
     } catch (error) {
       console.warn('[audio] Unable to initialize sound', error);
-      this.supported = false;
-      this.context?.close().catch(() => {});
       this.onStateChange();
+      return this.unlockPending = Promise.resolve(false);
     }
+  }
+
+  /** Optional title-byte prefetch; deliberately does not unlock or construct an AudioContext. */
+  prefetchRider(id, options = {}) {
+    return this.riderBanks.prefetchRider(id, { ...options, silent: this.audioUnavailable });
+  }
+
+  /** Ready-to-commit candidate: await alongside rig preparation, then commit synchronously with the rig.
+   * dispose() cancels an uncommitted candidate; after commit it is a harmless no-op. Signal abort/supersession throws
+   * AbortError, HTTP/decode/unlock failures throw normally. No wrong-rider recording or synthesis is substituted.
+   * `valid` means ready and still uncommitted: check both rig.valid and bank.valid before a no-await commit turn.
+   * commit() returns true on success and throws AbortError if stale; it never returns false. `silent` is true ONLY
+   * on platforms without an AudioContext constructor; show unavailableReason alongside the disabled sound control.
+   */
+  async prepareRider(id, { signal } = {}) {
+    const serial = ++this.riderPrepareSerial;
+    this.riderRequestController?.abort();
+    const request = new AbortController();
+    this.riderRequestController = request;
+    const abort = () => request.abort(signal.reason);
+    const cleanup = () => {
+      signal?.removeEventListener('abort', abort);
+      if (this.riderRequestController === request) this.riderRequestController = null;
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const candidate = this.riderBanks.candidate;
+    if (candidate && (candidate.preparing || candidate.ready || candidate.id !== id)) this.riderBanks.cancel();
+    const current = () => serial === this.riderPrepareSerial && !request.signal.aborted && !this.disposed && !document.hidden && !this.pageHidden;
+    const check = () => { if (!current()) throw new DOMException('Audio preparation cancelled', 'AbortError'); };
+    let handle;
+    try {
+      check();
+      if (this.audioUnavailable) {
+        handle = this.riderBanks.prepareSilentRider(id, { signal: request.signal });
+      } else {
+        if (!this.context) throw new Error('Unlock audio in the confirmation or Ride gesture before preparing a rider');
+        const unlocked = await new Promise((resolve, reject) => {
+          const cancel = () => reject(new DOMException('Audio preparation cancelled', 'AbortError'));
+          request.signal.addEventListener('abort', cancel, { once: true });
+          this.unlockPending.then(resolve, reject).finally(() => request.signal.removeEventListener('abort', cancel));
+        });
+        check();
+        if (!unlocked && this.enabled) throw new Error('Audio could not be unlocked. Try confirming again');
+        handle = await this.riderBanks.prepareRider(id, this.context, { signal: request.signal });
+      }
+      check();
+      let finished = false;
+      return Object.freeze({ id, silent: handle.silent, get valid() { return !finished && current() && handle.valid; },
+        commit: () => {
+          check();
+          const result = handle.commit();
+          finished = true;
+          cleanup();
+          return result;
+        }, dispose: () => {
+          if (finished) return;
+          finished = true;
+          handle.dispose();
+          cleanup();
+        } });
+    } catch (error) {
+      handle?.dispose();
+      if (serial === this.riderPrepareSerial) this.riderBanks.cancel();
+      cleanup();
+      throw error;
+    }
+  }
+
+  cancelRiderPreparation() {
+    this.riderPrepareSerial++;
+    this.riderRequestController?.abort();
+    this.riderRequestController = null;
+    this.riderBanks.cancel();
+  }
+
+  /** Pause the shared mix, not the AudioContext. reset() zeros/cancels the master and update() gates every voice.
+   * Keeping the context available avoids document pointer/key and Confirm resume callbacks re-suspending each other.
+   * Required recordings can decode in either native state; mute/visibility/pagehide still suspend the context.
+   */
+  setPaused(paused) {
+    const next = !!paused;
+    if (next === this.paused) return;
+    this.paused = next;
+    this.reset();
+    if (!this.paused && this.context) this.unlock();
   }
 
   initialize() {
@@ -188,11 +323,12 @@ class CityAudioSystem {
     this.reflections.connect(this.reverb).connect(this.reflectionFilter).connect(this.mix);
     this.wind = createWindVoice(context, this.resources, this.mix);
     // The rider's own wheel: non-spatial, through the mix (so mute, master and suspend apply), with a reflection send.
-    // It fetches its samples now, i.e. only after a user gesture has created the context.
+    // Only shared loops/warning fetch here. Selected recordings belong to the explicit preparation transaction.
     this.euc = new EucAudio(context, this.mix, {
       noise: this.resources.noise,
       reflections: this.reflections,
       onWindHowl: (buffer) => this.wind?.useHowl(buffer), // one wind sound for the whole game: the EUC Thrills howl
+      riderBanks: this.riderBanks,
     });
     this.cop = new NemesisAudio(context, this.mix, { noise: this.resources.noise, reflections: this.reflections });
     this.cop.reset(this.chaser?.audioView);
@@ -224,7 +360,7 @@ class CityAudioSystem {
     this.enabled = !!enabled;
     try { localStorage.setItem('nyc-sound', this.enabled ? 'on' : 'off'); } catch { /* Storage is optional. */ }
     if (this.enabled) {
-      this.cop?.reset(this.chaser?.audioView);
+      this.reset();
       this.unlock();
     } else {
       this.reset();
@@ -238,11 +374,14 @@ class CityAudioSystem {
     // Visibility/mute can change again while suspend is pending. Reconcile after it settles so a rapid unmute
     // cannot leave an enabled system suspended merely because resume saw the old 'running' state.
     return this.context.suspend().then(() => {
-      if (this.enabled && !document.hidden && !this.disposed) this.unlock();
+      if (this.enabled && !document.hidden && !this.disposed && !this.paused && !this.pageHidden) this.unlock();
     }).catch(() => {});
   }
 
   reset() {
+    // Lifecycle boundaries can happen without an animation callback. Drop queued silent events here as well.
+    const rider = this.controllerManager?.getActiveEntity?.();
+    if (rider?.type === 'euc') rider.drainEvents?.();
     for (const pool of [this.motors, this.sirens]) {
       for (const slot of pool.values()) { slot.voice.dispose(); slot.emitter.dispose(); }
       pool.clear();
@@ -391,7 +530,7 @@ class CityAudioSystem {
   }
 
   crash(impact) {
-    if (!this.ready || !this.enabled || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;
+    if (!this.ready || !this.enabled || this.paused || this.pageHidden || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;
     const { a, b, x, y, z, speed } = impact;
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || a === b
       || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(speed) || speed < 0.8) return false;
@@ -431,11 +570,13 @@ class CityAudioSystem {
   updateRider(playing) {
     const entity = this.controllerManager?.getActiveEntity?.() ?? null;
     const events = entity?.type === 'euc' && typeof entity.drainEvents === 'function' ? entity.drainEvents() : NO_EVENTS;
+    if (!playing && this.riderPlaying) this.euc?.reset();
+    this.riderPlaying = playing;
     if (playing && this.euc) this.euc.update(entity, events, this.context.currentTime);
   }
 
   update(dt, elapsed, camera, night = false) {
-    const playing = this.ready && this.enabled && this.context?.state === 'running' && !document.hidden;
+    const playing = this.ready && this.enabled && !this.paused && !this.pageHidden && this.context?.state === 'running' && !document.hidden;
     this.updateRider(playing);
     this.updateChaser(camera, playing);
     if (!playing) return;
@@ -550,12 +691,16 @@ class CityAudioSystem {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelRiderPreparation();
     for (const system of this.collisionSystems) system.setCollisionListener?.(null);
     document.removeEventListener('pointerdown', this.onGesture);
     document.removeEventListener('keydown', this.onGesture);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    globalThis.removeEventListener?.('pagehide', this.onPageHide);
+    globalThis.removeEventListener?.('pageshow', this.onPageShow);
     this.reset();
     this.euc?.dispose();
+    this.riderBanks.dispose();
     this.cop?.dispose();
     this.wind?.dispose(true);
     for (const node of [this.mix, this.compressor, this.master, this.reflections, this.reverb, this.reflectionFilter]) node?.disconnect();

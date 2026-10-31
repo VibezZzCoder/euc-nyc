@@ -1,6 +1,6 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/riderClothDrape.ts.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 export function drapeRiderHem(geometry, pelvis, hips, layout) {
     const { radial, rings: rows, splitSeam } = layout;
     const positions = geometry.getAttribute('position');

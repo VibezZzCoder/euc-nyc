@@ -505,6 +505,10 @@ class NYCMapSystem {
     this.touchPointers = new Set();
     this.multiTouch = false;
     this.cancelTouchClick = false;
+    this.inputDevice = 'keyboard';
+    this.gamepadCursor = null; // client/CSS pixels: shared hit testing for the canvas and native map actions
+    this.gamepadCursorElement = null;
+    this.gamepadNeedsNeutral = true;
 
     this.hoverWorld = null;
     this.searchHighlight = '';
@@ -609,12 +613,14 @@ class NYCMapSystem {
       }
     });
     document.addEventListener('focusin', (e) => {
+      if (this.isFullMapOpen) this.resetGamepadInput();
       if (this.isFullMapOpen && this.modal && !this.modal.contains(e.target)) this.modal.focus({ preventScroll: true });
     });
 
     // A second finger anywhere on the map UI cancels the whole tap/drag until all fingers lift.
     window.addEventListener('pointerdown', (e) => {
       if (!this.isFullMapOpen) return;
+      this.setInputDevice(e.pointerType === 'touch' ? 'touch' : 'keyboard');
       if (!this.touchPointers.size) this.cancelTouchClick = false;
       if (e.pointerType !== 'touch') return;
       this.touchPointers.add(e.pointerId);
@@ -650,6 +656,7 @@ class NYCMapSystem {
       this.fullCanvas.addEventListener('pointermove', (e) => {
         if (!this.isFullMapOpen || !this.fullCanvas) return;
         if (this.isPanning ? e.pointerId !== this.panPointerId : e.pointerType !== 'mouse') return;
+        this.setInputDevice(e.pointerType === 'touch' ? 'touch' : 'keyboard');
         const rect = this.fullCanvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
@@ -669,7 +676,7 @@ class NYCMapSystem {
           const wPos = this.screenToWorld(mx, my, rect.width, rect.height);
           this.hoverWorld = wPos;
           if (this.elHoverInfo) {
-            this.elHoverInfo.textContent = `${getLocationLabel(wPos.x, wPos.z)} · Click to teleport here`;
+            this.updateHoverInfo(wPos);
           }
         }
       });
@@ -695,6 +702,7 @@ class NYCMapSystem {
         });
       }
       window.addEventListener('blur', () => this.cancelGestures());
+      window.addEventListener('focus', () => this.resetGamepadInput());
       window.addEventListener('resize', () => this.cancelGestures());
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) this.cancelGestures();
@@ -715,6 +723,153 @@ class NYCMapSystem {
         this.renderFullMap();
       }, { passive: false });
     }
+  }
+
+  // The host may call this whenever its prompt device changes. Actual pointer input also retires the pad cursor.
+  setInputDevice(device) {
+    if (!['gamepad', 'keyboard', 'touch'].includes(device) || this.inputDevice === device) return;
+    if (device !== 'gamepad') this.resetGamepadInput();
+    this.inputDevice = device;
+    if (this.modal?.dataset) this.modal.dataset.input = device;
+    if (this.gamepadCursorElement) this.gamepadCursorElement.hidden = device !== 'gamepad' || !this.isFullMapOpen;
+    if (this.hoverWorld) this.updateHoverInfo(this.hoverWorld);
+    // Refresh existing instructions without rebuilding native actions, changing focus or reframing the map.
+    if (this.searchResults.length) this.updateSearchFeedback(this.landmarkSearchFeedback());
+    this.layoutStatus(); // device-specific helpers can change the short-map layout even without a new query
+  }
+
+  landmarkSearchFeedback() {
+    const count = this.searchResults.length;
+    const instructions = this.inputDevice === 'gamepad' ? 'Use D-pad to choose, then A to teleport.'
+      : this.inputDevice === 'touch' ? 'Tap a result to teleport.' : 'Tab or press Down to choose a teleport.';
+    return `${count} landmark ${count === 1 ? 'result' : 'results'}. ${instructions}`;
+  }
+
+  updateSearchFeedback(text) {
+    for (const element of [this.elSearchStatus, this.elSearchSummary]) {
+      if (element && element.textContent !== text) element.textContent = text;
+    }
+  }
+
+  resetGamepadInput() {
+    this.gamepadNeedsNeutral = true;
+  }
+
+  updateHoverInfo(point, target = null) {
+    if (!this.elHoverInfo) return;
+    const action = this.inputDevice === 'gamepad' ? 'A to teleport here'
+      : this.inputDevice === 'touch' ? 'Tap to teleport here' : 'Click to teleport here';
+    const text = target
+      ? `A · ${target.getAttribute?.('aria-label') || target.title || target.textContent || 'Activate control'}`
+      : `${getLocationLabel(point.x, point.z)} · ${action}`;
+    if (this.elHoverInfo.textContent !== text) this.elHoverInfo.textContent = text;
+  }
+
+  showGamepadCursor(rect) {
+    if (!this.gamepadCursor) this.gamepadCursor = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    const inset = Math.min(12, rect.width / 2, rect.height / 2);
+    this.gamepadCursor.x = Math.max(rect.left + inset, Math.min(rect.left + rect.width - inset, this.gamepadCursor.x));
+    this.gamepadCursor.y = Math.max(rect.top + inset, Math.min(rect.top + rect.height - inset, this.gamepadCursor.y));
+    if (!this.gamepadCursorElement && this.modal) {
+      const cursor = document.createElement('div');
+      cursor.className = 'fullmap-gamepad-cursor';
+      cursor.setAttribute('aria-hidden', 'true');
+      // A DOM cursor remains visible over controls as well as geography, without intercepting native hit tests.
+      Object.assign(cursor.style, { position: 'fixed', zIndex: '100', pointerEvents: 'none',
+        width: '24px', height: '24px', border: '2px solid #ffc21a', borderRadius: '50%',
+        boxSizing: 'border-box', transform: 'translate(-50%, -50%)',
+        boxShadow: '0 0 0 2px #0a1118, inset 0 0 0 1px #0a1118',
+        background: 'radial-gradient(circle, #ffc21a 0 2px, transparent 3px)' });
+      this.modal.appendChild(cursor);
+      this.gamepadCursorElement = cursor;
+    }
+    if (this.gamepadCursorElement) {
+      this.gamepadCursorElement.hidden = false;
+      this.gamepadCursorElement.style.left = `${this.gamepadCursor.x}px`;
+      this.gamepadCursorElement.style.top = `${this.gamepadCursor.y}px`;
+    }
+  }
+
+  // Receives every map-owned poll, including neutral polls, from GamepadControls.onMapInput.
+  // actions are fresh edges; neutral includes BOTH sticks, all buttons and even partly squeezed triggers.
+  applyGamepadInput({ movement = {}, look = {}, zoom = 0, actions = {}, neutral = false } = {}, dt = 0) {
+    if (!this.isFullMapOpen || document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus())) return;
+    const usingPad = [movement.x, movement.y, look.x, look.y, zoom].some((value) => Number.isFinite(value) && value !== 0) ||
+      Object.values(actions).some(Boolean);
+    if (usingPad) this.setInputDevice('gamepad');
+    const rect = this.fullCanvas?.getBoundingClientRect();
+    if (!rect || !(rect.width > 0 && rect.height > 0)) return;
+    if (this.inputDevice === 'gamepad') this.showGamepadCursor(rect);
+    if (this.gamepadNeedsNeutral) {
+      if (neutral) this.gamepadNeedsNeutral = false;
+      return;
+    }
+    if (this.inputDevice !== 'gamepad') return; // an idle connected pad must not steal mouse/touch hints or cursor
+    const seconds = Number.isFinite(dt) ? Math.max(0, Math.min(0.05, dt)) : 0;
+    const value = (n) => Number.isFinite(n) ? Math.max(-1, Math.min(1, n)) : 0;
+    const mx = value(movement.x), my = value(movement.y), lx = value(look.x), ly = value(look.y);
+    const cursor = this.gamepadCursor;
+    const inset = Math.min(12, rect.width / 2, rect.height / 2);
+    cursor.x = Math.max(rect.left + inset, Math.min(rect.left + rect.width - inset, cursor.x + mx * 480 * seconds));
+    cursor.y = Math.max(rect.top + inset, Math.min(rect.top + rect.height - inset, cursor.y + my * 480 * seconds));
+
+    if (actions.navigate) {
+      // D-pad can reach offscreen search results too; native scrolling exposes the chosen action before activation.
+      const controls = [...this.modal.querySelectorAll('button')].filter((el) => this.canFocus(el));
+      const index = controls.indexOf(document.activeElement);
+      const nextIndex = index < 0 ? (actions.navigate > 0 ? 0 : controls.length - 1)
+        : (index + (actions.navigate > 0 ? 1 : -1) + controls.length) % controls.length;
+      const next = controls[nextIndex];
+      next?.scrollIntoView?.({ block: 'nearest' });
+      next?.focus({ preventScroll: true });
+      const box = next?.getBoundingClientRect();
+      if (box?.width > 0 && box?.height > 0) {
+        cursor.x = box.left + box.width / 2;
+        cursor.y = box.top + box.height / 2;
+      }
+      this.showGamepadCursor(rect);
+      if (next) this.updateHoverInfo(this.screenToWorld(cursor.x - rect.left, cursor.y - rect.top, rect.width, rect.height), next);
+      return; // selection + A in one sample never activates
+    }
+
+    const hit = document.elementFromPoint?.(cursor.x, cursor.y);
+    const button = hit?.closest?.('button');
+    const target = button && this.modal?.contains(button) && this.canFocus(button) ? button : null;
+    const onCanvas = hit === this.fullCanvas;
+    const edgePan = (position, start, size, direction) => {
+      if (!onCanvas) return 0;
+      const local = position - start;
+      if (direction < 0 && local < 32) return direction * (1 - local / 32);
+      if (direction > 0 && local > size - 32) return direction * (1 - (size - local) / 32);
+      return 0;
+    };
+    const panX = lx * 480 + edgePan(cursor.x, rect.left, rect.width, mx) * 360;
+    const panY = ly * 480 + edgePan(cursor.y, rect.top, rect.height, my) * 360;
+    this.viewCenterX += panX * seconds / this.viewZoom;
+    this.viewCenterZ += panY * seconds / this.viewZoom;
+    const sx = cursor.x - rect.left, sy = cursor.y - rect.top;
+    const before = this.screenToWorld(sx, sy, rect.width, rect.height);
+    const oldZoom = this.viewZoom;
+    this.viewZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * Math.exp(value(zoom) * 1.8 * seconds)));
+    if (onCanvas && this.viewZoom !== oldZoom) {
+      this.viewCenterX = before.x - (sx - rect.width / 2) / this.viewZoom;
+      this.viewCenterZ = before.z - (sy - rect.height / 2) / this.viewZoom;
+    }
+    this.hoverWorld = this.screenToWorld(sx, sy, rect.width, rect.height);
+    this.updateHoverInfo(this.hoverWorld, target);
+    if (this.gamepadCursorElement) this.gamepadCursorElement.style.borderColor = target ? MAP.search : MAP.route;
+    this.showGamepadCursor(rect);
+
+    // One native click, never a synthetic pointer sequence plus a click. Covered/non-action UI cannot teleport.
+    if (actions.recenter || actions.fit) {
+      document.getElementById(actions.recenter ? 'map-center-player' : 'map-view-all')?.click();
+    } else if (actions.activate) {
+      if (target) {
+        target.focus({ preventScroll: true });
+        target.click();
+      } else if (onCanvas) this.teleportToPoint(this.hoverWorld, this.authoredPinAt(this.hoverWorld));
+    }
+    if (panX || panY || oldZoom !== this.viewZoom) this.renderFullMap();
   }
 
   /**
@@ -773,15 +928,11 @@ class NYCMapSystem {
       }));
     }
     if (this.elSearchResults) this.elSearchResults.hidden = !q;
-    if (this.elSearchStatus) {
-      const count = this.searchResults.length;
-      const streetCount = new Set(roads.map((r) => r.text)).size;
-      this.elSearchStatus.textContent = !q ? '' : count
-        ? `${count} landmark ${count === 1 ? 'result' : 'results'}. Tab or press Down to choose a teleport.`
-        : streetCount ? `${streetCount} matching ${streetCount === 1 ? 'street' : 'streets'} highlighted. No landmark results.`
-          : `No streets or landmarks match “${String(text).trim()}”.`;
-      if (this.elSearchSummary) this.elSearchSummary.textContent = this.elSearchStatus.textContent;
-    }
+    const streetCount = new Set(roads.map((r) => r.text)).size;
+    this.updateSearchFeedback(!q ? '' : this.searchResults.length ? this.landmarkSearchFeedback()
+      : streetCount ? `${streetCount} matching ${streetCount === 1 ? 'street' : 'streets'} highlighted. No landmark results.`
+        : `No streets or landmarks match “${String(text).trim()}”.`);
+    this.layoutStatus(); // results visibility and contextual help must settle before measuring footer clearance
     this.renderFullMap();
   }
 
@@ -824,6 +975,7 @@ class NYCMapSystem {
   }
 
   cancelGestures() {
+    this.resetGamepadInput();
     if (this.touchPointers.size) this.cancelTouchClick = true;
     this.cancelPan();
     this.touchPointers.clear();
@@ -843,6 +995,9 @@ class NYCMapSystem {
     if (open && this.enabled === false) return;
     if (open === this.isFullMapOpen) return;
     this.isFullMapOpen = open;
+    this.resetGamepadInput();
+    this.gamepadCursor = null;
+    if (this.gamepadCursorElement) this.gamepadCursorElement.hidden = true;
     if (!open) this.cancelGestures();
     if (this.onToggle) this.onToggle(this.isFullMapOpen);
     if (!this.modal) return;
@@ -896,6 +1051,7 @@ class NYCMapSystem {
     const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(6e6 / Math.max(1, w * h)));
     const width = Math.max(1, Math.floor(w * dpr)), height = Math.max(1, Math.floor(h * dpr));
     if (this.fullDpr === dpr && this.fullCanvas.width === width && this.fullCanvas.height === height) return;
+    this.resetGamepadInput();
     this.fullDpr = dpr;
     this.fullCanvas.width = width;
     this.fullCanvas.height = height;

@@ -128,7 +128,7 @@ test('fakie requires a landed spin and continuous moving ground time; reset clea
   assert.equal(t.previousFoot, 0); assert.equal(t.previousTuck, 0);
 });
 
-test('production entity: held input reaches interpolated rig, native jump is immediate, swap/placement clear tricks', () => {
+test('production entity: held input reaches interpolated rig, native jump is immediate, swap/placement clear tricks', async () => {
   for (const hz of [30, 60, 120]) {
     const e = entity();
     for (let i = 0; i < hz; i++) e.update(1 / hz, { boost: true });
@@ -139,10 +139,25 @@ test('production entity: held input reaches interpolated rig, native jump is imm
     assert.equal(foot, 1, `${hz} Hz one foot reaches the rendered rig`);
     assert.equal(e.tricks.label, 'One-foot air');
     e.clearInput(); assert.equal(e.tricks.label, '');
-    e.tricks.announce('180'); e.setRider('trollina'); assert.equal(e.tricks.label, '');
+    e.tricks.announce('180');
+    const oldRig = e.rig;
+    let compiled = false;
+    const changing = e.setRider('trollina', { async compile(candidate) {
+      assert.equal(candidate.group.parent, null, 'replacement compiles off-scene');
+      assert.equal(e.rig, oldRig, 'active rig survives preparation');
+      assert.equal(oldRig.disposed, false);
+      assert.equal(e.tricks.label, '180', 'preparing does not clear committed rider feedback');
+      compiled = true;
+    } });
+    assert.equal(e.rig, oldRig, 'switch is explicitly asynchronous');
+    assert.equal(await changing, true);
+    assert.equal(compiled, true);
+    assert.equal(e.riderId, 'trollina');
+    assert.equal(oldRig.disposed, true);
+    assert.equal(e.tricks.label, '');
     e.tricks.announce('180'); e.placeAt(0, 0); assert.equal(e.tricks.label, '');
     assert.equal(e.rig.foot, 0);
-    e.dispose();
+    await e.dispose();
   }
 });
 

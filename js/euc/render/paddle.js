@@ -1,6 +1,6 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/paddle.ts.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 import { BLOCKOUT_COLOURS, PADDLE } from '../data/tuning.js';
 import { mergeGeometries, shaded } from './blockoutKit.js';
 const SHAFT_FRACTION = 0.62;

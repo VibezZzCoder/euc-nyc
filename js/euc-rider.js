@@ -1,4 +1,6 @@
 // js/euc-rider.js — the player's electric unicycle: EUC Thrills' controller and rider rig, riding New York.
+// © 2026 VibezZzCoder — MIT. Derived riding code: EUC Thrills @5f45fff (js/euc/LICENSE).
+// Downstream forks: read NOTICE-EUC-THRILLS.md before repurposing participant looks, marks or recordings.
 //
 // Ownership (EUC_THRILLS_CODE_ARCHITECTURE_GUIDE.md §4, §7, §11):
 //   - The city keeps its one variable-dt loop. This module owns a fixed-step accumulator inside it and runs the EUC
@@ -19,21 +21,16 @@ import { SIMULATION, INPUT } from './euc/data/tuning.js';
 import { createRidingRig } from './euc/render/ridingRig.js';
 import { riderLook } from './euc/render/riderLook.js';
 import { machineLook } from './euc/render/machineLook.js';
+import { prepareAppearance, releaseAppearanceCaches } from './euc/render/appearanceLoader.js';
+import { RIDERS, PLAYABLE_RIDERS, isPlayableRider, rideStyleFor } from './euc-roster.js';
+import { RiderPreparation, yieldRiderStage } from './rider-preparation.js';
 import { RiderTricks } from './euc-tricks.js';
 import { findPlacementTarget, placementDepartureClear } from './euc-recovery.js';
 import { cityUniforms } from './tsl-materials.js';
 import { EUC_HEADLIGHT, headlightBeamScale, createEucHeadlight, placeEucHeadlight } from './vehicle-lights.js';
 
 const STEP = 1 / SIMULATION.hz;
-// The fork's roster: original fictional characters only (js/euc/render/riderLook.js is sliced to these three).
-// Trollina rides her own livery of the standard wheel; the cop rides the standard wheel, as upstream's copRider.ts does.
-export const RIDERS = Object.freeze({
-  'cool-rider': { name: 'Cool Rider', machine: 'standard' },
-  trollina: { name: 'Trollina', machine: 'trollina' },
-  cop: { name: 'Officer Dorkins', machine: 'standard' }
-});
-// Who the player may ride. Officer Dorkins is kept for a future chasing character, not as a player.
-export const PLAYABLE_RIDERS = Object.freeze(['cool-rider', 'trollina']);
+export { RIDERS, PLAYABLE_RIDERS, isPlayableRider };
 const MAX_EVENTS = 64;
 const MAX_CATCH_UP = 6; // bounded catch-up covers main's full 0.05 s clamp at 120 Hz
 
@@ -42,8 +39,15 @@ const MAX_CATCH_UP = 6; // bounded catch-up covers main's full 0.05 s clamp at 1
 // = 0.216 m, so every curb must be hopped. Rolling into one at >= EUC.obstacleCrashSpeed (3.5 m/s) is a crash.
 export const NYC_TUNING = Object.freeze({});
 
-export function isPlayableRider(id) {
-  return PLAYABLE_RIDERS.includes(id);
+/** Startup: await this before the synchronous entity/manager constructor; pass its result as `appearance`. */
+export async function prepareEucRider(id = 'cool-rider', { signal } = {}) {
+  if (!isPlayableRider(id)) throw new Error('Unknown playable rider: ' + String(id));
+  const check = () => { if (signal?.aborted) throw new DOMException('Rider preparation cancelled', 'AbortError'); };
+  check();
+  await yieldRiderStage(); check();
+  const appearance = await prepareAppearance(id, { signal }); check();
+  await yieldRiderStage(); check();
+  return appearance;
 }
 
 /** The rig's headlamp lens: its mesh, its material's own emissive level, and its front centre in the body frame. */
@@ -75,8 +79,8 @@ function createHeadlight(scene) {
   let lit = -1;
   return {
     spot,
-    attach(rig) {
-      lens = findLens(rig);
+    attach(rig, preparedLens = findLens(rig)) {
+      lens = preparedLens;
       lit = -1;
     },
     update() {
@@ -107,16 +111,26 @@ function createHeadlight(scene) {
   };
 }
 
-function buildRig(scene, riderId) {
-  const rig = createRidingRig(riderLook(riderId), machineLook(RIDERS[riderId].machine));
-  rig.group.traverse((o) => {
-    if (o.isMesh) o.receiveShadow = true; // castShadow is the look's own decision (riderLook.ts rule 3)
-  });
-  scene.add(rig.group);
-  return rig;
+function buildRig(riderId, appearance) {
+  let rig;
+  try {
+    if (appearance && (appearance.look?.id !== riderId || appearance.machine?.machine !== RIDERS[riderId].machine)) {
+      throw new Error('Prepared appearance does not match rider: ' + riderId);
+    }
+    rig = createRidingRig(appearance?.look ?? riderLook(riderId), appearance?.machine ?? machineLook(RIDERS[riderId].machine));
+    rig.group.traverse((o) => {
+      if (o.isMesh) o.receiveShadow = true; // castShadow is the look's own decision (riderLook.ts rule 3)
+    });
+    return rig;
+  } catch (error) {
+    rig?.dispose();
+    throw error;
+  } finally {
+    releaseAppearanceCaches();
+  }
 }
 
-export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'cool-rider', dynamicWorld } = {}) {
+export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'cool-rider', dynamicWorld, appearance } = {}) {
   let riderId = Object.hasOwn(RIDERS, rider) ? rider : 'cool-rider';
   const ground = sampler.sampleGround(x, z, { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false });
   const controller = new EucController(sampler, {
@@ -124,6 +138,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     tuning: NYC_TUNING,
     dynamicWorld,
   });
+  controller.setRideStyle(rideStyleFor(riderId));
   const previous = createPose();
   const current = createPose();
   const render = createPose();
@@ -132,10 +147,21 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
   copyPose(current, previous);
   copyPose(current, render);
 
-  let rig = buildRig(scene, riderId);
-  rig.apply(render);
-  const headlight = createHeadlight(scene);
-  headlight.attach(rig);
+  const constructionStart = performance.now();
+  let rig = buildRig(riderId, appearance);
+  let headlight;
+  try {
+    rig.apply(render);
+    const lens = findLens(rig);
+    headlight = createHeadlight(scene);
+    headlight.attach(rig, lens);
+    scene.add(rig.group);
+  } catch (error) {
+    scene.remove(rig.group);
+    rig.dispose();
+    headlight?.dispose();
+    throw error;
+  }
 
   let accumulator = 0;
   let simSeconds = 0;
@@ -144,6 +170,9 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
   let resetWasHeld = false;
   let recoveryPending = false;
   let wasCrashed = controller.crashed;
+  let lastStumbleCount = controller.stumbleCount;
+  let disposed = false;
+  let disposal = null;
   const events = [];
   const pushEvent = (e) => {
     if (events.length >= MAX_EVENTS) events.shift();
@@ -168,9 +197,11 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     chaseHeight: 1.9,
     pose: render,
     headlight: headlight.spot,
+    constructionMs: performance.now() - constructionStart,
 
     /** One rendered frame: run the fixed steps this frame owes, then interpolate and pose the rig. */
     update(dt, keys) {
+      if (disposed) return;
       const throttle = (keys.forward ? Number(keys.forward) : 0) - (keys.backward ? Number(keys.backward) : 0);
       // EUC: positive steer is the rider's right. The city's "left" key turns toward +heading.
       const steer = (keys.right ? Number(keys.right) : 0) - (keys.left ? Number(keys.left) : 0);
@@ -207,7 +238,12 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
         // Recovery is one placement, not an interpolated flight from the old wheel position.
         if (controller.placementSerial !== placementSerial) {
           copyPose(current, previous);
+          copyPose(current, render);
           tricks.reset();
+          rig.setTrickPose(0, 0);
+          hopPendingUntil = -1;
+          lastStumbleCount = controller.stumbleCount;
+          events.length = 0;
         }
         tricks.step(STEP, controller, current, hopHeld, !!keys.boost);
         simSeconds += STEP;
@@ -237,6 +273,9 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       if (crashed && !wasCrashed) pushEvent({ type: 'crash', speed: Math.abs(current.speed), rider: riderId });
       else if (!crashed && wasCrashed) pushEvent({ type: 'recover' });
       wasCrashed = crashed;
+      const stumbleCount = controller.stumbleCount;
+      if (stumbleCount > lastStumbleCount) pushEvent({ type: 'stumble', rider: riderId });
+      lastStumbleCount = stumbleCount;
     },
 
     /** Take every queued edge since the last call. */
@@ -244,27 +283,25 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       return events.splice(0, events.length);
     },
 
-    /** Swap the rider (look and machine livery). The controller, and so the ride, carries on unchanged. */
-    setRider(id) {
-      if (!Object.hasOwn(RIDERS, id) || id === riderId) return false;
-      scene.remove(rig.group);
-      rig.dispose();
-      riderId = id;
-      rig = buildRig(scene, riderId);
-      tricks.reset();
-      lerpPose(previous, current, accumulator / STEP, render);
-      rig.apply(render);
-      headlight.attach(rig);
-      headlight.update();
-      this.rig = rig;
-      this.mesh = rig.group;
-      this.riderId = riderId;
-      this.label = RIDERS[riderId].name;
-      return true;
+    /** Resolve a compiled, off-scene candidate; the host commits it together with its separately prepared audio. */
+    prepareRider(id, options) {
+      if (!isPlayableRider(id)) return Promise.reject(new Error('Unknown playable rider: ' + String(id)));
+      return preparation.prepareRider(id, options);
+    },
+
+    cancelRiderPreparation() {
+      return preparation.cancel();
+    },
+
+    /** Async convenience for callers that have no second resource to commit. Prefer prepareRider for audio coordination. */
+    async setRider(id, options) {
+      const candidate = await this.prepareRider(id, options);
+      try { return candidate.commit(); } finally { candidate.dispose(); }
     },
 
     /** Place the rider and reset interpolation only on success. Checked callers may preflight departure (0–1.2 m). */
     placeAt(px, pz, h = this.heading, referenceY = 0, { requireClear = false, departure = 0 } = {}) {
+      if (disposed) return false;
       if (![px, pz, h].every(Number.isFinite) || (!Number.isFinite(referenceY) && referenceY !== Infinity)) return false;
       const placementWorld = controller.dynamicWorld;
       const support = { maxStepUp: controller.tuning.maxStepUp, hull: placementWorld?.hull };
@@ -292,6 +329,9 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       accumulator = 0;
       recoveryPending = false;
       hopPendingUntil = -1;
+      hopWasHeld = resetWasHeld = false;
+      lastStumbleCount = controller.stumbleCount;
+      events.length = 0;
       const wasDown = wasCrashed;
       wasCrashed = controller.crashed;
       if (wasDown && !wasCrashed) pushEvent({ type: 'recover' });
@@ -312,10 +352,81 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     },
 
     dispose() {
-      scene.remove(rig.group);
-      rig.dispose();
-      headlight.dispose();
+      if (disposal) return disposal;
+      disposed = true;
+      this.clearInput();
+      events.length = 0;
+      // The renderer owner MUST await this promise before disposing its renderer/context.
+      disposal = preparation.dispose().then(() => {
+        scene.remove(rig.group);
+        try { rig.dispose(); } finally {
+          headlight.dispose();
+          releaseAppearanceCaches();
+        }
+      });
+      return disposal;
     },
   };
+  const preparation = new RiderPreparation({
+    prepare: prepareAppearance,
+    release: releaseAppearanceCaches,
+    construct(id, preparedAppearance) {
+      const candidateRig = buildRig(id, preparedAppearance);
+      try {
+        candidateRig.setTrickPose(0, 0);
+        candidateRig.applySwing(null, 0, 0);
+        candidateRig.apply(current);
+        const lens = findLens(candidateRig);
+        return { rig: candidateRig, group: candidateRig.group, lens, dispose() {
+          candidateRig.group.removeFromParent();
+          candidateRig.dispose();
+        } };
+      } catch (error) { candidateRig.dispose(); throw error; }
+    },
+    install(id, candidate) {
+      if (disposed) return false;
+      const oldRig = rig;
+      const nextStyle = rideStyleFor(id);
+      // Validate the candidate's final presentation before mutating committed controller/style identity.
+      const nextPose = createPose();
+      controller.writePose(nextPose);
+      if (nextStyle !== controller.rideStyle || id === 'drunkard') {
+        nextPose.styleSway = nextPose.styleYaw = nextPose.styleRoll = nextPose.styleStumble = 0;
+      }
+      candidate.rig.setTrickPose(0, 0);
+      candidate.rig.apply(nextPose);
+      // A confirmed same-rider rebuild also starts a fresh special-style history without resetting motion.
+      if (id === 'drunkard' && controller.rideStyle === nextStyle) controller.setRideStyle(rideStyleFor('cop'));
+      controller.setRideStyle(nextStyle);
+      controller.writePose(current);
+      copyPose(current, previous);
+      copyPose(current, render);
+      tricks.reset();
+      // Do not credit the old rider's unfinished flight to the replacement.
+      if (!controller.isGrounded) { tricks.flight = controller.flightIndex; tricks.cancel(); }
+      accumulator = 0;
+      hopPendingUntil = -1;
+      recoveryPending = false;
+      wasCrashed = controller.crashed;
+      lastStumbleCount = controller.stumbleCount;
+      events.length = 0;
+      rig = candidate.rig;
+      riderId = id;
+      scene.remove(oldRig.group);
+      scene.add(rig.group);
+      headlight.attach(rig, candidate.lens);
+      headlight.update();
+      entity.rig = rig;
+      entity.mesh = rig.group;
+      entity.riderId = riderId;
+      entity.label = RIDERS[riderId].name;
+      entity.position.set(render.x, render.y, render.z);
+      entity.heading = render.headingY;
+      entity.speed = render.speed;
+      oldRig.dispose();
+      releaseAppearanceCaches();
+      return true;
+    },
+  });
   return entity;
 }

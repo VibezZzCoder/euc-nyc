@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createFramePacer, createFrameRatePreference, frameRateHealth, FRAME_RATE_KEY } from '../js/frame-rate.js';
+import { menuOwner } from '../js/game-menu.js';
 
 test('FPS health respects the 30 cap and sample quantization without requiring a high-refresh display', () => {
   for (const fps of [27, 28, 30, 32]) assert.equal(frameRateHealth(fps, '30'), 'fps-ok');
@@ -147,6 +148,7 @@ test('selector restores persistence, clears held input, resets pacing and preser
 });
 
 const loop = main.slice(main.indexOf('  // 6. Animation Loop'), main.lastIndexOf('\n}'));
+const lifecycle = main.slice(main.indexOf('  function owner()'), main.indexOf('  // Compile only the candidate'));
 function loopFixture(choice, gpu = Promise.resolve()) {
   const noop = () => {}, calls = {}, events = {}, order = [];
   const record = (key) => (...args) => { (calls[key] ??= []).push(args); order.push(key); };
@@ -160,7 +162,7 @@ function loopFixture(choice, gpu = Promise.resolve()) {
   const framePacer = createFramePacer(choice), elFps = {};
   const env = {
     performance: { now: () => 0 }, console: { log: noop },
-    document: { hidden: false, addEventListener: (key, fn) => { events[key] = fn; }, body: { classList: { toggle: noop } } },
+    document: { hidden: false, getElementById: () => ({}), addEventListener: (key, fn) => { events[key] = fn; }, body: { classList: { toggle: noop } } },
     window: { addEventListener: (key, fn) => { events[key] = fn; } },
     startup: { failed: false, complete: record('complete'), fail: record('fail') },
     renderer: { setAnimationLoop: (fn) => { callback = fn; }, backend: { device: { queue: { onSubmittedWorkDone: () => gpu } } } },
@@ -170,8 +172,9 @@ function loopFixture(choice, gpu = Promise.resolve()) {
     booking: { active: false, state: {}, update: record('booking') }, BOOKING_STAGE: {},
     bookingScreen: { update: noop, updateGamepad: record('bookingInput') },
     bookingScene: { view: null, update() { return this.view; } },
-    gamepadControls: { update: record('input') },
-    controllerManager: { update: record('rider'), getActiveEntity: () => entity, resetInput: record('resetInput') },
+    gamepadControls: { update: record('input'), setEnabled: record('padEnabled'), reset: noop },
+    gameMenu: { isOpen: false, updateGamepad: record('menuInput') },
+    controllerManager: { update: record('rider'), getActiveEntity: () => entity, resetInput: record('resetInput'), setInputEnabled: record('inputEnabled') },
     nemesis: { update: record('pursuit'), director: { state: {} } }, nemesisHud: { update: noop },
     cameraSystem: {
       update(...args) {
@@ -181,6 +184,7 @@ function loopFixture(choice, gpu = Promise.resolve()) {
         cameraViews.push({ ...camera.position });
       },
       setCinematic(view) { record('cinematic')(view); cinematic = view.position; },
+      _clearPointers: noop,
       camera, currentPos, getActivePreset: () => ({ category: 'follow' })
     },
     streetDetails: { signalClock: { value: 0 }, update: record('streetLights'), treeField: {
@@ -193,8 +197,8 @@ function loopFixture(choice, gpu = Promise.resolve()) {
     trafficSystem: { update: record('traffic'), setPresentationClearance: noop },
     highwayTraffic: { update: record('highway') }, savePlayerState: noop,
     boroughs: {}, cityBlocks: { update: noop }, lightingSystem: { update: noop }, landmarks: { update: noop },
-    mapSystem: { update: noop, isFullMapOpen: false }, audioSystem: { update: record('audio') },
-    eucHud: { update: record('hud') }, touchControls: { setDown: noop }, promptDevice: 'keyboard',
+    mapSystem: { update: noop, cancelGestures: noop, isFullMapOpen: false }, audioSystem: { update: record('audio'), setPaused: record('audioPaused') },
+    eucHud: { update: record('hud') }, touchControls: { setDown: noop, setEnabled: noop }, promptDevice: 'keyboard',
     updateSceneCulling: record('culling'), scene: { traverse: noop }, renderPipeline: { render() {
       record('render')();
       renderViews.push({ ...camera.position });
@@ -203,8 +207,11 @@ function loopFixture(choice, gpu = Promise.resolve()) {
     markInit: noop, initTimings: [], loadingStatus: {}, loadingOverlay: null, setLoadingProgress: noop,
     renderLocation: noop, getLocationLabel: noop
   };
-  const reset = new Function(...Object.keys(env), `${loop}\nreturn resetFramePacing;`)(...Object.values(env));
-  return { step: (now) => callback(now), calls, events, order, treeViews, renderViews, cameraViews, reset, framePacer, elFps, env };
+  const controls = new Function(...Object.keys(env), 'menuOwner', `let lastOwner = null, dirtyView = false,
+    lifecycleReady = false, rendererBusy = false, stopped = false, pageAway = false;
+    ${lifecycle}\n${loop}\nreturn { reset: resetFramePacing, invalidate: () => { dirtyView = true; } };`)(...Object.values(env), menuOwner);
+  return { step: (now) => callback(now), calls, events, order, treeViews, renderViews, cameraViews,
+    ...controls, framePacer, elFps, env };
 }
 
 test('a cached pre-tricks rider still renders the first frame and completes startup', async () => {
@@ -255,7 +262,7 @@ test('tree admission follows the final title, riding, booking and map-return cam
   const f = loopFixture('30');
   let admit = true;
   f.framePacer.shouldRender = () => admit;
-  const step = (now, rendered, first = false) => {
+  const step = (now, rendered, first = false, frozen = false) => {
     const trees = f.treeViews.length, submissions = f.renderViews.length;
     f.order.length = 0;
     f.step(now);
@@ -264,7 +271,8 @@ test('tree admission follows the final title, riding, booking and map-return cam
     if (rendered) {
       assert.deepEqual(f.treeViews.at(-1), f.cameraViews.at(-1));
       assert.notDeepEqual(f.treeViews.at(-1), f.env.cameraSystem.currentPos);
-      assert.ok(f.order.indexOf('camera') < f.order.indexOf('trees'));
+      if (!frozen) assert.ok(f.order.indexOf('camera') < f.order.indexOf('trees'));
+      else assert.ok(!f.order.includes('camera'), 'paused view retains the final camera');
       assert.ok(f.order.indexOf('trees') < f.order.indexOf('render'));
       if (!first) assert.ok(f.order.indexOf('trees') < f.order.indexOf('culling'));
     } else {
@@ -285,7 +293,7 @@ test('tree admission follows the final title, riding, booking and map-return cam
   const bookingPosition = { x: 73, y: 2.75, z: -812 };
   f.env.bookingScene.view = { position: bookingPosition };
   admit = false;
-  step(41, false);
+  step(41, true); // lifecycle transition invalidates one view even between capped deadlines
   admit = true;
   step(80, true);
   assert.deepEqual(f.treeViews.at(-1), bookingPosition);
@@ -296,7 +304,7 @@ test('tree admission follows the final title, riding, booking and map-return cam
   f.env.cameraSystem.setCinematic({ position: null });
   f.env.mapSystem.isFullMapOpen = true;
   admit = false;
-  step(81, false);
+  step(81, true, false, true); // map opening takes one static scene frame
   f.env.mapSystem.isFullMapOpen = false;
   admit = true;
   step(120, true);
@@ -374,4 +382,43 @@ test('production loop keeps player simulation frozen during loading/title and hi
   assert.equal(f.calls.rider.length, 1, 'hidden updates cannot move the rider');
   assert.equal(f.calls.entity.at(-1)[0], 0);
   assert.equal(f.calls.pursuit.at(-1)[1], false, 'chase clocks remain frozen');
+});
+
+test('menu/map/hidden pause freezes simulation and elapsed clocks, polls modal input, renders statically, resumes without debt', () => {
+  for (const pause of ['menu', 'map', 'hidden']) {
+    const f = loopFixture('auto'); f.step(10); f.step(30);
+    const trafficCount = f.calls.traffic.length, riderCount = f.calls.rider.length;
+    const elapsed = f.calls.traffic.at(-1)[1];
+    if (pause === 'menu') f.env.gameMenu.isOpen = true;
+    if (pause === 'map') f.env.mapSystem.isFullMapOpen = true;
+    if (pause === 'hidden') f.env.document.hidden = true;
+    const renderCount = f.calls.render.length;
+    f.step(10000); f.step(20000); f.step(30000);
+    assert.equal(f.calls.traffic.length, trafficCount, 'traffic and pedestrians freeze');
+    assert.equal(f.calls.highway.length, trafficCount, 'highway freezes');
+    assert.equal(f.calls.rider.length, riderCount, 'player cannot drift');
+    assert.deepEqual(f.calls.pursuit.at(-1), [0, false], 'pursuit freezes');
+    assert.equal(f.calls.booking.at(-1)[1], false, 'booking elapsed is suspended');
+    assert.equal(f.calls.audioPaused.at(-1)[0], true);
+    assert.equal(f.calls.render.length, renderCount + Number(pause !== 'hidden'), 'one static frame, none while hidden');
+    if (pause === 'menu') assert.equal(f.calls.menuInput.length, 3, 'modal pad still polls');
+    f.env.gameMenu.isOpen = false; f.env.mapSystem.isFullMapOpen = false; f.env.document.hidden = false;
+    f.step(40000);
+    assert.equal(f.calls.rider.at(-1)[0], 0.001, 'no pause debt on resume');
+    assert.equal(f.calls.traffic.at(-1)[1], elapsed + 0.001);
+    assert.equal(f.calls.audioPaused.at(-1)[0], false);
+  }
+});
+
+test('an invalidated frozen map needs one scene submission, then stays static without advancing world clocks', () => {
+  const f = loopFixture('auto'); f.step(10);
+  f.env.mapSystem.isFullMapOpen = true; f.step(20);
+  const rendered = f.calls.render.length, traffic = f.calls.traffic.length, rider = f.calls.rider.length;
+  f.step(30); assert.equal(f.calls.render.length, rendered);
+  f.invalidate(); // applyViewportSize owns this exact dirtyView assignment, covered in viewport.test.cjs
+  f.step(40); assert.equal(f.calls.render.length, rendered + 1);
+  f.step(50); f.step(60);
+  assert.equal(f.calls.render.length, rendered + 1, 'no second frame is necessary for a static resized view');
+  assert.equal(f.calls.traffic.length, traffic); assert.equal(f.calls.rider.length, rider);
+  assert.deepEqual(f.calls.pursuit.at(-1), [0, false]);
 });

@@ -5,7 +5,7 @@ const { loadModule } = require('./helpers/module.cjs');
 
 // Execute the title and optional real input manager without constructing the city or renderer.
 // Events model capture/bubble cancellation; native browser click synthesis itself is not simulated.
-function harness({ coarse = false, reducedMotion = false, manager = false } = {}) {
+function harness({ coarse = false, reducedMotion = false, manager = false, modern = false, prepare } = {}) {
   function events(target = {}) {
     const listeners = new Map();
     target.addEventListener = (type, fn, options) => {
@@ -37,10 +37,11 @@ function harness({ coarse = false, reducedMotion = false, manager = false } = {}
   }
   document.body = node();
   const ride = node(), riderButtons = [node({ titleRider: 'cool-rider' }), node({ titleRider: 'trollina' })];
-  const root = node();
-  root.querySelector = () => ride;
+  const root = node(), picker = node(), pickerName = node(), status = node(), retry = node(), cancel = node();
+  const controls = { '#title-ride': ride, '#title-rider': picker, '#title-rider-name': pickerName, '#title-status': status, '#title-retry': retry, '#title-cancel': cancel };
+  root.querySelector = (selector) => modern ? controls[selector] : selector === '#title-ride' ? ride : null;
   root.querySelectorAll = () => riderButtons;
-  root.contains = (el) => el === root || el === ride || riderButtons.includes(el);
+  root.contains = (el) => el === root || Object.values(controls).includes(el) || riderButtons.includes(el);
   let pads = [], rejectPads = false, starts = 0, rider = 'cool-rider';
   const picks = [], timers = [], frames = [];
   const globals = { window, document, navigator: { getGamepads() {
@@ -61,10 +62,11 @@ function harness({ coarse = false, reducedMotion = false, manager = false } = {}
   }
   const { TitleScreen } = loadModule(readFileSync(require.resolve('../js/title-screen.js'), 'utf8'), { globals });
   const screen = new TitleScreen({ root, riders: riderButtons.map((btn) => btn.dataset.titleRider),
-    getRider: () => rider, onRider(id) { rider = id; picks.push(id); screen.setRider(id); },
+    getRider: () => rider, onRider(id) { if (!modern) rider = id; picks.push(id); screen.setRider(rider); },
+    onPrepareStart: prepare,
     onStart() { starts++; controller?.setInputEnabled(true); } });
   screen.show();
-  return { screen, root, ride, riderButtons, window, document, picks, timers, frames, controller,
+  return { screen, root, ride, riderButtons, picker, pickerName, status, retry, cancel, window, document, picks, timers, frames, controller,
     get starts() { return starts; },
     pads(value) { pads = value; }, rejectPads(value) { rejectPads = value; },
     key(code, type = 'keydown', options = {}) { return window.fire(type, { code, target: document.activeElement, ...options }); },
@@ -139,7 +141,8 @@ for (const gate of ['blur', 'hidden', 'unfocused']) {
       assert.deepEqual(h.picks, []);
       button(p, control, false); h.tick();
       button(p, control, true); h.tick(); h.tick();
-      if (control === 0 || control === 9) assert.equal(h.starts, 1);
+      if (control === 0) assert.equal(h.starts, 1);
+      else if (control === 9) { assert.equal(h.starts, 0, 'Start remains reserved for map after Ride'); assert.deepEqual(h.picks, []); }
       else assert.deepEqual(h.picks, ['trollina']);
     });
   }
@@ -228,4 +231,85 @@ test('starting before the show animation frame cannot re-show a retired overlay'
   assert.equal(h.root.hidden, true);
   assert.equal(h.root.classList.contains('is-shown'), false);
   assert.equal(h.document.activeElement, null);
+});
+
+test('metadata picker delegates C/legacy highlights without changing the title preview or starting Ride', () => {
+  const h = harness({ modern: true });
+  h.key('Digit2'); h.key('Digit2', 'keyup');
+  assert.deepEqual(h.picks, ['trollina']);
+  assert.equal(h.pickerName.textContent, 'cool-rider', 'only committed identity labels the in-world preview');
+  assert.match(h.picker.getAttribute('aria-label'), /^Choose rider\. Currently cool-rider/, 'selection is an explicit discoverable action');
+  h.key('KeyC'); h.key('KeyC', 'keyup');
+  assert.deepEqual(h.picks, ['trollina', 'cool-rider']);
+  h.picker.focus(); h.key('Enter');
+  assert.equal(h.starts, 0);
+});
+
+test('Ride invokes audio preparation in the gesture, gates startup until ready, and handles cancel/stale completion', async () => {
+  let resolve, preparations = 0;
+  const h = harness({ modern: true, prepare() {
+    preparations++; return new Promise(done => { resolve = done; });
+  } });
+  h.ride.fire('click');
+  assert.equal(preparations, 1, 'preparation called synchronously from the gesture');
+  assert.equal(h.starts, 0); assert.equal(h.screen.preparing, true); assert.equal(h.ride.disabled, true);
+  h.ride.fire('click'); assert.equal(preparations, 1);
+  h.cancel.fire('click'); resolve(); await new Promise(setImmediate);
+  assert.equal(h.starts, 0); assert.equal(h.screen.preparing, false); assert.equal(h.ride.disabled, false);
+  h.ride.fire('click'); resolve(); await new Promise(setImmediate);
+  assert.equal(h.starts, 1); assert.equal(h.screen.isOpen, false);
+});
+
+test('selected sound failures remain on title with Retry/Cancel; title links never become Ride via Space', async () => {
+  let fail = true;
+  const h = harness({ modern: true, prepare: () => fail ? Promise.reject(new Error('sound missing')) : Promise.resolve() });
+  h.ride.fire('click'); await new Promise(setImmediate);
+  assert.equal(h.starts, 0); assert.equal(h.retry.hidden, false); assert.match(h.status.textContent, /sound missing/);
+  h.key('Space', 'keydown', { target: { closest: () => ({ href: 'https://vibezzzcoder.github.io/EUC-thrills/' }) } });
+  assert.equal(h.starts, 0, 'Space on a link cannot start the game');
+  fail = false; h.retry.fire('click'); await new Promise(setImmediate);
+  assert.equal(h.starts, 1);
+});
+
+test('partial triggers and either stick must return to neutral before title pad confirmation', () => {
+  for (const channel of ['trigger', 'left', 'right']) {
+    const h = harness(), p = pad(); p.axes = [0, 0, 0, 0];
+    if (channel === 'trigger') p.buttons[7].value = 0.3;
+    else p.axes[channel === 'left' ? 0 : 2] = 0.4;
+    h.pads([p]); h.tick(); button(p, 0, true); h.tick(); assert.equal(h.starts, 0);
+    p.axes.fill(0); p.buttons[7].value = 0; button(p, 0, false); h.tick();
+    button(p, 0, true); h.tick(); assert.equal(h.starts, 1);
+  }
+});
+
+test('synchronous preparation errors remain retryable and Cancel returns focus to Ride after a real visibility reset', async () => {
+  const h = harness({ modern: true, prepare: () => { throw new Error('preparation unavailable'); } });
+  assert.doesNotThrow(() => h.ride.fire('click'));
+  await new Promise(setImmediate);
+  assert.equal(h.screen.preparing, false); assert.equal(h.ride.disabled, false);
+  assert.equal(h.retry.hidden, false); assert.equal(h.document.activeElement, h.retry);
+  assert.match(h.status.textContent, /preparation unavailable/);
+  h.key('Space');
+  h.document.hidden = true; h.document.fire('visibilitychange');
+  h.document.hidden = false; h.document.fire('visibilitychange');
+  assert.equal(h.key('Space', 'keydown', { repeat: true }).defaultPrevented, true);
+  h.cancel.fire('click');
+  assert.equal(h.document.activeElement, h.ride);
+  assert.equal(h.retry.hidden, true); assert.equal(h.cancel.hidden, true);
+  assert.equal(h.starts, 0);
+});
+
+test('native title return links keep keyboard defaults and fresh pad A activates the anchor without Ride', () => {
+  const h = harness({ modern: true });
+  let navigations = 0;
+  const anchor = { closest: selector => selector === 'a[href]' ? anchor : null, click() { navigations++; } };
+  h.document.activeElement = anchor;
+  for (const code of ['Enter', 'NumpadEnter', 'Space']) {
+    const down = h.key(code); const up = h.key(code, 'keyup');
+    assert.equal(down.defaultPrevented, false); assert.equal(up.defaultPrevented, false);
+    assert.equal(down.stopped, true); assert.equal(up.stopped, true);
+  }
+  const p = pad(); h.pads([p]); h.tick(); button(p, 0, true); h.tick(); h.tick();
+  assert.equal(navigations, 1, 'fresh A delegates to the anchor’s same-tab native click');
+  assert.equal(h.starts, 0); assert.equal(h.screen.preparing, false);
 });

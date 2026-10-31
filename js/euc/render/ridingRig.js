@@ -1,20 +1,20 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/ridingRig.ts.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/ridingRig.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 import { RIDER, RIDER_BLOCKOUT, WHEEL } from '../data/tuning.js';
 import { clamp01 } from '../shared/maths.js';
 import { RD_CHEST, RD_FOOT_L, RD_FOOT_R, RD_HAND_L, RD_HAND_R, RD_HEAD, RD_HIP_L, RD_HIP_R, RD_PELVIS, } from '../simulation/ragdoll.js';
 import { createBlockoutEUC } from './euc.js';
 import { STANDARD_MACHINE_LOOK } from './machineLook.js';
 import { armEaseForSpeed, createPlaceholderRider, createStanceInput } from './rider.js';
-import { COOL_RIDER_LOOK, MOTION_STILL } from './riderLook.js';
+import { riderLook, MOTION_STILL } from './riderLook.js';
 import { createPaddle } from './paddle.js';
 import { consolidateRig } from './rigConsolidation.js';
 export const BAKED_PAIRS = Object.freeze([
     Object.freeze(['euc-pad-right', 'euc-pad-left']),
     Object.freeze(['euc-pedal-right', 'euc-pedal-left']),
 ]);
-export function createRidingRig(look = COOL_RIDER_LOOK, machine = STANDARD_MACHINE_LOOK, options = {}) {
+export function createRidingRig(look = riderLook('cool-rider'), machine = STANDARD_MACHINE_LOOK, options = {}) {
     const group = new THREE.Group();
     group.name = 'riding-rig';
     const motion = look.motion ?? MOTION_STILL;

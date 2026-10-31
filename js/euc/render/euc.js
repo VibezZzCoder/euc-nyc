@@ -1,6 +1,6 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/euc.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 import { BLOCKOUT_COLOURS, FX, WHEEL } from '../data/tuning.js';
 import { clamp01, lerp } from '../shared/maths.js';
 import { loftGeometry, loftNormal, loftPoint, loftProfile, mapUvInto, mergeGeometries, patchGeometry, shaded, tintOver, vAtHeight, } from './blockoutKit.js';

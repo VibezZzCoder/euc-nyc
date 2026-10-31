@@ -3,15 +3,22 @@
 **[▶ Play now](https://vibezzzcoder.github.io/euc-nyc/)**
 
 Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds.
-A free side project of [*EUC Thrills*](https://github.com/VibezZzCoder/EUC-thrills) by VibezZzCoder. The riding
+A free, separately hosted city destination within [*EUC Thrills*](https://github.com/VibezZzCoder/EUC-thrills) by
+VibezZzCoder. The riding
 (the wheel's physics, the riders and the crashes) comes from *EUC Thrills*. The city is a fork of Mr.doob's
 open-source [three.js New York](https://github.com/mrdoob/slop-newyork) (MIT); it is not meant to merge back.
 
 Exploration comes first: roam freely, find a route and enjoy the city. Tricks and skateparks are optional extras.
 
-Status: early. Riders: Cool Rider (`1`) and Trollina (`2`). Cars, buses and pedestrians are solid: hitting one at
-speed is a crash. Real-world brands are replaced with fictional ones. Street, park and landmark names are kept as
-place names.
+**Full-roster update (2026-10-31):** choose from all eleven riders, read their rider and wheel profiles, and explore
+with selected-rider audio, a pause menu and controller-operated map cursor. Return to EUC Thrills in the same tab
+from the title or pause menu. Main-game menu launch integration and coordinated cross-game round trips are pending.
+
+Reviewed riders: **Cool Rider, Trollina, Red Rider, Adonisb2, Maribel Vargas, Wheel in Motion, The Drunkard, FloWithZo,
+Seal on a Wheel, Wyldist and Gnarwheel**, with their own looks, wheels and mapped crash sounds. Officer Dorkins stays
+NPC-only. Cars, buses and pedestrians are solid: hitting one at speed is a crash. City brands are fictional/generic;
+reviewed participant marks, including Wyldist's separately owned SMLS sleeve mark, are the narrow owner-approved
+exception. Street, park and landmark names are kept as place names. See the [rights notice](NOTICE-EUC-THRILLS.md).
 
 <p align="center">
   <a href="screenshots/blue-hour-times-square-pursuit.png"><img src="screenshots/blue-hour-times-square-pursuit.png" width="420" alt="Officer Dorkins pursuing Cool Rider near Times Square at Blue Hour, with illuminated billboards, taxis and a delivery van." /></a>
@@ -35,6 +42,8 @@ If graphics or a required game file fails during startup, the loading screen exp
 
 ### Keyboard and gamepad
 
+Current local controls:
+
 | | Keyboard | Gamepad (Xbox layout) |
 |---|---|---|
 | Lean forward / back | `W` / `S` | RT / LT, or left stick |
@@ -42,11 +51,33 @@ If graphics or a required game file fails during startup, the loading screen exp
 | Hop (kerbs!) | `Space` | A |
 | Crouch | `Shift` | X |
 | Get up after a crash | `R` | B |
-| Rider | `1` / `2` | LB / RB |
+| Rider picker | `C`; legacy `1` / `2` open/highlight Cool Rider / Trollina | LB / RB open/highlight picker |
 | Camera | `V`, `5`–`0` | Y; right stick orbits |
 | Map | `M` | Start |
+| Pause / menu | `Escape` or `P` | Back / View (button 8) |
 
-The on-screen hints switch to gamepad buttons as soon as a pad is used. `?rider=trollina` in the URL picks a rider.
+Use **Choose rider** on the title screen or **Change rider** while playing. Browse the roster to read each rider's
+original profile and wheel details, then use the named **Select** button. Browsing only highlights a choice; the
+prepared selection replaces the active one when ready. On a controller, **RS** scrolls the profile details.
+Audio/worker failures offer **Retry** / **Cancel**; appearance-module
+download failure offers **Reload NYC**, keeping the committed rider and checkpoint rather than the pending choice.
+Browsing plays no sample and never swaps immediately. Camera keys `5`–`0` and gamepad Start-to-map keep their existing
+roles. In dialogs, Escape/B cancels
+the current dialog; booking retains its deliberate controls.
+
+The menu's separated **Return to EUC Thrills main menu** action asks for confirmation; **Keep riding** cancels.
+The title's **← EUC Thrills main menu** link leaves in the same tab. Reviewed main-game source lands at its top-level
+menu from [the clean root](https://vibezzzcoder.github.io/EUC-thrills/); coordinated launch/return QA is pending.
+
+Pause/menu, Rider selection and the full map freeze riding and city simulation and silence playback. Closing a
+dialog restores keyboard focus to its caller; click/tap the city canvas to return to riding keys.
+
+On the full map, **LS** moves the cursor, **RS** pans, **LT / RT** zoom, **A** selects/teleports, **X** centers on you,
+**Y** fits Manhattan, and **B / Start** closes. **D-pad** selects map controls or existing search results; use a fresh
+**A** to activate. Return held sticks/triggers to neutral after opening or resizing the map.
+
+The on-screen hints switch to gamepad buttons as soon as a pad is used, including on touch-capable screens.
+`?rider=trollina` requests a reviewed rider.
 The [player guide](PLAYER_GUIDE.md) has everything else: how the wheel rides, crashes, the city and every control.
 
 ### Mobile controls — portrait and landscape
@@ -116,21 +147,36 @@ for the chase rules, release and skip controls.
 - `node --test tests/*.test.*` runs the headless tests. Use Node 24, also needed for the EUC vendor tool's native TypeScript stripping.
 - `js/euc/` is generated. Do not edit it. To update it from a local EUC Thrills checkout (`npm ci` done there), run
   `node tools/vendor-euc.mjs --src <path-to-EUC-thrills>`. Run it with `--check` to
-  confirm the folder is current. The tool only keeps the riders in scope, and it fails if anything from a real-person
-  rider reaches the output.
+  confirm the folder is current. Scope is the explicit eleven playable IDs from EUC Thrills v1.1.0
+  `5f45fff19b258e140833841ba2473069af751a12`, plus NPC-only `cop`, not future source additions. Preserve reviewed
+  source/output hashes, inventory/privacy checks and per-file rights. The local generated graph has 40 eager and
+  60 deferred modules; selected CPU-only pixel workers retire after preparation. Module caching does not retain
+  eleven rigs, atlases or decoded audio banks. Validate the actual public-filtered snapshot separately from local tests.
 - three.js (one pinned dev commit) and the Inter and Overpass fonts are kept in the repo (`vendor/three/`, `fonts/`),
   so the game loads from its own host only. `node tools/vendor-three.mjs` fetches them again (to move three.js, change
   the commit in the tool first); `--check` confirms they are unchanged and complete.
+
+### Fork authors and coding agents
+
+**[Read the public fork guide](FORK_GUIDE.md)** before repurposing the roster. Independently branded forks with
+original characters are encouraged. MIT code and CC BY original assets have no EUC Thrills branding condition;
+real identities, supplied logos, contributed recordings and SMLS have separate rights. For an independent game,
+replace identity-bearing material unless separately permitted. Hiding chooser entries or renaming riders is not
+removal: trace imports, embedded payloads, audio and actual distributed output. Keeping the name grants no rights.
 
 ## License and data
 
 - Code: [MIT License](LICENSE). The city (Slop New York) © 2026 Mr.doob; the EUC spin-off's own code (riding the
   city, the HUD, touch controls, sound, the park gates) © 2026 VibezZzCoder. Keep both copyright lines in every copy.
-- *EUC Thrills* code: MIT, © 2026 VibezZzCoder (`js/euc/LICENSE`). Rider and wheel assets: CC BY 4.0. Assets from
+- *EUC Thrills* code: MIT, © 2026 VibezZzCoder (`js/euc/LICENSE`). Original rider/wheel asset work: CC BY 4.0,
+  **excluding real identities and the supplied/third-party material identified in the notice**. Assets from
   *EUC Thrills* by VibezZzCoder — CC BY 4.0 — https://github.com/VibezZzCoder/EUC-thrills. See
   [NOTICE-EUC-THRILLS.md](NOTICE-EUC-THRILLS.md), which must travel with every copy. Audio files and their licences
-  are listed in [audio/euc/PROVENANCE.md](audio/euc/PROVENANCE.md). Trollina's crash vocal is machine-generated and is
-  not covered by CC BY 4.0.
+  are listed in [audio/euc/PROVENANCE.md](audio/euc/PROVENANCE.md). Adonisb2/Maribel/Wyldist/Gnarwheel contributed
+  recordings are not CC BY; Gnarwheel's original synthesized alarm is separately CC BY. Seal's crash mixes original
+  CC BY work with CC0 bark. Trollina's crash and Drunkard's crash/stumble have generated vocals outside the blanket
+  CC BY claim. The owner considers existing participant permissions applicable to NYC within EUC Thrills; this
+  records that position, not independently verified expanded grants or permission for unrelated downstream games.
 - Geographic data: NYC Open Data and © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL).
   The OpenStreetMap-derived parts of `js/nyc-geodata.js` are a derivative database under the ODbL and stay openly
   available in this repository. These credits are also shown in the game, on the full map (`M`).

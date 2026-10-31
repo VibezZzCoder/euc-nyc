@@ -21,7 +21,9 @@ import { NYCMapSystem } from './nyc-map.js';
 import { setupSceneCulling, updateSceneCulling } from './scene-culling.js';
 import { CityAudioSystem } from './audio-system.js';
 import { createEucDynamicWorld, combineBodySources } from './euc-dynamic.js';
-import { PLAYABLE_RIDERS, RIDERS, isPlayableRider } from './euc-rider.js';
+import { prepareEucRider } from './euc-rider.js';
+import { PLAYABLE_RIDERS, RIDERS, isPlayableRider } from './euc-roster.js';
+import { GameMenu, RiderSelection, MAIN_MENU_URL, menuOwner } from './game-menu.js';
 import { EucHud, formatSpeed } from './euc-hud.js';
 import { TitleScreen } from './title-screen.js';
 import { createNemesis } from './nemesis.js';
@@ -86,6 +88,13 @@ export async function initApp(startup) {
   container.appendChild(renderer.domElement);
   let rendererInit = null;
   let compileWork = null;
+  let runtimeCompile = null;
+  let rendererBusy = false;
+  let stopRuntime = async () => {};
+  let stopped = false;
+  let pageAway = false;
+  let bookingScreen = null;
+  const startupPreparation = new AbortController();
   const graphicsFailed = (error) => {
     startup.phase('graphics');
     startup.fail(error instanceof Error ? error : new Error(error?.message || 'The graphics device was lost.'));
@@ -94,10 +103,18 @@ export async function initApp(startup) {
   renderer.onError = graphicsFailed;
   // Register before awaiting init: a failure may occur while the graphics promise is still pending.
   startup.onStop(async () => {
+    stopped = true;
+    startupPreparation.abort();
     setGameUIEnabled(false);
+    // Close native modals synchronously, before boot focuses Retry. Its onStop callbacks aren't awaited.
+    const runtimeStop = stopRuntime();
     try { await renderer.setAnimationLoop(null); } catch { /* Initialization may not have finished. */ }
+    // This handler is registered first. Drain the current resource owner here rather than relying
+    // on later additive callbacks (boot invokes those concurrently, not in disposal order).
+    await runtimeStop;
     try { await rendererInit; } catch { /* The failed init still needs cleanup. */ }
     try { await compileWork; } catch { /* Drain in-flight jobs before releasing their renderer. */ }
+    try { await runtimeCompile; } catch { /* Candidates own their attachments until this settles. */ }
     await renderer.setAnimationLoop(null);
     renderer.dispose();
   });
@@ -164,9 +181,11 @@ export async function initApp(startup) {
   // Saved state: { version: 2, rider, euc: { x, y, z, heading } }. Version 1 (the spike's multi-mode save) still loads
   // its EUC pose. The fork keeps its own key, so it never shares a save with Slop New York on the same origin.
   const playerState = createPlayerState({ isPlayableRider });
-  // ?rider=cool-rider | trollina overrides the saved rider (handy for links and QA)
+  // Any reviewed playable ?rider= ID overrides the saved rider (handy for links and QA).
   const riderParam = new URLSearchParams(location.search).get('rider');
   const rider = [riderParam, playerState.rider].find(isPlayableRider) ?? PLAYABLE_RIDERS[0];
+  const appearance = await prepareEucRider(rider, { signal: startupPreparation.signal });
+  if (startup.failed) return;
   // Cars, buses and pedestrians are moving obstacles for the wheel (euc-dynamic.js): a hit at speed is a crash
   const dynamicWorld = createEucDynamicWorld(combineBodySources(trafficSystem, highwayTraffic));
   const ride = {
@@ -175,8 +194,13 @@ export async function initApp(startup) {
     tops: [...cityGrid.ride.tops, ...streetDetails.ride.tops]
   };
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders, {
-    ride, rider, dynamicWorld, inputEnabled: false
+    ride, rider, appearance, dynamicWorld, inputEnabled: false
   });
+  stopRuntime = async () => {
+    controllerManager.setInputEnabled(false);
+    try { await compileWork; } catch { /* Drain startup shader readers before the active rig. */ }
+    await controllerManager.dispose();
+  };
   const booking = createBookingDirector();
   // Reuse teleport placement so a saved rider returns at rest, close to where they were.
   playerState.restore((pose) => controllerManager.teleportActiveTo(pose.x, pose.z, pose.heading, pose.y).succeeded);
@@ -206,30 +230,36 @@ export async function initApp(startup) {
     onStateChange: updateSoundButton
   });
   if (nemesis) audioSystem.setChaser(nemesis);
-  startup.onStop(() => {
+  stopRuntime = async () => {
     controllerManager.setInputEnabled(false);
     touchControls.setEnabled(false);
     audioSystem.dispose();
     nemesis?.hide();
-  });
+    try { await compileWork; } catch { /* Boot compilation may still reference the active rig. */ }
+    await controllerManager.dispose();
+  };
   const nemesisHud = nemesis ? new NemesisHud(document) : null;
   const bookingScene = nemesis ? createBookingScene(scene, nemesis) : null;
   function updateSoundButton() {
+    const unavailableReason = audioSystem.unavailableReason;
+    for (const id of ['sound-unavailable', 'title-audio-status', 'menu-audio-status']) {
+      const notice = document.getElementById(id);
+      if (notice) { notice.textContent = unavailableReason ?? ''; notice.hidden = !unavailableReason; }
+    }
+    // Event/layout-only measurement: the visible reason needs its own row above the touch gauge.
+    const soundNotice = document.getElementById('sound-unavailable');
+    const noticeSpace = unavailableReason && soundNotice ? Math.ceil(soundNotice.getBoundingClientRect().height) + 8 : 0;
+    document.body.style.setProperty('--sound-notice-space', `${noticeSpace}px`);
     if (!soundButton) return;
     soundButton.disabled = !audioSystem.supported;
-    soundButton.setAttribute('aria-pressed', String(audioSystem.enabled));
-    soundButton.setAttribute('aria-label', audioSystem.enabled ? 'Mute sound' : 'Enable sound');
-    soundButton.title = audioSystem.supported ? `${audioSystem.enabled ? 'Mute' : 'Enable'} sound [N]` : 'Web Audio is unavailable';
-    soundButton.querySelector('use').setAttribute('href', audioSystem.enabled ? '#i-sound' : '#i-sound-off');
+    soundButton.setAttribute('aria-pressed', String(audioSystem.supported && audioSystem.enabled));
+    soundButton.setAttribute('aria-label', unavailableReason ?? (audioSystem.enabled ? 'Mute sound' : 'Enable sound'));
+    soundButton.title = unavailableReason ?? `${audioSystem.enabled ? 'Mute' : 'Enable'} sound [N]`;
+    soundButton.querySelector('use').setAttribute('href', audioSystem.supported && audioSystem.enabled ? '#i-sound' : '#i-sound-off');
   }
   soundButton?.addEventListener('click', () => audioSystem.setEnabled(!audioSystem.enabled));
   updateSoundButton();
-  // pagehide also covers navigation away on mobile; preserve the context across back-forward cache restores.
-  window.addEventListener('pagehide', (event) => {
-    savePlayerState();
-    if (!event.persisted) audioSystem.dispose();
-  });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) savePlayerState(); });
+  // Lifecycle suspension is installed with the menu/input owner below. BFCache never destroys the renderer.
   markInit('controllers');
 
   // Island-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
@@ -298,8 +328,8 @@ export async function initApp(startup) {
   const renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
 
   // 6. Wire UI Controls (Strictly using safe DOM APIs: textContent, classList, addEventListener)
-  const riderButtons = document.querySelectorAll('[data-rider]');
   let titleScreen = null; // TitleScreen, created with the rest of the UI below
+  let gameMenu = null;
   const cameraButtons = document.querySelectorAll('[data-camera]');
   const timeButtons = document.querySelectorAll('[data-time]');
   const viewPreferences = createViewPreferences({
@@ -341,21 +371,29 @@ export async function initApp(startup) {
   const elControlsHint = document.getElementById('hud-controls-hint');
   const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
     onCycleRider: (step) => {
-      const i = PLAYABLE_RIDERS.indexOf(controllerManager.getActiveEntity().riderId);
-      selectRider(PLAYABLE_RIDERS[(i + step + PLAYABLE_RIDERS.length) % PLAYABLE_RIDERS.length]);
+      gameMenu?.browse(step);
+    },
+    onToggleMenu: () => {
+      if (mapSystem.isFullMapOpen) mapSystem.toggleFullMap(false);
+      gameMenu?.openPause();
     },
     onCycleCamera: cycleCamera,
     onToggleMap: () => mapSystem.toggleFullMap(!mapSystem.isFullMapOpen),
     onCloseMap: () => mapSystem.toggleFullMap(false),
+    isMapOpen: () => owner() === 'map',
+    onMapInput: (input, dt) => {
+      if (!input.neutral) setPromptDevice('gamepad');
+      mapSystem.applyGamepadInput(input, dt);
+    },
     onActivity: () => setPromptDevice('gamepad')
   });
 
   // Control guide per input device: [buttons, action]. Gamepad names follow the Xbox layout (standard mapping).
   const controlHints = {
     keyboard: [[['W', 'S'], 'Lean forward / back'], [['A', 'D'], 'Carve'], [['Space'], 'Hop'], [['Shift'], 'Crouch'],
-      [['R'], 'Get up'], [['1', '2'], 'Rider'], [['Drag'], 'Orbit']],
-    gamepad: [[['RT', 'LT'], 'Lean forward / back'], [['LS'], 'Carve'], [['A'], 'Hop'], [['X'], 'Crouch'],
-      [['B'], 'Get up'], [['LB', 'RB'], 'Rider'], [['RS'], 'Orbit'], [['Y'], 'Camera']],
+      [['R'], 'Get up'], [['C'], 'Change rider'], [['P'], 'Menu'], [['M'], 'Map'], [['Drag'], 'Orbit']],
+    gamepad: [[['RT', 'LT'], 'Lean forward / back'], [['LS'], 'Ride / steer'], [['A'], 'Hop'], [['X'], 'Crouch'],
+      [['B'], 'Get up'], [['LB', 'RB'], 'Change rider'], [['View'], 'Menu'], [['Start'], 'Map'], [['RS'], 'Orbit'], [['Y'], 'Camera']],
     // Touch shows its own on-screen controls; the guide row is hidden there (style.css)
     touch: []
   };
@@ -365,6 +403,7 @@ export async function initApp(startup) {
     if (device === promptDevice || !controlHints[device]) return;
     promptDevice = device;
     document.body.dataset.input = device;
+    mapSystem.setInputDevice(device);
     renderControlHints();
   }
   window.addEventListener('keydown', (e) => { if (!isTypingInField(e)) setPromptDevice('keyboard'); }, true);
@@ -372,10 +411,37 @@ export async function initApp(startup) {
     if (e.pointerType === 'mouse') setPromptDevice('keyboard');
     else if (e.pointerType === 'touch') setPromptDevice('touch');
   }, true);
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse' && mapSystem.isFullMapOpen) setPromptDevice('keyboard');
+  }, { passive: true });
   // Full scale of the speed meter: the wheel's derived top speed (EucController.derivedTopSpeed), in mph
   const topSpeedMph = () => Math.max(20, controllerManager.getActiveEntity().controller.derivedTopSpeed * 2.237);
 
   function renderControlHints() {
+    for (const key of document.querySelectorAll('kbd[data-keyboard][data-gamepad]')) {
+      const text = promptDevice === 'gamepad' ? key.dataset.gamepad : key.dataset.keyboard;
+      key.textContent = text;
+      key.hidden = promptDevice === 'touch' || !text;
+      if (promptDevice === 'gamepad') key.dataset.pad = text; else delete key.dataset.pad;
+    }
+    const pad = promptDevice === 'gamepad';
+    for (const [id, title] of Object.entries({
+      'btn-open-map': `Full New York City street map [${pad ? 'Start' : 'M'}]`,
+      'minimap-card': `Open the full New York City street map [${pad ? 'Start' : 'M'}]`,
+      'btn-rider': `Change rider [${pad ? 'LB / RB' : 'C'}]`,
+      'btn-game-menu': `Pause / menu [${pad ? 'View' : 'P / Escape'}]`,
+      'cam-menu-btn': `Camera [${pad ? 'Y to cycle' : 'V to cycle'}]`,
+      'cam-next': pad ? 'Next camera [Y]' : 'Next camera [V]',
+      'cam-prev': pad ? 'Previous camera' : 'Previous camera [Shift+V]',
+      'close-fullmap-btn': `Close map [${pad ? 'B / Start' : 'M / Esc'}]`,
+      'map-zoom-in': pad ? 'Zoom in [RT]' : 'Zoom in',
+      'map-zoom-out': pad ? 'Zoom out [LT]' : 'Zoom out',
+      'map-center-player': pad ? 'Center on player [X]' : 'Street view around you',
+      'map-view-all': pad ? 'All of Manhattan [Y]' : 'All of Manhattan (125th St to Battery Park)'
+    })) {
+      const button = document.getElementById(id); if (button) button.title = title;
+    }
+    if (mapSystem.isFullMapOpen) mapSystem.layoutStatus();
     if (!elControlsHint) return;
     const items = controlHints[promptDevice].map(([keys, action]) => {
       const item = document.createElement('span');
@@ -403,18 +469,12 @@ export async function initApp(startup) {
     riderSwitch.style.setProperty('--ind-w', `${active.offsetWidth}px`);
   }
 
-  function selectRider(id) {
-    if (!isPlayableRider(id)) return;
-    controllerManager.setRider(id);
+  function updateCommittedRider() {
     const ent = controllerManager.getActiveEntity();
-    riderButtons.forEach((btn) => {
-      const on = btn.getAttribute('data-rider') === ent.riderId;
-      btn.classList.toggle('active', on);
-      btn.setAttribute('aria-pressed', String(on));
-    });
-    placeRiderIndicator();
     titleScreen?.setRider(ent.riderId);
     if (elMode) elMode.textContent = RIDERS[ent.riderId].name;
+    const label = document.getElementById('rider-button-name');
+    if (label) label.textContent = RIDERS[ent.riderId].name;
     savePlayerState();
 
     // Every selectable camera follows the rider, so retain the chosen shot across a rider swap.
@@ -489,12 +549,6 @@ export async function initApp(startup) {
     });
   });
 
-  riderButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      selectRider(btn.getAttribute('data-rider'));
-    });
-  });
-
   cameraButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       selectCamera(btn.getAttribute('data-camera'), true);
@@ -516,7 +570,7 @@ export async function initApp(startup) {
   // A mouse click mustn't leave the focus on a HUD button, or Space (hop) and Enter would press it again
   document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('button') : null;
-    if (btn && e.detail > 0) btn.blur();
+    if (btn && e.detail > 0 && !btn.closest('dialog, #title-overlay')) btn.blur();
   });
 
   // Where you are: the place's name over its street corner, drawn as a pair of NYC street-name signs
@@ -586,17 +640,8 @@ export async function initApp(startup) {
     trafficSystem,
     allBlocks: cityBlocks.allBlocks,
     onToggle: (open) => {
-      resetFramePacing();
-      const enabled = !open && (titleScreen?.started || !titleScreen?.root) && !booking.active && !startup.failed;
-      controllerManager.setInputEnabled(enabled);
-      controllerManager.resetInput();
-      cameraSystem._clearPointers();
-      touchControls.setEnabled(enabled);
-      gamepadControls.setEnabled(enabled);
-      const mapHint = document.getElementById('fullmap-hover-info');
-      if (open && touchControls.available && mapHint) {
-        mapHint.textContent = 'Tap to teleport · Drag to pan · Use + / − to zoom';
-      }
+      syncLifecycle();
+      if (open) mapSystem.setInputDevice?.(promptDevice);
     },
     onTeleport: teleportTo
   });
@@ -606,14 +651,153 @@ export async function initApp(startup) {
     btn.addEventListener('click', () => {
       const key = btn.getAttribute('data-teleport');
       const loc = TELEPORT_LOCATIONS[key];
-      if (loc) {
-        teleportTo(loc.x, loc.z, loc.heading, loc.y ?? Infinity);
-      }
+      if (loc) teleportTo(loc.x, loc.z, loc.heading, loc.y ?? Infinity);
       closePopovers();
     });
   });
-
   const openMapBtn = document.getElementById('btn-open-map');
+
+  let lifecycleReady = false;
+  let dirtyView = true;
+  let lastOwner = null;
+  function owner() {
+    return menuOwner({ failed: startup.failed || stopped, hidden: document.hidden, pageAway,
+      booking: booking.active, menu: gameMenu?.isOpen, map: mapSystem.isFullMapOpen,
+      title: !titleScreen || titleScreen.isOpen || !titleScreen.started && !!titleScreen.root });
+  }
+  function syncLifecycle() {
+    const current = owner();
+    if (current === lastOwner) return;
+    lastOwner = current;
+    dirtyView = true;
+    if (lifecycleReady) resetFrameClock();
+    const enabled = current === 'riding';
+    controllerManager.setInputEnabled(enabled);
+    controllerManager.resetInput();
+    touchControls.setEnabled(enabled);
+    gamepadControls.setEnabled(enabled);
+    gamepadControls.reset();
+    cameraSystem._clearPointers();
+    mapSystem.cancelGestures();
+    mapSystem.enabled = enabled || current === 'map';
+    audioSystem.setPaused(current !== 'riding' && current !== 'booking');
+  }
+
+  // Compile only the candidate, but with the real scene's full light/environment set and exact
+  // scene-pass MRT. Never render/resize or dispose its inputs until compileAsync actually drains.
+  function compileRider({ group }, { signal }) {
+    const work = (async () => {
+      if (runtimeCompile) await runtimeCompile;
+      if (signal.aborted || stopped) throw new DOMException('Compilation cancelled', 'AbortError');
+      rendererBusy = true;
+      const target = renderer.getRenderTarget(), previousMRT = renderer.getMRT();
+      const culled = [];
+      try {
+        scene.add(group);
+        group.traverse(object => { if (object.frustumCulled) { culled.push(object); object.frustumCulled = false; } });
+        renderer.setRenderTarget(scenePass.renderTarget);
+        renderer.setMRT(sceneMRT);
+        await renderer.compileAsync(group, cameraSystem.camera, scene);
+      } finally {
+        renderer.setMRT(previousMRT);
+        renderer.setRenderTarget(target);
+        group.removeFromParent();
+        for (const object of culled) object.frustumCulled = true;
+        rendererBusy = false;
+        dirtyView = true;
+        scheduleViewportResize();
+      }
+    })();
+    runtimeCompile = work;
+    // Keep the native promise alive even if the request's signal is already aborted.
+    work.finally(() => { if (runtimeCompile === work) runtimeCompile = null; }).catch(() => {});
+    return work;
+  }
+  const riderSelection = new RiderSelection({ manager: controllerManager, audio: audioSystem,
+    compile: compileRider, onCommit: () => { updateCommittedRider(); dirtyView = true; } });
+  gameMenu = new GameMenu({ root: document.getElementById('game-menu'), riders: PLAYABLE_RIDERS, specs: RIDERS,
+    getRider: () => controllerManager.getActiveEntity().riderId,
+    canOpen: view => !startup.failed && !stopped && !document.hidden && !pageAway && !booking.active
+      && !mapSystem.isFullMapOpen && !titleScreen?.preparing && (view === 'picker' || titleScreen?.started),
+    onChange: () => { closePopovers(); titleScreen?.resetInput(); syncLifecycle(); },
+    onConfirm: id => riderSelection.prepare(id), onCancel: () => riderSelection.cancel(),
+    onActivity: () => setPromptDevice('gamepad'),
+    onReload: () => {
+      savePlayerState();
+      riderSelection.cancel();
+      // Preserve the committed preview even before Ride (which alone authorizes storage),
+      // and replace any older ?rider= override. This is game state, never an asset cache-buster.
+      const url = new URL(location.href);
+      url.searchParams.set('rider', controllerManager.getActiveEntity().riderId);
+      try { history.replaceState(history.state, '', url); } catch { /* Storage/history restrictions must not trap reload. */ }
+      location.reload(); // Existing pagehide owns suspension/cancellation; a blocked reload leaves Cancel usable.
+    },
+    onLeave: () => {
+      savePlayerState(); // authorized only by Ride; storage failure never traps departure
+      pageAway = true;
+      riderSelection.cancel();
+      syncLifecycle();
+      location.assign(MAIN_MENU_URL);
+    }
+  });
+  document.getElementById('btn-rider')?.addEventListener('click', () => gameMenu.openPicker());
+  document.getElementById('btn-game-menu')?.addEventListener('click', () => gameMenu.openPause());
+  // Capture only pause shortcuts. Map Escape and native popover light-dismiss retain precedence.
+  window.addEventListener('keydown', event => {
+    const current = owner();
+    if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.isComposing
+      || gameMenu.isOpen || !['riding', 'map'].includes(current) || isTypingInField(event)) return;
+    if (!['Escape', 'KeyP'].includes(event.code)) return;
+    if (current === 'map' && event.code === 'Escape') return;
+    if (event.code === 'Escape' && [...popovers].some(pop => supportsPopover && pop.matches(':popover-open'))) return;
+    if (current === 'map') mapSystem.toggleFullMap(false);
+    event.preventDefault(); event.stopImmediatePropagation(); gameMenu.openPause();
+  }, true);
+  const suspendPage = () => {
+    savePlayerState();
+    riderSelection.cancel();
+    titleScreen?.cancelPreparation();
+    syncLifecycle();
+  };
+  document.getElementById('title-main-menu')?.addEventListener('click', () => {
+    pageAway = true;
+    suspendPage(); // ordinary same-tab anchor navigation; never authorizes a title save
+  });
+  window.addEventListener('pagehide', () => { pageAway = true; suspendPage(); });
+  window.addEventListener('pageshow', () => {
+    pageAway = false;
+    gameMenu.leaving = false;
+    gameMenu.reset();
+    syncLifecycle();
+    if (lifecycleReady) resetFrameClock();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) suspendPage(); else syncLifecycle();
+  });
+  for (const type of ['pointerdown', 'wheel']) renderer.domElement.addEventListener(type, event => {
+    if (owner() !== 'riding') { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    // Orbit dragging prevents the browser's default focus transfer. A deliberate canvas press
+    // must leave the restored menu invoker, otherwise W is rejected and Space clicks Rider.
+    if (type === 'pointerdown') container.focus({ preventScroll: true });
+  }, { capture: true, passive: false });
+  stopRuntime = async () => {
+    controllerManager.setInputEnabled(false);
+    gamepadControls.setEnabled(false);
+    touchControls.setEnabled(false);
+    gameMenu.dispose();
+    titleScreen?.dispose();
+    cameraSystem._clearPointers();
+    if (mapSystem.isFullMapOpen) mapSystem.toggleFullMap(false);
+    mapSystem.enabled = false;
+    bookingScreen?.update({ phase: 'idle' });
+    setGameUIEnabled(false);
+    audioSystem.dispose();
+    nemesis?.hide();
+    await riderSelection.dispose();
+    try { await compileWork; } catch { /* Startup shaders also own the active rig until drained. */ }
+    await controllerManager.dispose();
+  };
+
   mapSystem.chaser = nemesis; // Officer Dorkins' blip on the radar
   if (openMapBtn) openMapBtn.addEventListener('click', () => mapSystem.toggleFullMap(true));
 
@@ -630,13 +814,16 @@ export async function initApp(startup) {
 
   // Global keyboard shortcuts for riders (1-2), cameras (V / 5-0), HUD (H) and sound (N)
   window.addEventListener('keydown', (e) => {
-    if (startup.failed || !titleScreen?.started && titleScreen?.root || mapSystem.isFullMapOpen || booking.active
+    if (owner() !== 'riding'
       || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented || isTypingInField(e)
       || e.target?.closest?.('button, a[href], [role="button"], [contenteditable]')) return;
     switch (e.code) {
       case 'Digit1':
       case 'Digit2':
-        if (!e.repeat) selectRider(PLAYABLE_RIDERS[Number(e.code.slice(5)) - 1]);
+        gameMenu.openPicker(PLAYABLE_RIDERS[Number(e.code.slice(5)) - 1]);
+        break;
+      case 'KeyC':
+        gameMenu.openPicker();
         break;
       case 'Digit5':
         selectCamera('chase', true);
@@ -673,7 +860,7 @@ export async function initApp(startup) {
   let resizePending = false;
   function applyViewportSize() {
     resizePending = false;
-    if (startup.failed) return;
+    if (startup.failed || rendererBusy) return;
     const width = container.clientWidth, height = container.clientHeight;
     if (!(width > 0 && height > 0)) return;
     if (width !== renderWidth || height !== renderHeight) {
@@ -683,7 +870,9 @@ export async function initApp(startup) {
       renderer.setSize(width, height);
       renderWidth = width;
       renderHeight = height;
+      dirtyView = true;
     }
+    updateSoundButton();
     placeRiderIndicator();
     if (mapSystem.isFullMapOpen) {
       mapSystem.resizeFullCanvas();
@@ -710,21 +899,21 @@ export async function initApp(startup) {
   titleScreen = new TitleScreen({
     root: document.getElementById('title-overlay'),
     riders: PLAYABLE_RIDERS,
-    onRider: selectRider,
+    onRider: id => gameMenu.openPicker(id),
+    onBrowse: step => gameMenu.browse(step),
+    isBlocked: () => gameMenu.isOpen || stopped || pageAway,
     getRider: () => controllerManager.getActiveEntity().riderId,
+    getRiderName: id => RIDERS[id].name,
+    onActivity: () => setPromptDevice('gamepad'),
+    onPrepareStart: () => riderSelection.prepare(controllerManager.getActiveEntity().riderId),
+    onCancelStart: () => riderSelection.cancel(),
     onStart: () => {
-      resetFramePacing();
       playerState.authorize();
-      controllerManager.setInputEnabled(true);
-      controllerManager.resetInput();
-      gamepadControls.reset();
-      touchControls.setEnabled(true);
       cameraSystem.setTitleOrbit(false);
       selectCamera(viewPreferences.camera, true, false);
       setGameUIEnabled(true);
-      mapSystem.enabled = true;
+      syncLifecycle();
       savePlayerState();
-      if (audioSystem.enabled) audioSystem.unlock(); // inside the Ride gesture: iOS starts sound only from one
     },
   });
 
@@ -756,10 +945,11 @@ export async function initApp(startup) {
     gamepadControls.setEnabled(true);
     touchControls.setEnabled(true);
     bookingScreen.update(booking.state);
+    syncLifecycle();
     savePlayerState();
     return true;
   }
-  const bookingScreen = new BookingScreen({ root: document.getElementById('booking-overlay'), onRelease: finishBooking });
+  bookingScreen = new BookingScreen({ root: document.getElementById('booking-overlay'), onRelease: finishBooking });
 
   function startBooking() {
     const e = controllerManager.getActiveEntity();
@@ -772,6 +962,7 @@ export async function initApp(startup) {
     gamepadControls.setEnabled(false);
     cameraSystem._clearPointers();
     bookingScreen.update(booking.state);
+    syncLifecycle();
     savePlayerState();
   }
 
@@ -780,7 +971,7 @@ export async function initApp(startup) {
   document.body.dataset.input = promptDevice;
   touchControls.setMode('euc');
   renderControlHints();
-  selectRider(controllerManager.getActiveEntity().riderId);
+  updateCommittedRider();
   selectCamera(titleScreen.root ? 'chase' : viewPreferences.camera, true, false);
   if (titleScreen.root) {
     cameraSystem.setTitleOrbit(true);
@@ -792,20 +983,9 @@ export async function initApp(startup) {
     setGameUIEnabled(true);
     mapSystem.enabled = true;
   }
-  startup.onStop(() => {
-    gamepadControls.setEnabled(false);
-    cameraSystem._clearPointers();
-    if (mapSystem.isFullMapOpen) mapSystem.toggleFullMap(false);
-    mapSystem.enabled = false;
-    setGameUIEnabled(false);
-    titleScreen.isOpen = false; // Retire capture handlers as well as the visual overlay, so Retry is keyboard-usable.
-    if (titleScreen.root) titleScreen.root.hidden = true;
-    document.body.classList.remove('title-open');
-    bookingScreen.update({ phase: 'idle' }); // Keep booking.active for its outside save checkpoint until reload.
-  });
   selectTime(viewPreferences.time, false);
   // the web fonts change the buttons' widths once they arrive
-  if (document.fonts) document.fonts.ready.then(placeRiderIndicator);
+  if (document.fonts) document.fonts.ready.then(() => { placeRiderIndicator(); updateSoundButton(); });
   markInit('ui');
 
   // 6b. Shader pre-compilation behind the loading screen. compileAsync() builds the node graphs in slices and has the GPU
@@ -906,6 +1086,8 @@ export async function initApp(startup) {
   let fpsTimer = 0;
   let nextPlayerSave = 0;
   let warmedUp = false; // see the first frame below
+  lifecycleReady = true;
+  syncLifecycle();
 
   function resetFramePacing() {
     framePacer.reset();
@@ -926,17 +1108,24 @@ export async function initApp(startup) {
 
   renderer.setAnimationLoop((now) => {
     if (startup.failed) return;
+    syncLifecycle();
+    let currentOwner = owner();
+    let frozen = ['graphics', 'hidden', 'menu', 'map'].includes(currentOwner);
     const rawDt = lastTime === null ? 0 : (now - lastTime) * 0.001;
     lastTime = now;
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
-    elapsed += dt;
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
-    if (titleScreen.isOpen) titleScreen.update();
+    if (currentOwner === 'menu') gameMenu.updateGamepad(dt);
+    else if (titleScreen.isOpen && currentOwner === 'title') titleScreen.update();
     else if (booking.active) bookingScreen.updateGamepad();
-    else if (titleScreen.started || !titleScreen.root) gamepadControls.update(dt);
+    else if (currentOwner === 'riding' || currentOwner === 'map') gamepadControls.update(dt);
+    // A pad edge may have opened/closed a modal in this very callback.
+    currentOwner = owner();
+    frozen = ['graphics', 'hidden', 'menu', 'map'].includes(currentOwner);
+    if (!frozen) elapsed += dt;
     const readyToRide = titleScreen.started || !titleScreen.root;
-    if (!readyToRide || document.hidden) {
+    if (!readyToRide || frozen) {
       // Live city/title rendering is allowed; player physics and save position stay frozen until Ride.
       controllerManager.getActiveEntity().update(0, controllerManager.keys);
     } else if (booking.active) {
@@ -944,29 +1133,31 @@ export async function initApp(startup) {
       // Let the initial fall settle; at intake the rider is posed at rest, protected from world motion/input.
       controllerManager.getActiveEntity().update(booking.state.phase === 'captured' ? dt : 0, controllerManager.keys);
     } else controllerManager.update(dt, elapsed);
-    const bookingEvent = booking.update(dt, !document.hidden);
+    const bookingEvent = booking.update(dt, !frozen);
     if (bookingEvent === 'transfer' && placeAtJail(BOOKING_SITE.riderZ, Math.PI)) {
       booking.arrive();
       cameraSystem.resetForTeleport();
     }
-    const bookingView = bookingScene?.update(document.hidden ? 0 : dt, booking.state, cameraSystem.camera.aspect);
+    const bookingView = bookingScene?.update(frozen ? 0 : dt, booking.state, cameraSystem.camera.aspect);
     trafficSystem.setPresentationClearance(bookingView ? BOOKING_STAGE : null);
     if (bookingView) cameraSystem.setCinematic(bookingView);
     bookingScreen.update(booking.state);
-    cameraSystem.update(dt, elapsed);
+    if (!frozen || !warmedUp) cameraSystem.update(dt, elapsed);
     // Spawn visibility uses the final view for this callback, including preset/orbit/placement changes.
     if (!booking.active) {
-      nemesis?.update(dt, readyToRide && !mapSystem.isFullMapOpen && !document.hidden);
+      nemesis?.update(frozen ? 0 : dt, readyToRide && !frozen);
       if (nemesis?.director.state.phase === 'captured') startBooking();
     }
     streetDetails.signalClock.value = elapsed;
-    trafficSystem.update(dt, elapsed, cameraSystem.currentPos, controllerManager.getActiveEntity(), cameraSystem.camera);
-    highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity());
+    if (!frozen) {
+      trafficSystem.update(dt, elapsed, cameraSystem.currentPos, controllerManager.getActiveEntity(), cameraSystem.camera);
+      highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity());
+    }
     if (!document.hidden && now >= nextPlayerSave) {
       savePlayerState();
       nextPlayerSave = now + 5000;
     }
-    if (boroughs.update) boroughs.update(elapsed); // Roosevelt Island Tramway cabins
+    if (!frozen && boroughs.update) boroughs.update(elapsed); // Roosevelt Island Tramway cabins
     cityBlocks.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
@@ -982,10 +1173,12 @@ export async function initApp(startup) {
     eucHud.update(riderController, elapsed, promptDevice, riderEntity.tricks?.label ?? '');
     touchControls.setDown(riderController.crashed);
     if (nemesis) nemesisHud.update(nemesis.hudView);
-    // Gate only scene submission/culling. All updates above retain callback dt, including the rider's native
-    // 120 Hz accumulator, traffic, pursuit, booking and audio. First-frame boot must always run to completion.
-    const renderFrame = framePacer.shouldRender(now) || !warmedUp;
+    // The FPS preference gates only scene submission/culling, never riding simulation frequency.
+    // Lifecycle pauses admit one invalidated static view; first-frame boot still bypasses the FPS preference.
+    const renderFrame = !rendererBusy && currentOwner !== 'hidden'
+      && ((!frozen && framePacer.shouldRender(now)) || dirtyView || !warmedUp);
     if (renderFrame) {
+      dirtyView = false;
       // Presentation only: use the final title/riding/booking camera once per submitted view, not per shadow pass.
       streetDetails.treeField?.update(cameraSystem.camera.position);
       if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk

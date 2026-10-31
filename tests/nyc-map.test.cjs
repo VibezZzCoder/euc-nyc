@@ -74,13 +74,18 @@ function mapHarness(landmarks = [], roads = []) {
   };
   const elements = {};
   const document = {
-    ...eventTarget(), hidden: false,
+    ...eventTarget(), hidden: false, focused: true, hasFocus() { return this.focused; },
     getElementById: (id) => elements[id] || null,
     querySelectorAll: () => [],
     createElement(tagName) {
       const element = {
         ...eventTarget(), tagName: tagName.toUpperCase(), children: [], style: {}, classList: classList(),
-        inert: false, hidden: false, isConnected: true, textContent: '',
+        inert: false, hidden: false, isConnected: true, textContent: '', dataset: {}, attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value; },
+        getAttribute(name) { return this.attributes[name]; },
+        getBoundingClientRect() { return this.rect || { left: 10, top: 20, width: 44, height: 44 }; },
+        scrollIntoView() { this.scrolled = true; },
+        click() { this.clicks = (this.clicks || 0) + 1; this.dispatch('click', { detail: 0 }); },
         tabIndex: ['button', 'input', 'a'].includes(tagName) ? 0 : -1,
         appendChild(child) { this.children.push(child); child.parentElement = this; return child; },
         replaceChildren(...children) {
@@ -90,6 +95,7 @@ function mapHarness(landmarks = [], roads = []) {
         },
         contains(child) { return this === child || this.children.some((node) => node.contains(child)); },
         closest(selector) {
+          if (selector === 'button') return this.tagName === 'BUTTON' ? this : this.parentElement?.closest(selector) || null;
           assert.equal(selector, '[inert]');
           return this.inert ? this : this.parentElement?.closest(selector) || null;
         },
@@ -102,7 +108,11 @@ function mapHarness(landmarks = [], roads = []) {
           return all.filter((child) => selector.split(', ').some((tag) => tag.split('[')[0] === child.tagName.toLowerCase()));
         },
         querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
-        focus() { document.activeElement = this; document.dispatch('focusin', { target: this }); }
+        focus() {
+          if (document.activeElement === this) return;
+          document.activeElement = this;
+          document.dispatch('focusin', { target: this });
+        }
       };
       return element;
     }
@@ -124,6 +134,7 @@ function mapHarness(landmarks = [], roads = []) {
   modal.inert = true;
   const wrapper = add('fullmap-canvas-wrap', 'div', modal);
   const canvas = add('fullmap-canvas', 'canvas', wrapper);
+  document.elementFromPoint = () => canvas;
   Object.assign(canvas, {
     clientWidth: 200, clientHeight: 200, getContext: () => ({}),
     getBoundingClientRect: () => ({ left: 10, top: 20, width: 200, height: 200 })
@@ -444,6 +455,107 @@ test('search exposes every matching landmark as a native action, including autho
   assert.deepEqual(h.teleportArgs, [[908, 1895, 0.4, 0.48], [1100, 2100]]);
 });
 
+for (const [device, instructions] of [
+  ['keyboard', 'Tab or press Down to choose a teleport.'],
+  ['gamepad', 'Use D-pad to choose, then A to teleport.'],
+  ['touch', 'Tap a result to teleport.']
+]) {
+  test(`${device} search announces contextual result instructions in both visual and live summaries`, () => {
+    const h = mapHarness([{ name: 'Park', short: 'Park', x: 99, z: -300 }]);
+    h.map.setInputDevice(device);
+    h.map.search('park');
+    assert.equal(h.searchStatus.textContent, `1 landmark result. ${instructions}`);
+    assert.equal(h.elements['fullmap-search-summary'].textContent, h.searchStatus.textContent);
+    assert.equal(h.searchList.querySelector('button').textContent, 'Teleport to Park');
+    assert.equal(h.teleports.length, 0);
+  });
+}
+
+test('switching device updates existing result summaries once without search, new buttons, focus or view changes', () => {
+  const h = mapHarness([
+    { name: 'North Park', short: 'North', x: 99, z: -300 },
+    { name: 'South Park', short: 'South', x: 199, z: -200 }
+  ]);
+  h.map.search('park');
+  const buttons = h.searchList.querySelectorAll('button'), results = h.map.searchResults;
+  buttons[1].focus();
+  h.map.viewCenterX += 40; h.map.viewCenterZ += 30; h.map.viewZoom = 0.7;
+  const view = [h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom];
+  let writes = 0, layouts = 0, renders = 0;
+  for (const element of [h.searchStatus, h.elements['fullmap-search-summary']]) {
+    let text = element.textContent;
+    Object.defineProperty(element, 'textContent', { get: () => text, set(value) { text = value; writes++; } });
+  }
+  h.map.search = () => assert.fail('device switch must not rerun search');
+  h.searchList.replaceChildren = () => assert.fail('device switch must not rebuild native results');
+  h.map.renderFullMap = () => { renders++; };
+  h.map.layoutStatus = () => {
+    layouts++;
+    assert.equal(h.elements['fullmap-search-summary'].textContent, h.searchStatus.textContent,
+      'both summaries settle before layout measurement');
+  };
+  for (const [device, instruction] of [
+    ['gamepad', 'Use D-pad to choose, then A to teleport.'],
+    ['touch', 'Tap a result to teleport.'],
+    ['keyboard', 'Tab or press Down to choose a teleport.']
+  ]) {
+    const beforeWrites = writes, beforeLayouts = layouts;
+    h.map.setInputDevice(device);
+    assert.equal(h.searchStatus.textContent, `2 landmark results. ${instruction}`);
+    assert.equal(writes, beforeWrites + 2);
+    assert.equal(layouts, beforeLayouts + 1);
+    for (let i = 0; i < 5; i++) h.map.setInputDevice(device);
+    assert.equal(writes, beforeWrites + 2, 'unchanged device does not rewrite live or visual text');
+    assert.equal(layouts, beforeLayouts + 1, 'unchanged device does not remeasure layout');
+    assert.equal(h.map.searchResults, results);
+    assert.deepEqual(h.searchList.querySelectorAll('button'), buttons);
+    assert.equal(h.document.activeElement, buttons[1]);
+    assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], view);
+    assert.equal(h.map.searchHighlight, 'park');
+  }
+  h.map.setInputDevice('gamepad');
+  const p = mapPad(h);
+  const idleWrites = writes, idleLayouts = layouts;
+  for (let i = 0; i < 5; i++) p.tick();
+  assert.equal(writes, idleWrites, 'neutral gamepad polling never rewrites search instructions');
+  assert.equal(layouts, idleLayouts, 'neutral gamepad polling never measures search layout');
+  assert.equal(renders, 0);
+  assert.equal(h.teleports.length, 0);
+});
+
+for (const query of ['missing', 'broadway', '']) {
+  test(`device changes preserve ${query || 'cleared'} search feedback without inventing landmark instructions`, () => {
+    const h = mapHarness([], [{ name: 'Broadway', w: 20, pts: [{ x: -100, z: -400 }, { x: 100, z: 600 }] }]);
+    h.map.search(query);
+    const feedback = h.searchStatus.textContent;
+    assert.equal(h.map.searchResults.length, 0);
+    const view = [h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], path = h.map.searchPath;
+    for (const device of ['gamepad', 'touch', 'keyboard']) {
+      h.map.setInputDevice(device);
+      assert.equal(h.searchStatus.textContent, feedback);
+      assert.equal(h.elements['fullmap-search-summary'].textContent, feedback);
+      assert.equal(h.searchResults.hidden, !query);
+      assert.equal(h.map.searchPath, path);
+      assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], view);
+    }
+  });
+}
+
+test('search remeasures layout after result visibility, buttons and help text change, including clear', () => {
+  const h = mapHarness([{ name: 'Park', short: 'Park', x: 99, z: -300 }]);
+  const measured = [];
+  h.map.layoutStatus = () => measured.push({ hidden: h.searchResults.hidden,
+    buttons: h.searchList.querySelectorAll('button').length, status: h.searchStatus.textContent });
+  h.map.search('park');
+  h.map.search('missing');
+  h.map.search('');
+  assert.deepEqual(measured, [
+    { hidden: false, buttons: 1, status: '1 landmark result. Tab or press Down to choose a teleport.' },
+    { hidden: false, buttons: 0, status: 'No streets or landmarks match “missing”.' },
+    { hidden: true, buttons: 0, status: '' }
+  ]);
+});
+
 test('landmark and street search framing and zoom survive close/reopen', () => {
   for (const [landmarks, roads, query] of [
     [[{ name: 'Park', short: 'Park', x: 99, z: -300 }], [], 'park'],
@@ -618,4 +730,268 @@ test('map status layout uses measured credit and wrapped feedback heights rather
   h.elements['fullmap-footer'] = { getBoundingClientRect: () => ({ height: 85.7 }) };
   h.map.layoutStatus();
   assert.deepEqual(written, { '--map-credits-height': '70px', '--map-status-height': '86px' });
+});
+
+function mapPad(h) {
+  const pad = { connected: true, mapping: 'standard', index: 0, id: 'map-pad', axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) };
+  const keys = {}, looks = [], packets = [], activities = [];
+  const manager = h.map.controllerManager;
+  manager.inputEnabled = false;
+  manager.clearGamepadInput = () => { for (const key in keys) keys[key] = 0; };
+  manager.setGamepadInput = (key, value) => { keys[key] = value; };
+  const { GamepadControls } = loadModule(readFileSync(join(__dirname, '../js/gamepad-controls.js'), 'utf8'), {
+    globals: { window: h.window, document: h.document, navigator: { getGamepads: () => [pad] } },
+    imports: { './city-config.js': { isTypingInField: ({ target }) => target?.tagName === 'INPUT' } }
+  });
+  const gamepad = new GamepadControls(manager, {
+    resetOrbit() { looks.push('reset'); }, applyGamepadInput(...args) { looks.push(args); }
+  }, {
+    isMapOpen: () => h.map.isFullMapOpen,
+    onMapInput(input, dt) { packets.push({ input, dt }); h.map.applyGamepadInput(input, dt); },
+    onToggleMap() { h.map.toggleFullMap(!h.map.isFullMapOpen); },
+    onCloseMap() { h.map.toggleFullMap(false); },
+    onToggleMenu() { h.map.toggleFullMap(false); activities.push('menu'); },
+    onCycleRider() { activities.push('rider'); }, onCycleCamera() { activities.push('camera'); },
+    onActivity() { activities.push('activity'); }
+  });
+  const onToggle = h.map.onToggle;
+  h.map.onToggle = (open) => {
+    onToggle(open);
+    manager.inputEnabled = !open;
+    gamepad.setEnabled(!open);
+  };
+  gamepad.setEnabled(false);
+  const tick = (dt = 1 / 60) => gamepad.update(dt);
+  const button = (index, down = true, value = down ? 1 : 0) => { pad.buttons[index] = { pressed: down, value }; };
+  const neutral = () => {
+    pad.axes.fill(0);
+    for (let i = 0; i < 17; i++) button(i, false);
+    tick();
+  };
+  tick(); // map-owned all-neutral sample arms both production classes
+  return { pad, keys, looks, packets, activities, gamepad, tick, button, neutral };
+}
+
+test('disabled riding and focused search still route left stick to a visible map cursor, never driving or looking', () => {
+  const h = mapHarness(), p = mapPad(h);
+  h.searchInput.focus(); p.neutral();
+  p.pad.axes[0] = 1;
+  p.tick(0.05);
+  assert.equal(h.map.gamepadCursor.x, 134);
+  assert.equal(h.map.gamepadCursor.y, 120);
+  assert.equal(h.map.gamepadCursorElement.hidden, false);
+  assert.equal(h.map.gamepadCursorElement.style.left, '134px');
+  assert.equal(h.map.gamepadCursorElement.style.pointerEvents, 'none');
+  assert.equal(h.map.gamepadCursorElement.getAttribute('aria-hidden'), 'true');
+  assert.match(h.hoverInfo.textContent, /A to teleport here/);
+  assert.doesNotMatch(h.hoverInfo.textContent, /Click/);
+  assert.equal(Object.values(p.keys).some(Boolean), false);
+  assert.deepEqual(p.looks, []);
+  assert.ok(p.activities.includes('activity'));
+  p.button(0); p.tick(); p.tick();
+  assert.equal(h.teleports.length, 1, 'held A has one fresh edge, even while a search input owns focus');
+});
+
+test('cursor speed is CSS-pixel/dt correct at different DPR and callback rates with bounded long/invalid dt', () => {
+  function moved(dpr, steps, dt) {
+    const h = mapHarness();
+    h.window.devicePixelRatio = dpr;
+    h.canvas.clientWidth = 1200; h.canvas.clientHeight = 800;
+    h.canvas.getBoundingClientRect = () => ({ left: 10, top: 20, width: 1200, height: 800 });
+    h.map.resizeFullCanvas();
+    const p = mapPad(h);
+    p.pad.axes[0] = 1;
+    for (let i = 0; i < steps; i++) p.tick(dt);
+    return h.map.gamepadCursor.x;
+  }
+  assert.equal(moved(1, 2, 0.05), 658);
+  assert.ok(Math.abs(moved(2, 10, 0.01) - 658) < 1e-9);
+  assert.equal(moved(1.5, 1, 999), 634, 'one long callback advances at most 50ms');
+  for (const dt of [NaN, Infinity, -1]) assert.equal(moved(2, 1, dt), 610);
+});
+
+test('cursor stays in the viewport and outward left-stick pressure edge-pans only exposed map geography', () => {
+  const h = mapHarness(), p = mapPad(h);
+  p.pad.axes = [1, 1, 0, 0];
+  for (let i = 0; i < 20; i++) p.tick(0.05);
+  assert.equal(h.map.gamepadCursor.x, 198);
+  assert.equal(h.map.gamepadCursor.y, 208);
+  assert.ok(h.map.viewCenterX > 1000);
+  assert.ok(h.map.viewCenterZ > 2000);
+  h.document.elementFromPoint = () => h.controls;
+  const center = [h.map.viewCenterX, h.map.viewCenterZ];
+  for (let i = 0; i < 10; i++) p.tick(0.05);
+  assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ], center, 'pushing over UI does not pan behind it');
+  p.button(0); p.tick();
+  assert.equal(h.teleports.length, 0, 'covered map pixels do not teleport');
+});
+
+test('right stick pans in screen space and LT/RT zoom around the cursor without camera or rider actions', () => {
+  const h = mapHarness(), p = mapPad(h);
+  p.pad.axes[2] = 1; p.tick(0.05);
+  assert.equal(h.map.viewCenterX, 1024);
+  p.pad.axes.fill(0);
+  p.pad.axes[0] = 1; p.tick(0.05); p.pad.axes[0] = 0;
+  const world = () => h.map.screenToWorld(h.map.gamepadCursor.x - 10, h.map.gamepadCursor.y - 20, 200, 200);
+  const before = world();
+  p.button(7, false, 0.35); p.tick(0.05);
+  assert.ok(h.map.viewZoom > 1);
+  assert.ok(Math.abs(world().x - before.x) < 1e-9);
+  assert.ok(Math.abs(world().z - before.z) < 1e-9);
+  p.button(7, false); p.button(6, false, 0.35); p.tick(0.05);
+  assert.ok(Math.abs(h.map.viewZoom - 1) < 1e-9);
+  p.button(2); p.tick();
+  assert.equal(h.elements['map-center-player'].clicks, 1);
+  assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], [1000, 2000, 0.9]);
+  p.button(2, false); p.button(3); p.tick();
+  assert.equal(h.elements['map-view-all'].clicks, 1);
+  assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ], [0, 0]);
+  assert.deepEqual(p.looks, []);
+  assert.equal(p.activities.includes('camera') || p.activities.includes('rider'), false);
+  assert.equal(Object.values(p.keys).some(Boolean), false);
+});
+
+test('A at the controller cursor uses authored offshore arrival heading/floor and checked placement refusal', () => {
+  const arrival = { x: -10040, z: 1995, heading: 0.4, y: 0.48 };
+  const h = mapHarness([{ name: 'Pier park', icon: 'skateboard', x: -10050, z: 2000, arrival }]);
+  h.map.viewCenterX = -10050;
+  const p = mapPad(h);
+  p.button(0); p.tick(); p.tick();
+  assert.deepEqual(h.teleportArgs, [[-10040, 1995, 0.4, 0.48]]);
+  assert.equal(h.map.waypoint.name, 'Pier park');
+  const waypoint = h.map.waypoint, view = [h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom];
+  let attempts = 0;
+  h.map.onTeleport = () => { attempts++; return Object.defineProperty({}, 'succeeded', { value: false }); };
+  p.button(0, false); p.tick(); p.button(0); p.tick();
+  assert.equal(attempts, 1);
+  assert.equal(h.map.waypoint, waypoint);
+  assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], view);
+  assert.equal(h.map.isFullMapOpen, true);
+  assert.match(h.actionStatus.textContent, /Teleport unavailable.*no safe arrival/);
+});
+
+test('A hit-tests actual native controls once, including result descendants, and never also teleports canvas', () => {
+  const h = mapHarness([{ name: 'Park', short: 'Park', x: 99, z: -300, arrival: { x: 120, z: -310, heading: 1, y: 2 } }]);
+  const p = mapPad(h);
+  h.document.elementFromPoint = () => h.zoomIn;
+  p.button(0); p.tick(); p.tick();
+  assert.equal(h.zoomIn.clicks, 1);
+  assert.equal(h.map.viewZoom, 1.45);
+  assert.equal(h.teleports.length, 0);
+  h.map.search('park');
+  const button = h.searchList.querySelector('button');
+  const child = h.document.createElement('span'); button.appendChild(child);
+  h.document.elementFromPoint = () => child;
+  p.neutral(); p.button(0); p.tick(); p.tick();
+  assert.equal(button.clicks, 1);
+  assert.deepEqual(h.teleportArgs, [[120, -310, 1, 2]]);
+  p.neutral();
+  button.disabled = true;
+  p.button(0); p.tick();
+  assert.equal(button.clicks, 1);
+  assert.equal(h.teleports.length, 1, 'disabled/covered UI refuses activation without falling through to geography');
+});
+
+test('D-pad selects native map/results buttons, scrolls them into view, and requires separate fresh A', () => {
+  const h = mapHarness([{ name: 'Park', short: 'Park', x: 99, z: -300 }]);
+  h.map.search('park');
+  const p = mapPad(h), result = h.searchList.querySelector('button');
+  h.document.elementFromPoint = () => result;
+  p.button(13); p.button(0); p.tick();
+  assert.equal(h.document.activeElement, result);
+  assert.equal(result.scrolled, true);
+  assert.equal(h.teleports.length, 0, 'navigation wins over simultaneous activation');
+  p.tick();
+  assert.equal(h.teleports.length, 0);
+  p.neutral(); p.button(0); p.tick();
+  assert.equal(result.clicks, 1);
+  assert.equal(h.teleports.length, 1);
+  p.neutral(); p.button(13); p.tick();
+  assert.equal(h.document.activeElement, h.close);
+  assert.equal(h.map.isFullMapOpen, true, 'selecting Close is not activation');
+});
+
+test('Start opens the map without simultaneous A teleport, and held channels cannot ride on closing', () => {
+  const h = mapHarness(), p = mapPad(h);
+  h.map.toggleFullMap(false); p.neutral();
+  p.button(9); p.button(0); p.pad.axes = [0, -1, 1, 0]; p.button(7, false, 0.35);
+  p.tick(); p.tick();
+  assert.equal(h.map.isFullMapOpen, true);
+  assert.equal(h.teleports.length, 0);
+  p.neutral();
+  p.button(1); p.button(0); p.pad.axes = [0, -1, 1, 0]; p.button(7, false, 0.35);
+  p.tick(); p.tick(); p.tick();
+  assert.equal(h.map.isFullMapOpen, false);
+  assert.equal(h.teleports.length, 0);
+  assert.equal(Object.values(p.keys).some(Boolean), false);
+  assert.equal(p.looks.at(-1)[0], 0);
+  p.neutral(); p.pad.axes[1] = -1; p.tick();
+  assert.equal(p.keys.forward, 1, 'only a new riding gesture works');
+});
+
+for (const button of [1, 9, 8]) {
+  test(`map button ${button} consumes simultaneous A and navigation before closing/changing owner`, () => {
+    const h = mapHarness(), p = mapPad(h);
+    p.button(button); p.button(0); p.pad.axes[0] = 1; p.tick();
+    assert.equal(h.map.isFullMapOpen, false);
+    assert.equal(h.teleports.length, 0);
+    assert.equal(Object.values(p.keys).some(Boolean), false);
+    if (button === 8) assert.ok(p.activities.includes('menu'));
+  });
+}
+
+for (const interruption of ['blur', 'hidden', 'resize', 'focus', 'pad', 'reopen']) {
+  test(`${interruption}: map requires both sticks, partial triggers and buttons neutral before fresh navigation/action`, () => {
+    const h = mapHarness(), p = mapPad(h);
+    if (interruption === 'blur') { h.document.focused = false; h.window.dispatch('blur'); }
+    if (interruption === 'hidden') { h.document.hidden = true; h.document.dispatch('visibilitychange'); }
+    if (interruption === 'resize') h.window.dispatch('resize');
+    if (interruption === 'focus') h.searchInput.focus();
+    if (interruption === 'pad') p.pad.id = 'replacement';
+    if (interruption === 'reopen') { h.map.toggleFullMap(false); h.map.toggleFullMap(true); }
+    p.pad.axes = [1, 0, 0, 1]; p.button(7, false, 0.25); p.button(0);
+    p.tick();
+    h.document.focused = true; h.document.hidden = false;
+    if (interruption === 'blur') h.window.dispatch('focus');
+    if (interruption === 'hidden') h.document.dispatch('visibilitychange');
+    const center = [h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom];
+    for (let i = 0; i < 3; i++) p.tick();
+    assert.equal(h.teleports.length, 0);
+    assert.deepEqual([h.map.viewCenterX, h.map.viewCenterZ, h.map.viewZoom], center);
+    p.pad.axes[0] = 0; p.button(0, false); p.tick();
+    p.pad.axes[0] = 1; p.button(0); p.tick();
+    assert.equal(h.teleports.length, 0, 'left stick/A alone cannot arm while right stick/partial RT remain held');
+    p.neutral(); p.pad.axes[0] = 1; p.button(0); p.tick();
+    assert.equal(h.teleports.length, 1, 'neutral followed by a separate fresh action works');
+    assert.equal(Object.values(p.keys).some(Boolean), false);
+    assert.deepEqual(p.looks, []);
+  });
+}
+
+test('map class independently clamps unsafe dt and re-arms after bitmap resize; keyboard/touch retire pad cursor', () => {
+  const h = mapHarness();
+  h.map.setInputDevice('gamepad');
+  h.map.applyGamepadInput({ neutral: true });
+  h.map.applyGamepadInput({ movement: { x: 1 } }, 999);
+  assert.equal(h.map.gamepadCursor.x, 134);
+  h.map.applyGamepadInput({ movement: { x: Infinity }, look: { y: NaN }, zoom: Infinity }, NaN);
+  assert.equal(h.map.gamepadCursor.x, 134);
+  h.canvas.clientWidth = 300; h.map.resizeFullCanvas();
+  h.map.applyGamepadInput({ actions: { activate: true } }, 0.05);
+  assert.equal(h.teleports.length, 0);
+  h.map.applyGamepadInput({ neutral: true });
+  h.map.applyGamepadInput({ actions: { activate: true } }, 0.05);
+  assert.equal(h.teleports.length, 1);
+  h.map.setInputDevice('touch');
+  h.map.applyGamepadInput({ neutral: true });
+  assert.equal(h.map.gamepadCursorElement.hidden, true);
+  assert.match(h.hoverInfo.textContent, /Tap to teleport/);
+  h.map.setInputDevice('keyboard');
+  h.map.applyGamepadInput({ neutral: true });
+  assert.equal(h.map.gamepadCursorElement.hidden, true, 'idle connected pad does not override real pointer input');
+  assert.match(h.hoverInfo.textContent, /Click to teleport/);
+  h.map.toggleFullMap(false);
+  h.map.applyGamepadInput({ actions: { activate: true } }, 0.05);
+  assert.equal(h.teleports.length, 1);
 });

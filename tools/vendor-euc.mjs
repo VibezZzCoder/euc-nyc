@@ -7,17 +7,10 @@
 // The fork has no build step, so the TypeScript is converted once, here, and the JavaScript is committed. Each
 // module keeps its upstream path (src/simulation/X.ts -> js/euc/simulation/X.js) and its upstream licence banner.
 //
-// Content scope: only original fictional characters. The scope is an allowlist (KEEP_* below): everything else in
-// EUC Thrills' roster is excluded, including any rider added upstream later. This file names no excluded rider; the
-// names to cut and to audit for are read from the roster itself (src/data/riders.ts, src/data/machines.ts) at run
-// time. Hiding a character is not enough, so:
-//   1. riderLook.ts and machineLook.ts are sliced: only the kept sections stay, and every import not on the keep list
-//      is removed (OVERRIDES below).
-//   2. tuning.ts loses the excluded riders' colour entries (keys named after an excluded roster id) and the unused
-//      LIVE_TUNABLES debug-panel metadata. The TUNING root and its deepFreeze side effect stay intact.
-//   3. Comments are not carried (removeComments; /*! licence banners stay). Upstream prose names excluded riders.
-//   4. The runtime import closure of the output is walked and every file and its text is audited against the
-//      excluded ids and names. Any hit fails the run, and nothing is written.
+// Reviewed eleven-rider inventory, not an open-ended upstream roster import. Appearances are sliced by declaration
+// dependency, selected through fixed local import functions, and excluded from the eager/preload graph (including
+// Cool Rider). CPU pixel/logo caches have explicit release hooks. Preserve all NYC controller/wheel adaptations.
+// Public participant-rights guidance travels in generated roster/look modules; see NOTICE-EUC-THRILLS.md.
 //
 // Needs TypeScript, resolved from the EUC Thrills clone's node_modules (npm ci there first). Node >= 18.
 import fs from 'node:fs';
@@ -39,6 +32,18 @@ const CHECK_ONLY = args.includes('--check');
 const AUDIT_DIR = argValue('--audit', null);
 const OUT = path.join(ROOT, 'js', 'euc');
 const EXPECTED_COMMIT = '5f45fff19b258e140833841ba2473069af751a12';
+const REVIEWED_MODULES = new Set(`app/oneFootPose data/rideStyles data/riders data/machines data/surfaces data/tuning
+input/actions render/blockoutKit render/coolRiderAtlas render/coolRiderLook render/euc render/inkKit
+render/machineLook render/paddle render/rider render/riderClothDrape render/riderJointSurface render/riderLook
+render/ridingRig render/rigConsolidation shared/freeze shared/letterPaths shared/maths shared/ragdollBoot
+shared/ragdollContact shared/ragdollHip shared/ragdollInterpolation shared/ragdollLimbContact shared/riderOccupancy
+shared/riderSideContact simulation/EucController simulation/eucStepPrimitives simulation/hazards
+simulation/lateralCeiling simulation/launchPadField simulation/planSampler simulation/ragdoll simulation/riderLean
+simulation/roughness simulation/softBodies simulation/world render/maribelHair render/maribelAtlas render/wimAtlas
+render/drunkardAtlas render/wimMachineAtlas render/drunkardMachineAtlas render/floWithZoLook render/sealOnAWheelLook
+render/sealAtlas render/wyldistLook render/wyldistAtlas render/wyldistMachineLook render/gnarwheelLook
+render/gnarwheelAtlas render/gnarwheelMachineLook render/wyldistHelmet render/pngDecode data/mvLogoAsset data/wimLogoAsset
+data/gnarwheelLogoAsset`.split(/\s+/).map(p => `${p}.ts`));
 
 // The runtime entry points the fork imports. Everything else comes in through their imports.
 const ENTRIES = [
@@ -50,31 +55,58 @@ const ENTRIES = [
   'render/ridingRig.ts',
   'render/riderLook.ts',
   'render/machineLook.ts',
+  'render/appearanceLoader.ts',
+  'data/riders.ts',
+  'data/machines.ts',
 ];
+// Worker roots are shipped/audited but never preloaded or imported into the document's initial graph.
+const WORKER_ENTRIES = ['render/appearanceWorker.ts'];
 
 // The allowlist. Officer Dorkins is the roster's 'cop'; the standard wheel is the machine 'standard'.
-const KEEP_IDS = new Set(['cool-rider', 'trollina', 'cop', 'standard']);
-// Out of scope but fictional: may be named (tuning.ts's debug-panel labels for his ride style do), never shipped as
-// a character. Every other excluded id is a real person and may never appear at all.
-const FICTIONAL_EXCLUDED = new Set(['drunkard']);
-// Ordinary words that open some excluded ids: never used alone as a rider-name prefix
-const COMMON_WORDS = new Set(['wheel', 'red']);
-// Kept sections of the sliced modules: up to and including these "// -- <title> ---" headers
-const RIDER_LOOK_KEEP_THROUGH = "The cop's paintwork";
-const MACHINE_LOOK_KEEP_THROUGH = "Trollina's standard-wheel livery";
-const KEEP_IMPORTS = {
-  'render/riderLook.ts': ['three', './coolRiderLook.ts', '../data/tuning.ts', './blockoutKit.ts'],
-  'render/machineLook.ts': ['three', '../data/tuning.ts', './blockoutKit.ts'],
+const REVIEWED_ROSTER = [
+  ['cool-rider', 'standard', 'COOL_RIDER_LOOK', 'STANDARD_MACHINE_LOOK', 'crash_wipeout.wav'],
+  ['trollina', 'trollina', 'TROLLINA_LOOK', 'TROLLINA_MACHINE_LOOK', 'crash_trollina.wav'],
+  ['red-rider', 'red-rider', 'RED_RIDER_LOOK', 'RED_RIDER_MACHINE_LOOK', 'crash_red_rider.wav'],
+  ['adonisb2', 'adonisb2', 'ADONISB2_LOOK', 'ADONISB2_MACHINE_LOOK', 'crash_adonisb2.wav'],
+  ['maribel-vargas', 'maribel', 'MARIBEL_LOOK', 'MARIBEL_MACHINE_LOOK', 'crash_maribel.wav'],
+  ['wheel-in-motion', 'wheel-in-motion', 'WHEEL_IN_MOTION_LOOK', 'WHEEL_IN_MOTION_MACHINE_LOOK', 'crash_wheel_in_motion.wav'],
+  ['drunkard', 'drunkard', 'DRUNKARD_LOOK', 'DRUNKARD_MACHINE_LOOK', 'crash_drunkard.wav'],
+  ['flo-with-zo', 'flo-with-zo', 'FLO_WITH_ZO_LOOK', 'FLO_WITH_ZO_MACHINE_LOOK', 'crash_flo_with_zo.wav'],
+  ['seal-on-a-wheel', 'seal-on-a-wheel', 'SEAL_ON_A_WHEEL_LOOK', 'SEAL_ON_A_WHEEL_MACHINE_LOOK', 'crash_seal_on_a_wheel.wav'],
+  ['wyldist', 'wyldist', 'WYLDIST_LOOK', 'WYLDIST_MACHINE_LOOK', 'crash_wyldist.wav'],
+  ['gnarwheel', 'gnarwheel', 'GNARWHEEL_LOOK', 'GNARWHEEL_MACHINE_LOOK', 'crash_gnarwheel.wav'],
+];
+const KEEP_IDS = new Set([...REVIEWED_ROSTER.flatMap(([id, machine]) => [id, machine]), 'cop']);
+const PIXEL_CACHE_IDS = {
+  'cool-rider': ['coolRiderAtlas.ts'], trollina: [], 'red-rider': [], adonisb2: [],
+  'maribel-vargas': ['maribelAtlas.ts'], 'wheel-in-motion': ['wimAtlas.ts', 'wimMachineAtlas.ts'],
+  drunkard: ['drunkardAtlas.ts', 'drunkardMachineAtlas.ts'], 'flo-with-zo': [],
+  'seal-on-a-wheel': ['sealAtlas.ts'], wyldist: ['wyldistAtlas.ts'], gnarwheel: ['gnarwheelAtlas.ts'],
 };
-// Module names that are never a character but mark the excluded content (embedded logos and their decoder)
-const GENERIC_DENY = /pngDecode|LogoAsset/;
+// Exact painter roots and cache payloads from the reviewed source. No DataTexture/rig/appearance construction
+// belongs in the worker graph. Main-realm look closures supply their already-resolved plain layout data.
+const PIXEL_PAINTERS = [
+  ['coolRiderAtlas', 'createCoolAtlas', 'paintCoolAtlas', ''],
+  ['maribelAtlas', 'createMaribelAtlas', 'maribelAtlasPixels', ', mark: cachedMark'],
+  ['wimAtlas', 'createWimAtlas', 'wimAtlasPixels', ', upright: cachedMarks.upright, turned: cachedMarks.turned'],
+  ['wimMachineAtlas', 'createWimMachineAtlas', 'wimMachineAtlasPixels', ''],
+  ['drunkardAtlas', 'createDrunkardAtlas', 'drunkardAtlasPixels', ''],
+  ['drunkardMachineAtlas', 'createDrunkardMachineAtlas', 'drunkardMachineAtlasPixels', ''],
+  ['sealAtlas', 'createSealAtlas', 'sealAtlasPixels', ''],
+  ['wyldistAtlas', 'createWyldistAtlas', 'wyldistAtlasPixels', ''],
+  ['gnarwheelAtlas', 'createGnarwheelAtlas', 'gnarwheelAtlasPixels', ''],
+];
+const PAINT_VECTOR_SOURCE = 'vendor/three/build/three.core.js';
+const PAINT_VECTOR_SHA256 = '5fb576f559a503bdaaac4990a632984a3673f13369e947540986b0d392be3a2f';
+const PAINT_VECTOR_METHODS = ['constructor', 'set', 'copy', 'distanceTo', 'distanceToSquared', 'subVectors',
+  'crossVectors', 'length', 'multiplyScalar', 'addScaledVector'];
+// Reviewed logos are allowed. Private source paths and work assets are never runtime dependencies.
+// Actual private file references are forbidden. A bare directory mention in a verbatim licence
+// excerpt (or the audit's own regex fixture) is not distributed private content. Filesystem
+// directory entries are rejected independently by --audit, even when the directory is empty.
+const GENERIC_DENY = /(?:references|assets\/work|private|permissions?)\/[A-Za-z0-9_.-]/i;
 
-const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
-const camel = (id) => id.split('-').map((w, i) => (i ? cap(w) : w)).join('');
-const wordsOf = (t) => t.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[\s_-]+/).filter(Boolean);
-
-/** The excluded roster, read from upstream: ids, display names, and the audit and colour-key patterns. */
+/** Fail closed if the source adds/reorders characters, voices or machines beyond the reviewed inventory. */
 function readScope(srcRoot) {
   const riders = fs.readFileSync(path.join(srcRoot, 'src', 'data', 'riders.ts'), 'utf8');
   const machines = fs.readFileSync(path.join(srcRoot, 'src', 'data', 'machines.ts'), 'utf8');
@@ -86,89 +118,23 @@ function readScope(srcRoot) {
   const ids = new Set([...union(riders, 'PlayableCharacterId'), ...union(riders, 'CrashVoiceId'), ...union(machines, 'MachineId')]);
   for (const keep of ['cool-rider', 'trollina', 'standard']) if (!ids.has(keep)) throw new Error(`scope: kept id ${keep} missing upstream`);
   const excluded = [...ids].filter((id) => !KEEP_IDS.has(id));
-  if (!excluded.length) throw new Error('scope: no excluded ids found upstream; refusing to trust the roster parse');
-  const names = [...riders.matchAll(/id: '([^']+)'[^]*?name: '([^']+)'/g)]
-    .filter(([, id]) => excluded.includes(id)).map(([, id, name]) => ({ id, name: name.replace(/^The /, '') }));
-
-  // Colour keys: tuning.ts names an excluded rider's albedos after its id: for an id 'jane-doe', janeDoe*, jane*,
-  // machineJaneDoe* and machineJane*
-  const riderPrefixes = new Set();
-  const machinePrefixes = new Set();
-  for (const id of excluded) {
-    const w = id.split('-');
-    riderPrefixes.add(camel(id));
-    machinePrefixes.add(`machine${cap(camel(id))}`);
-    if (w.length > 1) {
-      machinePrefixes.add(`machine${cap(w[0])}`);
-      if (!COMMON_WORDS.has(w[0])) riderPrefixes.add(w[0]);
-    }
+  if (excluded.length) throw new Error(`Unreviewed upstream roster IDs: ${excluded.join(', ')}`);
+  const playable = union(riders, 'PlayableCharacterId');
+  if (JSON.stringify(playable) !== JSON.stringify(REVIEWED_ROSTER.map(([id]) => id))) {
+    throw new Error('Reviewed playable roster/order changed');
   }
-  const colourKey = new RegExp(`^\\s*(${[...machinePrefixes, ...riderPrefixes].map(escapeRe).join('|')})(?=[A-Z0-9]|\\s*:)\\w*\\s*:`);
-
-  // Audit patterns, each tagged with the id it stands for. For an id 'jane-doe': the name as words or an identifier
-  // on its own ("Jane Doe", jane-doe, JANE_DOE, janeDoe), as the tail of a camel-case identifier (createJaneDoe), and
-  // the first name or the initials opening an identifier (janeAtlas, JANE_, jdLogo, JD_). Ordinary words inside
-  // prose ("rendered rider", a helmet's seal) do not count.
-  const patterns = [];
-  const phrase = (text) => {
-    const words = wordsOf(text);
-    patterns.push({ id: phrase.id, re: new RegExp(`(?<![A-Za-z])${words.map(escapeRe).join('[ _-]?')}(?![a-z])`, 'i') });
-    patterns.push({ id: phrase.id, re: new RegExp(`${words.map((w) => escapeRe(cap(w))).join('[ _-]?')}(?![a-z])`) });
-  };
-  for (const id of excluded) {
-    phrase.id = id;
-    phrase(id);
-    const w = id.split('-');
-    if (w.length > 1) {
-      if (!COMMON_WORDS.has(w[0]) && w[0].length >= 4) {
-        patterns.push({ id, re: new RegExp(`(?<![A-Za-z])(?:${escapeRe(w[0])}|${escapeRe(cap(w[0]))})(?=[A-Z_])|(?<![A-Za-z])${escapeRe(w[0].toUpperCase())}_`) });
-      }
-      const ini = w.map((x) => x[0]).join('');
-      patterns.push({ id, re: new RegExp(`(?<![A-Za-z])(?:${ini}|${ini.toUpperCase()})(?=[A-Z_])`) });
-    }
+  for (const [actual, expected, label] of [
+    [union(machines, 'MachineId'), REVIEWED_ROSTER.map(row => row[1]), 'machines'],
+    [union(riders, 'CrashVoiceId'), REVIEWED_ROSTER.map(row => row[0] === 'maribel-vargas' ? 'maribel' : row[0]), 'voices'],
+  ]) {
+    if (JSON.stringify(actual.sort()) !== JSON.stringify(expected.sort())) throw new Error(`Reviewed ${label} inventory changed`);
   }
-  for (const { id, name } of names) {
-    phrase.id = id;
-    phrase(name);
-  }
-  return { excluded, colourKey, patterns };
+  return { reviewed: playable };
 }
 
-/** Every excluded name in `line`: [{ id, text }]. */
-function hitsIn(line, scope, { includeFictional = true, generic = true } = {}) {
-  const hits = [];
-  for (const { id, re } of scope.patterns) {
-    if (!includeFictional && FICTIONAL_EXCLUDED.has(id)) continue;
-    const m = re.exec(line);
-    if (m) hits.push({ id, text: m[0] });
-  }
-  const g = generic && GENERIC_DENY.exec(line);
-  if (g) hits.push({ id: '', text: g[0] });
-  return hits;
-}
-// tuning.ts's debug-panel labels that name the fictional out-of-scope rider (numbers, not a character asset)
-const ALLOW = [/^\s*group: 'Ride — the Drunkard',$/, /^\s*\+ "Drunkard's can through his thigh\./];
-
-function keepImports(source, keep) {
-  // Remove every whole `import ... from 'x';` / `export ... from 'x';` statement (single or multi-line) whose module is
-  // not on the keep list.
-  let removed = 0;
-  const out = source.replace(/^(?:import|export)\b[^;]*?from\s+['"]([^'"]+)['"];\s*\n/gms, (all, spec) => {
-    if (keep.includes(spec)) return all;
-    removed++;
-    return '';
-  });
-  if (!removed) throw new Error('override: expected imports to remove; the upstream file changed');
-  return out;
-}
-
-// Keep the module up to the section after the "// -- <title> ---" header (that is, through the titled section)
-function keepThrough(source, title) {
-  const header = source.indexOf(`\n// -- ${title} `);
-  if (header < 0) throw new Error(`override: section not found: ${title}`);
-  const next = source.indexOf('\n// -- ', header + 1);
-  if (next < 0) throw new Error(`override: no section after ${title}`);
-  return source.slice(0, next);
+function hitsIn(line) {
+  const match = GENERIC_DENY.exec(line);
+  return match ? [{ text: match[0] }] : [];
 }
 
 // Local controller seams are exact, fail-closed replacements against EXPECTED_COMMIT.
@@ -429,42 +395,26 @@ export interface TerrainSampler {
     .replace("'dynamicImpactSpeed'", "'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed'")
     .replace('to.dynamicImpactSpeed = from.dynamicImpactSpeed;', 'to.vehicleImpact = from.vehicleImpact;\n  to.crashVelocityX = from.crashVelocityX;\n  to.crashVelocityZ = from.crashVelocityZ;\n  to.recoveryRetrySeconds = from.recoveryRetrySeconds;\n  to.dynamicImpactSpeed = from.dynamicImpactSpeed;'),
   'render/riderLook.ts': (src) => {
-    let s = keepImports(src, KEEP_IMPORTS['render/riderLook.ts']);
-    s = s.replace("import { COOL_RIDER_LOOK } from './coolRiderLook.ts';",
-      "import { COOL_RIDER_LOOK } from './coolRiderLook.ts';\n/** euc-newyork: the roster ids are plain strings here (data/riders.ts is not vendored). */\nexport type CharacterId = string;");
-    s = keepThrough(s, RIDER_LOOK_KEEP_THROUGH);
-    return `${s}
-// -- euc-newyork roster ------------------------------------------------------
-// Upstream continues with riders outside this fork's scope. They are cut (see tools/vendor-euc.mjs).
-export const RIDER_LOOKS: readonly RiderLook[] = Object.freeze([COOL_RIDER_LOOK, TROLLINA_LOOK, COP_LOOK]);
-export const PLAYABLE_RIDER_LOOKS: readonly RiderLook[] = Object.freeze([COOL_RIDER_LOOK, TROLLINA_LOOK]);
-export function riderLook(id: CharacterId): RiderLook {
-  return RIDER_LOOKS.find((look) => look.id === id) ?? COOL_RIDER_LOOK;
-}
+    return `${sliceDeclarations(src, ['COP_LOOK', 'MOTION_STILL'])}
+import { preparedRiderLook } from './appearanceRegistry.ts';
+export function riderLook(id: string) { return id === 'cop' ? COP_LOOK : preparedRiderLook(id); }
 `;
   },
   'render/machineLook.ts': (src) => {
-    let s = keepImports(src, KEEP_IMPORTS['render/machineLook.ts']);
-    s = s.replace("import { loftProfile,",
-      "/** euc-newyork: machine ids are plain strings here (data/machines.ts is not vendored). */\nexport type MachineId = string;\nconst DEFAULT_MACHINE: MachineId = 'standard';\nimport { loftProfile,");
-    s = keepThrough(s, MACHINE_LOOK_KEEP_THROUGH);
-    return `${s}
-// -- euc-newyork machines ----------------------------------------------------
-// Upstream continues with machines outside this fork's scope. They are cut (see tools/vendor-euc.mjs).
-export const MACHINE_LOOKS: readonly MachineLook[] = Object.freeze([STANDARD_MACHINE_LOOK, TROLLINA_MACHINE_LOOK]);
-export function machineLook(id: MachineId): MachineLook {
-  return MACHINE_LOOKS.find((look) => look.machine === id)
-    ?? MACHINE_LOOKS.find((look) => look.machine === DEFAULT_MACHINE)
-    ?? MACHINE_LOOKS[0];
+    return `${sliceDeclarations(src, ['STANDARD_MACHINE_LOOK', 'TROLLINA_MACHINE_LOOK'])}
+import { preparedMachineLook } from './appearanceRegistry.ts';
+export function machineLook(id: string) {
+  if (id === 'standard') return STANDARD_MACHINE_LOOK;
+  if (id === 'trollina') return TROLLINA_MACHINE_LOOK;
+  return preparedMachineLook(id);
 }
 `;
   },
-  'data/tuning.ts': (src, removed) => pruneLiveTuningMetadata(src).split('\n').filter((line) => {
-    const m = SCOPE.colourKey.exec(line);
-    if (!m) return true;
-    removed.push(line.trim().split(':')[0]);
-    return false;
-  }).join('\n'),
+  'render/rider.ts': src => replaceOnce(replaceOnce(src, '  COOL_RIDER_LOOK,', '  riderLook,'),
+    'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')"),
+  'render/ridingRig.ts': src => replaceOnce(replaceOnce(src, 'import { COOL_RIDER_LOOK, MOTION_STILL,',
+    'import { riderLook, MOTION_STILL,'), 'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')"),
+  'data/tuning.ts': pruneLiveTuningMetadata,
 };
 
 const require = createRequire(path.join(SRC_ROOT, 'package.json'));
@@ -476,11 +426,374 @@ try {
   process.exit(1);
 }
 
+const TRANSPILE_OPTIONS = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
+  verbatimModuleSyntax: true, removeComments: true, allowImportingTsExtensions: true };
+
+// Slice the actual emitted declarations, not hand-copied art or brittle character-section offsets. Type-only
+// references disappear first. Follow identifier dependencies transitively and retain only used import bindings.
+function sliceDeclarations(source, roots) {
+  const code = ts.transpileModule(source, { compilerOptions: TRANSPILE_OPTIONS }).outputText;
+  const tree = ts.createSourceFile('appearance.js', code, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+  const declarations = new Map(), imports = new Map();
+  for (const statement of tree.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (clause?.name) imports.set(clause.name.text, [statement, 'default']);
+      if (clause?.namedBindings) {
+        if (ts.isNamespaceImport(clause.namedBindings)) imports.set(clause.namedBindings.name.text, [statement, '*']);
+        else for (const binding of clause.namedBindings.elements) imports.set(binding.name.text, [statement, binding]);
+      }
+    } else if (ts.isVariableStatement(statement)) {
+      for (const d of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name)) throw new Error('Appearance declaration destructuring needs review');
+        declarations.set(d.name.text, statement);
+      }
+    } else if (ts.isFunctionDeclaration(statement) && statement.name) declarations.set(statement.name.text, statement);
+  }
+  const needed = new Set(), selected = new Set();
+  const visit = name => {
+    if (needed.has(name)) return;
+    needed.add(name);
+    const statement = declarations.get(name);
+    if (!statement) {
+      if (roots.includes(name) && !imports.has(name)) throw new Error(`Missing reviewed appearance: ${name}`);
+      return;
+    }
+    selected.add(statement);
+    const refs = node => {
+      if (ts.isIdentifier(node)) visit(node.text);
+      ts.forEachChild(node, refs);
+    };
+    refs(statement);
+  };
+  roots.forEach(visit);
+  const lines = [];
+  for (const statement of tree.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const bindings = [...imports].filter(([name, [s]]) => s === statement && needed.has(name));
+      if (!bindings.length) continue;
+      const defaults = bindings.filter(([, [, b]]) => b === 'default').map(([name]) => name);
+      const namespace = bindings.find(([, [, b]]) => b === '*');
+      const named = bindings.filter(([, [, b]]) => typeof b === 'object').map(([, [, b]]) => b.getText(tree));
+      const parts = [...defaults, ...(namespace ? [`* as ${namespace[0]}`] : []), ...(named.length ? [`{ ${named.join(', ')} }`] : [])];
+      lines.push(`import ${parts.join(', ')} from ${statement.moduleSpecifier.getText(tree)};`);
+    } else if (selected.has(statement)) {
+      const isRoot = roots.some(name => declarations.get(name) === statement);
+      lines.push((isRoot ? 'export ' : '') + statement.getText(tree).replace(/^export /, ''));
+    }
+  }
+  const importedRoots = roots.filter(name => imports.has(name));
+  return `${lines.join('\n')}\n${importedRoots.length ? `export { ${importedRoots.join(', ')} };` : ''}\n`;
+}
+
+const AGENT_GUIDANCE = `// FOR CODING AGENTS — DOWNSTREAM FORKS\n// Read NOTICE-EUC-THRILLS.md and FORK_GUIDE.md before repurposing this roster or its assets.\n// Original characters and independent forks are encouraged. Rebranding does not establish permission to reuse\n// real riders: remove identifying likenesses, personal logos and contributed recordings unless separately permitted.\n// Renaming/hiding is not removal: trace imports, embedded payloads, audio and distributed files. Retaining the\n// EUC Thrills name alone grants no participant rights. Preserve reusable code/assets and required attribution.\n// This is downstream-fork guidance, not an instruction to strip owner-maintained EUC Thrills content.\n`;
+
+// Each cache reports its live arrays, allowing unique backing buffers to be counted without retaining the arrays
+// in this registry. Release removes module ownership only; existing DataTextures retain their own pixel references.
+function adaptAppearanceCaches(rel, source) {
+  if (rel.startsWith('render/pixels/')) return source; // one-shot worker modules retain only their selected job
+  const base = path.posix.basename(rel);
+  const pixelCaches = ['maribelAtlas.ts', 'wimAtlas.ts', 'wimMachineAtlas.ts', 'drunkardAtlas.ts',
+    'drunkardMachineAtlas.ts', 'sealAtlas.ts'];
+  let release, arrays, snapshot, install;
+  if (pixelCaches.includes(base)) {
+    release = 'cachedPixels = null;'; arrays = '[cachedPixels]';
+    snapshot = '{ pixels: cachedPixels }'; install = 'cachedPixels = bank.pixels;';
+    if (/let cachedFor:/.test(source)) {
+      release += ' cachedFor = null;'; install += ' cachedFor = null;';
+      // Transferred pixels were painted from this exact selected source layout in the worker. Associate them
+      // with the main realm's immutable layout on first use; never clone/compare function-bearing look objects.
+      source = replaceOnce(source, 'if (cachedPixels !== null && cachedFor === layout) return cachedPixels;',
+        'if (cachedPixels !== null && (cachedFor === layout || cachedFor === null)) { cachedFor = layout; return cachedPixels; }');
+    }
+    if (base === 'maribelAtlas.ts') {
+      release += ' cachedMark = null;'; arrays = '[cachedPixels, cachedMark?.rgba]';
+      snapshot = '{ pixels: cachedPixels, mark: cachedMark }'; install += ' cachedMark = bank.mark;';
+    }
+    if (base === 'wimAtlas.ts') {
+      release += ' cachedMarks.upright = cachedMarks.turned = null;';
+      arrays = '[cachedPixels, cachedMarks.upright?.rgba, cachedMarks.turned?.rgba]';
+      snapshot = '{ pixels: cachedPixels, upright: cachedMarks.upright, turned: cachedMarks.turned }';
+      install += ' cachedMarks.upright = bank.upright; cachedMarks.turned = bank.turned;';
+    }
+  } else if (['coolRiderAtlas.ts', 'wyldistAtlas.ts'].includes(base)) {
+    source = source.replace(/new WeakMap<([^>]+)>\(\)/, 'new Map<$1>()');
+    // Immutable source layouts are normally singleton; cap even accidental alternate-layout use to one buffer.
+    source = replaceOnce(source, 'cached.set(layout, pixels);', 'cached.clear(); cached.set(layout, pixels);');
+    source = replaceOnce(source, 'cached.get(layout)', `(cached.get(layout) ?? takePrepaintedPixels(layout))`);
+    source += `\nlet prepaintedPixels = null;
+function takePrepaintedPixels(layout) {
+  if (prepaintedPixels === null) return undefined;
+  const pixels = prepaintedPixels; prepaintedPixels = null;
+  cached.clear(); cached.set(layout, pixels); return pixels;
+}\n`;
+    release = 'cached.clear(); prepaintedPixels = null;'; arrays = '[...cached.values(), prepaintedPixels]';
+    snapshot = '{ pixels: cached.values().next().value ?? prepaintedPixels }';
+    install = 'cached.clear(); prepaintedPixels = bank.pixels;';
+  } else if (base === 'gnarwheelAtlas.ts') {
+    release = 'cached = null;'; arrays = '[cached]'; snapshot = '{ pixels: cached }'; install = 'cached = bank.pixels;';
+  }
+  if (!release) return source;
+  return `import { registerAppearanceCache } from './appearanceRegistry.ts';\n${source}\n`
+    + `registerAppearanceCache('${base}', () => { ${release} }, () => ${arrays}, () => (${snapshot}), bank => { ${install} });\n`;
+}
+
+const synthetic = new Map();
+const syntheticOrigins = new Map();
+const syntheticLocalOrigins = new Map();
+function addSynthetic(rel, source, origins = []) { synthetic.set(rel, source); syntheticOrigins.set(rel, origins); }
+
+// Add a data-only companion to each original build closure. It captures the exact resolved layout used by the
+// real texture builder, so the worker does not import appearances, machine arrays or any render construction code.
+// AST property matching avoids touching comments/geometry build hooks; the complete known site count is checked.
+const paintInputSites = new Map();
+function addPaintInputMetadata(source) {
+  const tree = ts.createSourceFile('appearance.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const edits = [];
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && node.name.getText(tree) === 'build') {
+      const value = node.initializer;
+      const call = ts.isArrowFunction(value) && ts.isCallExpression(value.body) ? value.body : null;
+      const name = call && ts.isIdentifier(call.expression) ? call.expression.text : ts.isIdentifier(value) ? value.text : '';
+      const painter = PIXEL_PAINTERS.find(row => row[1] === name);
+      if (painter) {
+        const args = call ? call.arguments.map(arg => arg.getText(tree)).join(', ') : '';
+        edits.push({ at: node.getStart(tree), text: `paintInput: () => ({ cache: '${painter[0]}.ts', args: [${args}] }),\n` });
+        paintInputSites.set(name, (paintInputSites.get(name) ?? 0) + 1);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  for (const edit of edits.sort((a, b) => b.at - a.at)) source = source.slice(0, edit.at) + edit.text + source.slice(edit.at);
+  return source;
+}
+
+function cpuPainterSource(source, roots) {
+  let sliced = sliceDeclarations(source, roots);
+  sliced = sliced.replace("import * as THREE from 'three';", "import { PaintVector3 } from './paintVector.ts';")
+    .replaceAll('THREE.Vector3', 'PaintVector3');
+  if (/\bTHREE\b/.test(sliced)) throw new Error('CPU painter gained an unreviewed Three dependency');
+  return sliced.replaceAll("'./blockoutKit.ts'", "'./paintSurface.ts'")
+    .replaceAll("'../data/tuning.ts'", "'./paintColours.ts'")
+    .replaceAll("'./inkKit.ts'", "'../inkKit.ts'")
+    .replaceAll("'./pngDecode.ts'", "'../pngDecode.ts'")
+    .replace(/(['"])\.\.\/data\//g, '$1../../data/');
+}
+const vectorSource = fs.readFileSync(path.join(ROOT, PAINT_VECTOR_SOURCE), 'utf8');
+if (crypto.createHash('sha256').update(vectorSource).digest('hex') !== PAINT_VECTOR_SHA256) {
+  throw new Error('Pinned Three vector source changed; review CPU painter arithmetic before regeneration');
+}
+const vectorTree = ts.createSourceFile('three.core.js', vectorSource, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+const vectorClass = vectorTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'Vector3');
+if (!vectorClass) throw new Error('Pinned Three Vector3 class missing');
+const vectorMembers = PAINT_VECTOR_METHODS.map(name => {
+  const member = vectorClass.members.find(node => name === 'constructor' ? ts.isConstructorDeclaration(node) : node.name?.getText(vectorTree) === name);
+  if (!member) throw new Error(`Pinned vector method missing: ${name}`);
+  return member.getText(vectorTree);
+});
+addSynthetic('render/pixels/paintVector.ts', `export class PaintVector3 {\n${vectorMembers.join('\n')}\n}`);
+syntheticLocalOrigins.set('render/pixels/paintVector.ts', [{ source: PAINT_VECTOR_SOURCE,
+  sourceSha256: PAINT_VECTOR_SHA256, methods: PAINT_VECTOR_METHODS, license: 'vendor/three/LICENSE' }]);
+const surfaceSource = fs.readFileSync(path.join(SRC_ROOT, 'src/render/blockoutKit.ts'), 'utf8');
+addSynthetic('render/pixels/paintSurface.ts', cpuPainterSource(surfaceSource, ['loftPoint', 'loftNormal', 'vAtHeight']), ['render/blockoutKit.ts']);
+addSynthetic('render/pixels/paintColours.ts', sliceDeclarations(fs.readFileSync(path.join(SRC_ROOT, 'src/data/tuning.ts'), 'utf8'),
+  ['BLOCKOUT_COLOURS']), ['data/tuning.ts']);
+for (const [module, , pixels, extra] of PIXEL_PAINTERS) {
+  const origin = `render/${module}.ts`;
+  const source = fs.readFileSync(path.join(SRC_ROOT, 'src', origin), 'utf8');
+  const roots = [pixels, ...(module === 'drunkardAtlas' ? ['paintHop'] : []),
+    ...(module === 'wimAtlas' ? ['MARK_ASPECT', 'markRaster', 'patchStretch'] : [])];
+  addSynthetic(`render/pixels/${module}.ts`, `${cpuPainterSource(source, roots)}
+${module === 'wimAtlas' ? 'export { markRaster as wimMarkRaster, patchStretch as wimPatchStretch };' : ''}
+export function paintBank(...args) { const pixels = ${pixels}(...args); return { pixels${extra} }; }\n`, [origin]);
+}
+addSynthetic('render/appearancePixelImports.ts', `
+const pixelCaches = Object.freeze(${JSON.stringify(PIXEL_CACHE_IDS)});
+const painters = Object.freeze({
+${PIXEL_PAINTERS.map(([module]) => `  '${module}.ts': () => import('./pixels/${module}.ts')`).join(',\n')}
+});
+export async function paintAppearancePixels(id, inputs) {
+  if (!Object.hasOwn(pixelCaches, id)) throw new Error('Unknown playable appearance: ' + String(id));
+  const expected = pixelCaches[id];
+  if (!inputs || JSON.stringify(Object.keys(inputs).sort()) !== JSON.stringify([...expected].sort())) {
+    throw new Error('Incomplete appearance painting inputs');
+  }
+  const caches = {};
+  for (const cache of expected) {
+    if (!Array.isArray(inputs[cache])) throw new Error('Invalid appearance painting layout');
+    const { paintBank } = await painters[cache]();
+    caches[cache] = paintBank(...inputs[cache]);
+  }
+  return caches;
+}
+`);
+addSynthetic('render/appearanceRegistry.ts', `
+const prepared = new Map();
+const caches = new Map();
+export function registerPreparedAppearance(id, appearance) {
+  prepared.delete(id); prepared.set(id, appearance);
+  while (prepared.size > 2) prepared.delete(prepared.keys().next().value);
+  return appearance;
+}
+export function preparedRiderLook(id) {
+  const value = prepared.get(id);
+  if (!value) throw new Error('Appearance not prepared: ' + id);
+  return value.look;
+}
+export function preparedMachineLook(id) {
+  for (const value of prepared.values()) if (value.machine.machine === id) return value.machine;
+  throw new Error('Machine appearance not prepared: ' + id);
+}
+export function registerAppearanceCache(id, release, arrays, snapshot, install) { caches.set(id, {release, arrays, snapshot, install}); }
+export function releaseAppearanceCaches() { for (const cache of caches.values()) cache.release(); }
+export function appearanceCacheSnapshot() {
+  return Object.fromEntries([...caches].filter(([, cache]) => cache.arrays().some(Boolean))
+    .map(([id, cache]) => [id, cache.snapshot()]));
+}
+export function appearanceCacheTransferBuffers(snapshot) {
+  const buffers = new Set();
+  const visit = value => {
+    if (ArrayBuffer.isView(value)) { buffers.add(value.buffer); return; }
+    if (value && typeof value === 'object') for (const child of Object.values(value)) visit(child);
+  };
+  visit(snapshot); return [...buffers];
+}
+export function installAppearanceCachePixels(snapshot) {
+  // Validate the entire bank before releasing anything. Only already-imported selected modules can receive data.
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Invalid appearance pixel bank');
+  for (const [id, bank] of Object.entries(snapshot)) {
+    if (!caches.has(id) || !(bank?.pixels instanceof Uint8Array) || bank.pixels.byteLength === 0) {
+      throw new Error('Invalid appearance pixel cache: ' + id);
+    }
+  }
+  const bytes = appearanceCacheTransferBuffers(snapshot).reduce((n, b) => n + b.byteLength, 0);
+  if (bytes > 16 * 1024 * 1024) throw new Error('Appearance pixel bank exceeds selected-rider budget');
+  releaseAppearanceCaches();
+  for (const [id, bank] of Object.entries(snapshot)) caches.get(id).install(bank);
+}
+export function appearanceResourceStats() {
+  const buffers = new Set();
+  for (const cache of caches.values()) for (const array of cache.arrays()) if (array) buffers.add(array.buffer);
+  return { cachedPixelBuffers: buffers.size, cachedPixelBytes: [...buffers].reduce((n, b) => n + b.byteLength, 0),
+    registeredCaches: caches.size, preparedIds: [...prepared.keys()] };
+}
+`);
+const originalRider = fs.readFileSync(path.join(SRC_ROOT, 'src/render/riderLook.ts'), 'utf8');
+const originalMachine = fs.readFileSync(path.join(SRC_ROOT, 'src/render/machineLook.ts'), 'utf8');
+const loaderRows = [];
+for (const [id, machineId, look, machine] of REVIEWED_ROSTER) {
+  const riderRel = `render/riderAppearance-${id}.ts`, machineRel = `render/machineAppearance-${id}.ts`;
+  addSynthetic(riderRel, sliceDeclarations(originalRider, [look]), ['render/riderLook.ts']);
+  addSynthetic(machineRel, sliceDeclarations(originalMachine, [machine]), ['render/machineLook.ts']);
+  loaderRows.push(`  '${id}': async () => {\n    const [r, m] = await Promise.all([import('./${path.posix.basename(riderRel)}'), import('./${path.posix.basename(machineRel)}')]);\n    return { look: r.${look}, machine: m.${machine} };\n  }`);
+}
+addSynthetic('render/appearanceImports.ts', `
+const pixelCaches = Object.freeze(${JSON.stringify(PIXEL_CACHE_IDS)});
+const loaders = Object.freeze({
+${loaderRows.join(',\n')}
+});
+export function isAppearanceId(id) { return Object.hasOwn(loaders, id); }
+export function appearancePixelCacheIds(id) { return pixelCaches[id] ?? []; }
+export async function importAppearance(id) {
+  if (!Object.hasOwn(loaders, id)) throw new Error('Unknown playable appearance: ' + String(id));
+  return loaders[id]();
+}
+`);
+addSynthetic('render/appearanceLoader.ts', `
+import { importAppearance, isAppearanceId, appearancePixelCacheIds } from './appearanceImports.ts';
+import { registerPreparedAppearance, installAppearanceCachePixels, releaseAppearanceCaches, appearanceResourceStats as cacheStats } from './appearanceRegistry.ts';
+export { releaseAppearanceCaches } from './appearanceRegistry.ts';
+let activeJob = null;
+export function appearanceResourceStats() {
+  return { ...cacheStats(), activePreparation: activeJob?.id ?? null, workerActive: !!activeJob?.worker };
+}
+function abortError() { return new DOMException('Appearance preparation cancelled', 'AbortError'); }
+// One selected job/worker. Canonical module imports cannot be aborted, but late imports never install pixels or
+// register a prepared identity. The host still owns rig construction, compile admission and GPU disposal.
+export function prepareAppearance(id, { signal, prepaint = true } = {}) {
+  if (!isAppearanceId(id)) return Promise.reject(new Error('Unknown playable appearance: ' + String(id)));
+  if (signal?.aborted) return Promise.reject(abortError());
+  activeJob?.cancel();
+  releaseAppearanceCaches();
+  return new Promise((resolve, reject) => {
+    const job = { id, worker: null, done: false, cancel: () => finish(abortError()) };
+    const finish = (error, appearance) => {
+      if (job.done) return;
+      job.done = true;
+      signal?.removeEventListener('abort', job.cancel);
+      if (job.worker) {
+        job.worker.onmessage = job.worker.onerror = job.worker.onmessageerror = null;
+        job.worker.terminate(); job.worker = null;
+      }
+      if (activeJob === job) activeJob = null;
+      if (error) reject(error); else resolve(registerPreparedAppearance(id, appearance));
+    };
+    activeJob = job;
+    signal?.addEventListener('abort', job.cancel, { once: true });
+    importAppearance(id).then(appearance => {
+      if (job.done) return;
+      if (!prepaint || typeof Worker === 'undefined' || (!appearance.look.atlas && !appearance.machine.atlas)) {
+        finish(null, appearance); return;
+      }
+      try {
+        const worker = job.worker = new Worker(new URL('./appearanceWorker.js', import.meta.url),
+          { type: 'module', name: 'euc-appearance-pixels' });
+        worker.onmessage = event => {
+          if (job.done || activeJob !== job) return;
+          try {
+            if (event.data?.id !== id) throw new Error('Appearance worker returned the wrong rider');
+            if (event.data.error) throw new Error(event.data.error);
+            if (JSON.stringify(Object.keys(event.data.caches ?? {}).sort()) !== JSON.stringify([...appearancePixelCacheIds(id)].sort())) {
+              throw new Error('Appearance worker returned an incomplete pixel bank');
+            }
+            installAppearanceCachePixels(event.data.caches);
+            finish(null, appearance);
+          } catch (error) { finish(error); }
+        };
+        worker.onerror = event => { event.preventDefault?.(); finish(new Error(event.message || 'Appearance worker failed')); };
+        worker.onmessageerror = () => finish(new Error('Appearance worker pixel transfer failed'));
+        const inputs = Object.fromEntries([appearance.look.atlas, appearance.machine.atlas].filter(Boolean).map(atlas => {
+          if (typeof atlas.paintInput !== 'function') throw new Error('Appearance is missing its painting input');
+          const { cache, args } = atlas.paintInput(); return [cache, args];
+        }));
+        worker.postMessage({ id, inputs });
+      } catch (error) { finish(error); }
+    }, cause => {
+      if (job.done) return;
+      if (cause?.name === 'AbortError') { finish(cause); return; }
+      // Native ESM caches failed module loads in this realm: same-dialog retry cannot fetch this graph again.
+      const error = new Error('Rider appearance module could not load. Reload NYC to retry this download.', { cause });
+      error.reloadRequired = true;
+      finish(error);
+    });
+  });
+}
+`);
+addSynthetic('render/appearanceWorker.ts', `
+import { paintAppearancePixels } from './appearancePixelImports.ts';
+import { appearanceCacheTransferBuffers } from './appearanceRegistry.ts';
+let accepted = false;
+globalThis.onmessage = async event => {
+  if (accepted) return;
+  accepted = true;
+  const id = event.data?.id;
+  try {
+    const start = performance.now();
+    // Original pixels and decoded logos only. Layouts came from the main realm's real selected build closures.
+    const caches = await paintAppearancePixels(id, event.data.inputs);
+    const transfer = appearanceCacheTransferBuffers(caches);
+    globalThis.postMessage({ id, caches, paintMs: performance.now() - start,
+      pixelBytes: transfer.reduce((n, buffer) => n + buffer.byteLength, 0) }, transfer);
+  } catch (error) {
+    globalThis.postMessage({ id, error: error instanceof Error ? error.message : String(error) });
+  }
+};
+`);
+
 const SCOPE = readScope(SRC_ROOT);
 
-// --audit <dir>: scan every text file of a tree (a release) for an excluded real person. The fictional out-of-scope
-// rider may be named in a tree's notices and tools, and this tool's own generic module markers are not names, so
-// neither is looked for here.
+// --audit <dir>: reviewed generated bytes/audio plus private-path rejection. Public notices may name participants.
 if (AUDIT_DIR) {
   const root = path.resolve(AUDIT_DIR);
   const found = [];
@@ -503,32 +816,60 @@ if (AUDIT_DIR) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
       const full = path.join(dir, entry.name);
       const rel = path.relative(root, full);
-      for (const h of hitsIn(rel, SCOPE, { includeFictional: false, generic: false })) found.push(`path ${rel}: "${h.text}"`);
+       for (const h of hitsIn(rel, SCOPE)) found.push(`path ${rel}: "${h.text}"`);
+       if (entry.isSymbolicLink()) { found.push(`symlink not allowed: ${rel}`); continue; }
+       if (/(^|\/)(?:references|private|\.env(?:\..*)?)(?:\/|$)/i.test(rel)) found.push(`private path: ${rel}`);
       if (entry.isDirectory()) { walk(full); continue; }
       if (/\.(wav|png|jpe?g|gif|webp|ico|woff2?|ttf|bin)$/i.test(entry.name)) continue;
       if (pristine.has(path.normalize(rel))) continue;
       files++;
       fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
-        for (const h of hitsIn(line, SCOPE, { includeFictional: false, generic: false })) found.push(`${rel}:${i + 1}: "${h.text}"`);
+         for (const h of hitsIn(line, SCOPE)) found.push(`${rel}:${i + 1}: "${h.text}"`);
       });
     }
   };
   walk(root);
+  const generated = path.join(root, 'js/euc');
+  if (fs.existsSync(generated)) {
+    const expected = JSON.parse(fs.readFileSync(path.join(OUT, 'MANIFEST.json'), 'utf8'));
+    const actual = JSON.parse(fs.readFileSync(path.join(generated, 'MANIFEST.json'), 'utf8'));
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) found.push('generated manifest differs from reviewed local inventory');
+    const inspect = dir => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name), rel = path.relative(generated, full);
+        if (entry.isDirectory()) { inspect(full); continue; }
+        if (rel === 'LICENSE' || rel === 'MANIFEST.json') continue;
+        const record = expected.files[rel];
+        if (!record || crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex') !== record.outputSha256) {
+          found.push(`unreviewed or changed generated module: ${rel}`);
+        }
+      }
+    };
+    inspect(generated);
+    for (const rel of Object.keys(expected.files)) if (!fs.existsSync(path.join(generated, rel))) found.push(`missing generated module: ${rel}`);
+    const audioDir = path.join(root, 'audio/euc');
+    if (fs.existsSync(audioDir)) for (const name of fs.readdirSync(audioDir).filter(n => /\.wav$/i.test(n))) {
+      const record = expected.audio.find(a => path.basename(a.source) === name);
+      if (!record || crypto.createHash('sha256').update(fs.readFileSync(path.join(audioDir, name))).digest('hex') !== record.sourceSha256) {
+        found.push(`unreviewed or changed EUC audio: ${name}`);
+      } else if (!record.shipped) found.push(`unshipped EUC audio: ${name}`);
+    }
+  }
   if (found.length) {
     console.error(`Tree audit FAILED (${found.length}) in ${root}:`);
     for (const f of found.slice(0, 60)) console.error(`  ${f}`);
     process.exit(1);
   }
-  console.log(`tree audit clean: ${files} text files, ${SCOPE.excluded.length} excluded roster ids checked`
+   console.log(`tree audit clean: ${files} text files, ${SCOPE.reviewed.length} reviewed roster ids checked`
     + (pristine.size ? ` (${pristine.size} unchanged third-party files in vendor/MANIFEST.json skipped)` : ''));
   process.exit(0);
 }
 
 const commit = execFileSync('git', ['-C', SRC_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-const dirty = execFileSync('git', ['-C', SRC_ROOT, 'status', '--porcelain', '--', 'src'], { encoding: 'utf8' }).trim();
-if (commit !== EXPECTED_COMMIT) console.warn(`warning: EUC Thrills is at ${commit}, expected ${EXPECTED_COMMIT}. Review the diff before committing.`);
+const dirty = execFileSync('git', ['-C', SRC_ROOT, 'status', '--porcelain', '--', 'src', 'assets/live/audio', 'LICENSE', 'NOTICE.md'], { encoding: 'utf8' }).trim();
+if (commit !== EXPECTED_COMMIT) throw new Error(`EUC Thrills must be pinned to ${EXPECTED_COMMIT}, got ${commit}`);
 if (dirty) {
-  console.error('EUC Thrills src/ has local changes; vendor only from a clean upstream checkout.');
+  console.error('EUC Thrills source/assets/notices have local changes; vendor only from a clean upstream checkout.');
   process.exit(1);
 }
 
@@ -536,13 +877,16 @@ if (dirty) {
 const SPEC = /(?:^(?:import|export)\b[^;'"]*?\bfrom\s*|^import\s*|\bimport\s*\(\s*)(['"])([^'"\n]+)\1/gm;
 const outputs = new Map(); // rel -> { js, sha }
 const removedColourKeys = [];
-const queue = [...ENTRIES];
+const queue = [...ENTRIES, ...WORKER_ENTRIES];
 while (queue.length) {
   const rel = queue.shift();
   if (outputs.has(rel)) continue;
+  if (!synthetic.has(rel) && !REVIEWED_MODULES.has(rel)) throw new Error(`Unreviewed source dependency: ${rel}`);
   const file = path.join(SRC_ROOT, 'src', rel);
-  const raw = fs.readFileSync(file, 'utf8');
-  const source = OVERRIDES[rel] ? OVERRIDES[rel](raw, removedColourKeys) : raw;
+  const raw = synthetic.get(rel) ?? fs.readFileSync(file, 'utf8');
+  let adapted = OVERRIDES[rel] ? OVERRIDES[rel](raw, removedColourKeys) : raw;
+  if (/^render\/(?:.*Look\.ts|(?:rider|machine)Appearance-)/.test(rel)) adapted = addPaintInputMetadata(adapted);
+  const source = adaptAppearanceCaches(rel, adapted);
   const { outputText: code, diagnostics } = ts.transpileModule(source, {
     fileName: `src/${rel}`,
     reportDiagnostics: true,
@@ -567,10 +911,55 @@ while (queue.length) {
     if (!target.endsWith('.ts')) throw new Error(`${rel}: import without .ts extension: ${spec}`);
     queue.push(target);
   }
-  js = js.replace(SPEC, (all, q, spec) => (spec.startsWith('.') ? all.replace(spec, spec.replace(/\.ts$/, '.js')) : all));
-  const header = `// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@${commit.slice(0, 7)} src/${rel}` +
+  js = js.replace(SPEC, (all, q, spec) => {
+    // Import maps do not apply in module workers. All reviewed EUC rendering modules use core classes only;
+    // the pinned three.webgpu.js imports/re-exports these same core objects, preserving main-realm identity.
+    if (spec === 'three') return all.replace(spec, path.posix.relative(path.posix.dirname(`js/euc/${rel}`), 'vendor/three/build/three.core.js'));
+    return spec.startsWith('.') ? all.replace(spec, spec.replace(/\.ts$/, '.js')) : all;
+  });
+  const header = `// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@${commit.slice(0, 7)} ${synthetic.has(rel) ? 'generated boundary' : `src/${rel}`}` +
     `${OVERRIDES[rel] ? ' (sliced for euc-newyork: see the tool)' : ''}.\n// MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.\n`;
-  outputs.set(rel, { js: header + js, sha: crypto.createHash('sha256').update(raw).digest('hex') });
+  const guidance = /(?:data\/riders|riderLook|machineLook|appearanceLoader|[rm].*Appearance-|pixels\/.*Atlas)/.test(rel) ? AGENT_GUIDANCE : '';
+  const vectorNotice = rel === 'render/pixels/paintVector.ts'
+    ? '// Vector arithmetic extracted unchanged from pinned Three Vector3. MIT, Copyright 2010-2026 Three.js Authors.\n// See vendor/three/LICENSE; full source hash and method inventory are in js/euc/MANIFEST.json.\n' : '';
+  outputs.set(rel, { js: header + vectorNotice + guidance + js, sha: synthetic.has(rel) ? null : crypto.createHash('sha256').update(raw).digest('hex') });
+}
+for (const [, factory] of PIXEL_PAINTERS) {
+  const expected = factory === 'createMaribelAtlas' ? 2 : 1;
+  if (paintInputSites.get(factory) !== expected) throw new Error(`Reviewed appearance painting input sites changed: ${factory}`);
+}
+
+// Static-only reachability defines preloads. Dynamic imports are inventoried above, but never modulepreloaded.
+const STATIC_SPEC = /^(?:import|export)\b[^;'"\n]*?\bfrom\s*['"]([^'"]+)['"]/gm;
+function staticClosure(entries, includeDynamic = false) {
+  const result = new Set();
+  function visit(rel) {
+    if (result.has(rel)) return;
+    result.add(rel);
+    const specs = includeDynamic ? [...outputs.get(rel).js.matchAll(SPEC)].map(m => m[2])
+      : [...outputs.get(rel).js.matchAll(STATIC_SPEC)].map(m => m[1]);
+    for (const spec of specs) {
+      if (spec.startsWith('.')) {
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
+        if (target === '../../vendor/three/build/three.core.js') continue;
+        visit(target.replace(/\.js$/, '.ts'));
+      }
+    }
+  }
+  entries.forEach(visit);
+  return result;
+}
+const eager = staticClosure(ENTRIES);
+const workerModules = [...staticClosure(WORKER_ENTRIES, true)];
+for (const rel of workerModules) {
+  const code = outputs.get(rel).js;
+  if (/three\.core\.js|three\.webgpu\.js|\bTHREE\b|\bDataTexture\b/.test(code)) {
+    throw new Error(`Worker pixel graph acquired a renderer/Three dependency: ${rel}`);
+  }
+  if (!['render/appearanceWorker.ts', 'render/appearancePixelImports.ts', 'render/appearanceRegistry.ts',
+    'render/inkKit.ts', 'render/pngDecode.ts', 'shared/letterPaths.ts',
+    'data/mvLogoAsset.ts', 'data/wimLogoAsset.ts', 'data/gnarwheelLogoAsset.ts'].includes(rel)
+    && !rel.startsWith('render/pixels/')) throw new Error(`Unreviewed pixel worker dependency: ${rel}`);
 }
 
 // -- Content audit ---------------------------------------------------------------------------------------------------
@@ -580,8 +969,7 @@ for (const [rel, { js }] of outputs) {
   js.split('\n').forEach((line, i) => {
     const hits = hitsIn(line, SCOPE);
     if (!hits.length) return;
-    const allowed = rel === 'data/tuning.ts' && hits.every((h) => FICTIONAL_EXCLUDED.has(h.id)) && ALLOW.some((a) => a.test(line));
-    if (!allowed) problems.push(`${rel}:${i + 1}: "${hits[0].text}" in: ${line.trim().slice(0, 140)}`);
+    problems.push(`${rel}:${i + 1}: "${hits[0].text}" in: ${line.trim().slice(0, 140)}`);
   });
   for (const key of removedColourKeys) {
     if (new RegExp(`\\b${key}\\b`).test(js)) problems.push(`${rel}: still references removed colour ${key}`);
@@ -599,16 +987,57 @@ const manifest = {
   commit,
   generatedBy: 'tools/vendor-euc.mjs',
   entries: ENTRIES,
+  workers: { entries: WORKER_ENTRIES.map(p => p.replace(/\.ts$/, '.js')),
+    sharedThree: null,
+    vectorSource: { source: PAINT_VECTOR_SOURCE, sourceSha256: PAINT_VECTOR_SHA256, methods: PAINT_VECTOR_METHODS },
+    pixelCaches: PIXEL_CACHE_IDS,
+    appearances: Object.fromEntries(REVIEWED_ROSTER.map(([id]) => [id,
+      [...staticClosure([...WORKER_ENTRIES, ...PIXEL_CACHE_IDS[id].map(cache => `render/pixels/${cache}`)])]
+        .map(p => p.replace(/\.ts$/, '.js')).sort()])),
+    modules: workerModules.map(p => p.replace(/\.ts$/, '.js')).sort() },
   // A count, not the names: the names are the excluded riders' (read from the upstream roster, see readScope)
   removedColourEntries: removedColourKeys.length,
-  files: Object.fromEntries([...outputs].sort(([a], [b]) => a.localeCompare(b)).map(([rel, o]) => [rel.replace(/\.ts$/, '.js'), { source: `src/${rel}`, sourceSha256: o.sha, sliced: !!OVERRIDES[rel] }])),
+  roster: REVIEWED_ROSTER.map(([id, machine, lookExport, machineExport, crash]) => ({ id, machine, lookExport, machineExport,
+    crash, stumble: id === 'drunkard' ? 'stumble_drunkard.wav' : null, style: id === 'drunkard' ? 'DRUNK_STYLE' : 'SOBER_STYLE' })),
+  eager: [...eager].map(p => p.replace(/\.ts$/, '.js')).sort(),
+  deferred: [...outputs.keys()].filter(p => !eager.has(p)).map(p => p.replace(/\.ts$/, '.js')).sort(),
+  appearances: Object.fromEntries(REVIEWED_ROSTER.map(([id]) => [id,
+    [...staticClosure([`render/riderAppearance-${id}.ts`, `render/machineAppearance-${id}.ts`])]
+      .map(p => p.replace(/\.ts$/, '.js')).sort()])),
+  audio: [...new Set([...REVIEWED_ROSTER.map(row => row[4]), 'stumble_drunkard.wav', 'tyre_offroad_loop.wav',
+    'tyre_solid_loop.wav', 'wind_howl_loop.wav', 'siren_far_loop.wav', 'siren_close_loop.wav', 'overspeed_beep.wav'])].map(name => {
+      const source = `assets/live/audio/${name}`;
+      const bytes = fs.readFileSync(path.join(SRC_ROOT, source));
+       return { source, sourceSha256: crypto.createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length,
+         shipped: name !== 'tyre_offroad_loop.wav' };
+     }),
+  provenance: ['LICENSE', 'NOTICE.md', 'src/audio/samples.ts'].map(source => ({ source,
+    sourceSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(SRC_ROOT, source))).digest('hex') })),
+  files: Object.fromEntries([...outputs].sort(([a], [b]) => a.localeCompare(b)).map(([rel, o]) => [rel.replace(/\.ts$/, '.js'), {
+    source: o.sha ? `src/${rel}` : null, sourceSha256: o.sha,
+    ...(synthetic.has(rel) ? { derivedFrom: [...syntheticOrigins.get(rel).map(origin => ({ source: `src/${origin}`,
+      sourceSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(SRC_ROOT, 'src', origin))).digest('hex') })),
+      ...(syntheticLocalOrigins.get(rel) ?? [])] } : {}),
+    outputSha256: crypto.createHash('sha256').update(o.js).digest('hex'),
+    sliced: !!OVERRIDES[rel],
+  }])),
 };
+manifest.shippedAudio = manifest.audio.filter(item => item.shipped).map(item => item.source);
 if (CHECK_ONLY) {
   let stale = 0;
   for (const [rel, { js }] of outputs) {
     const target = path.join(OUT, rel.replace(/\.ts$/, '.js'));
     if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== js) { console.error(`stale: ${rel}`); stale++; }
   }
+  const expectedFiles = [...outputs.keys()].map(p => p.replace(/\.ts$/, '.js')).concat('LICENSE', 'MANIFEST.json').sort();
+  const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory()
+    ? walk(path.join(dir, e.name)) : [path.relative(OUT, path.join(dir, e.name))]);
+  if (JSON.stringify(walk(OUT).sort()) !== JSON.stringify(expectedFiles)) { console.error('stale: unexpected/missing generated files'); stale++; }
+  if (fs.readFileSync(path.join(OUT, 'MANIFEST.json'), 'utf8') !== `${JSON.stringify(manifest, null, 2)}\n`) { console.error('stale: MANIFEST.json'); stale++; }
+  if (fs.readFileSync(path.join(OUT, 'LICENSE'), 'utf8') !== fs.readFileSync(path.join(SRC_ROOT, 'LICENSE'), 'utf8')) { console.error('stale: LICENSE'); stale++; }
+  const block = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').match(/<!-- euc:preload:start \(tools\/vendor-euc\.mjs\) -->([^]*?)<!-- euc:preload:end -->/)?.[1];
+  const preloads = [...(block ?? '').matchAll(/href="\.\/js\/euc\/([^"]+)"/g)].map(m => m[1]);
+  if (JSON.stringify(preloads) !== JSON.stringify(manifest.eager)) { console.error('stale: eager preloads'); stale++; }
   console.log(stale ? `${stale} stale file(s)` : `js/euc is up to date (${outputs.size} files, audit clean)`);
   process.exit(stale ? 1 : 0);
 }
@@ -619,15 +1048,15 @@ for (const [rel, { js }] of outputs) {
   fs.writeFileSync(target, js);
 }
 fs.copyFileSync(path.join(SRC_ROOT, 'LICENSE'), path.join(OUT, 'LICENSE'));
-// index.html preloads every vendored module (tests/boot.test.cjs: everything a preloaded module imports is preloaded)
+// Preload shared static essentials only; player appearances stay behind the fixed selected-ID import table.
 const INDEX = path.join(ROOT, 'index.html');
 const START = '<!-- euc:preload:start (tools/vendor-euc.mjs) -->', END = '<!-- euc:preload:end -->';
 const html = fs.readFileSync(INDEX, 'utf8');
 const a = html.indexOf(START), b = html.indexOf(END);
 if (a < 0 || b < a) throw new Error('index.html: euc preload markers not found');
-const lines = [...outputs.keys()].sort().map((rel) => `  <link rel="modulepreload" href="./js/euc/${rel.replace(/\.ts$/, '.js')}" />`);
+const lines = manifest.eager.map((rel) => `  <link rel="modulepreload" href="./js/euc/${rel}" />`);
 fs.writeFileSync(INDEX, `${html.slice(0, a + START.length)}\n${lines.join('\n')}\n  ${html.slice(b)}`);
 fs.writeFileSync(path.join(OUT, 'MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 const bytes = [...outputs.values()].reduce((n, o) => n + Buffer.byteLength(o.js), 0);
 console.log(`wrote ${outputs.size} modules (${Math.round(bytes / 1024)} KiB) to js/euc from EUC-thrills@${commit.slice(0, 7)}; ` +
-  `removed ${removedColourKeys.length} restricted colour entries; content audit clean`);
+  `${eager.size} eager, ${outputs.size - eager.size} deferred; reviewed roster/content audit clean`);

@@ -1,6 +1,6 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/coolRiderLook.ts.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 import { BLOCKOUT_COLOURS as C, RIDER_BLOCKOUT as B } from '../data/tuning.js';
 import { loftProfile, loftGeometry, loftPoint, loftNormal, vAtHeight, mergeGeometries, shaded, tintOver } from './blockoutKit.js';
 import { COOL_REGIONS, createCoolAtlas } from './coolRiderAtlas.js';
@@ -426,7 +426,8 @@ export const COOL_RIDER_LOOK = Object.freeze({
     density: Object.freeze({ torso: 48, limb: 32, head: 64, boot: 32, hand: 24, neck: 24 }),
     shades: Object.freeze({ seat: .90, legs: .94, collar: 1, sole: 1, neck: .6 }),
     parts: Object.freeze({ hands: 'gear', neck: 'gear', kneePad: 'accent', legs: 'limbs', seat: 'body' }),
-    atlas: Object.freeze({ build: () => createCoolAtlas(COOL_SHEET_LAYOUT), roles: Object.freeze(['body', 'limbs', 'accent']),
+    atlas: Object.freeze({ paintInput: () => ({ cache: 'coolRiderAtlas.ts', args: [COOL_SHEET_LAYOUT] }),
+        build: () => createCoolAtlas(COOL_SHEET_LAYOUT), roles: Object.freeze(['body', 'limbs', 'accent']),
         region: (art) => COOL_REGIONS[art] ?? COOL_REGIONS.blank,
         lofts: Object.freeze({ torso: 'jacket', seat: 'seat', thigh: 'thigh', shin: 'shin', upperArm: 'sleeve', forearm: 'forearm' }), }),
     build: Object.freeze({ head: coolHelmetShell, hand: Object.freeze([fingers]), boot: Object.freeze([bootDetail]) }),

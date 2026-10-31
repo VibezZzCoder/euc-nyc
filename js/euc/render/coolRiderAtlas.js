@@ -1,6 +1,7 @@
 // Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/coolRiderAtlas.ts.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
-import * as THREE from 'three';
+import { registerAppearanceCache } from './appearanceRegistry.js';
+import * as THREE from '../../../vendor/three/build/three.core.js';
 import { BLOCKOUT_COLOURS as C } from '../data/tuning.js';
 import { inkOver, inkSheet, linearFromHex, toSrgbBytes } from './inkKit.js';
 export const COOL_ATLAS_SIZE = 1024;
@@ -173,11 +174,12 @@ export function paintCoolAtlas(layout) {
     }
     return toSrgbBytes(sheet);
 }
-const cached = new WeakMap();
+const cached = new Map();
 export function createCoolAtlas(layout) {
-    let pixels = cached.get(layout);
+    let pixels = (cached.get(layout) ?? takePrepaintedPixels(layout));
     if (!pixels) {
         pixels = paintCoolAtlas(layout);
+        cached.clear();
         cached.set(layout, pixels);
     }
     const texture = new THREE.DataTexture(pixels, 1024, 1024, THREE.RGBAFormat);
@@ -190,3 +192,14 @@ export function createCoolAtlas(layout) {
     texture.name = 'cool-rider-tailoring';
     return texture;
 }
+let prepaintedPixels = null;
+function takePrepaintedPixels(layout) {
+    if (prepaintedPixels === null)
+        return undefined;
+    const pixels = prepaintedPixels;
+    prepaintedPixels = null;
+    cached.clear();
+    cached.set(layout, pixels);
+    return pixels;
+}
+registerAppearanceCache('coolRiderAtlas.ts', () => { cached.clear(); prepaintedPixels = null; }, () => [...cached.values(), prepaintedPixels], () => ({ pixels: cached.values().next().value ?? prepaintedPixels }), bank => { cached.clear(); prepaintedPixels = bank.pixels; });

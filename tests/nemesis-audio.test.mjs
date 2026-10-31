@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { NemesisAudio } from '../js/nemesis-audio.js';
-import { EucAudio, EUC_SAMPLE_FILES } from '../js/euc-audio.js';
+import { EucAudio, EUC_SAMPLE_FILES, SHARED_SAMPLE_KEYS, RiderAudioBanks } from '../js/euc-audio.js';
 import { loadModule } from './helpers/module.cjs';
 import { recordLoads, withSampleRequests } from './helpers/audio-loading.cjs';
 
@@ -121,7 +121,7 @@ function cityHarness(v = view(), { initialize = true, eucClass = class { update(
         createWindVoice: () => ({ update() {}, dispose() {}, useHowl(buffer) { this.howl = buffer; } }) },
       './audio-sources.js': { CityAudioSources: class { collect() { return empty; } } },
       './audio-acoustics.js': { CityAcoustics: class { update() {} } },
-      './euc-audio.js': { EucAudio: eucClass },
+      './euc-audio.js': { EucAudio: eucClass, RiderAudioBanks },
       './nemesis-audio.js': { NemesisAudio: copClass }
     }, globals: { document, navigator: { hardwareConcurrency: 8 }, matchMedia: () => ({ matches: false }),
       localStorage: { getItem() { return 'on'; }, setItem() {} }, AudioContext: function () { return context; } }
@@ -271,7 +271,10 @@ test('city mute keeps real sample fetches/cache alive while actual cop counters 
     assert.ok(requests.every(r => !r.signal.aborted));
     for (const r of requests) r.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
     await Promise.all([...h.audio.euc.pendingLoads, ...h.audio.cop.pendingLoads]);
-    for (const key of Object.keys(EUC_SAMPLE_FILES)) assert.equal(h.audio.euc.buffers[key], buffer);
+    assert.deepEqual(Object.keys(h.audio.euc.buffers).sort(), [...SHARED_SAMPLE_KEYS].sort(),
+      'constructor fetches only shared wheel samples, never every roster voice');
+    for (const key of SHARED_SAMPLE_KEYS) assert.equal(h.audio.euc.buffers[key], buffer, EUC_SAMPLE_FILES[key]);
+    assert.equal(h.audio.riderBanks.active, null, 'no selected recording is committed by a mute/unmute boundary');
     assert.equal(h.audio.wind.howl, buffer);
     assert.equal(h.audio.cop.far.buffer, buffer);
     assert.equal(h.audio.cop.close.buffer, buffer);
