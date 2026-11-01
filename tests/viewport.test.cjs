@@ -3,21 +3,23 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { runInNewContext } = require('node:vm');
 const test = require('node:test');
+const { drawingBufferRatio } = require('../js/render-resolution.js');
 
 // Exercise the production coordinator with measured host sizes and a deterministic layout-frame queue.
 test('viewport events coalesce, use the host, retain valid targets while hidden and cancel stale input', () => {
   const source = readFileSync(join(__dirname, '../js/main.js'), 'utf8');
   const block = source.slice(source.indexOf('  let resizePending = false;'), source.indexOf('  // The title screen, shown once'));
-  const frames = [], sizes = [], aspects = [], events = {}, resets = [], cleanup = [], mapDraws = [];
+  const frames = [], sizes = [], scales = [], aspects = [], events = {}, resets = [], cleanup = [], mapDraws = [];
   const container = { clientWidth: 382, clientHeight: 580 };
   let observe;
   const env = {
-    container, renderWidth: 382, renderHeight: 580, rendererBusy: false, dirtyView: false,
+    container, renderWidth: 382, renderHeight: 580, renderScale: 1,
+    resolutionPreference: { scale: 1 }, drawingBufferRatio, rendererBusy: false, dirtyView: false,
     startup: { failed: false, onStop: fn => cleanup.push(fn) },
     requestAnimationFrame: (fn) => frames.push(fn),
     window: { innerWidth: 9999, innerHeight: 9999, addEventListener: (name, fn) => { events[name] = fn; } },
     ResizeObserver: class { constructor(fn) { observe = fn; } observe(el) { assert.equal(el, container); } disconnect() { resets.push('disconnect'); } },
-    renderer: { setSize: (w, h) => sizes.push([w, h]) },
+    renderer: { setDrawingBufferSize(w, h, scale) { sizes.push([w, h]); scales.push(scale); } },
     cameraSystem: { onResize: (w, h) => aspects.push(w / h) },
     touchControls: { reset: () => resets.push('touch') }, placeRiderIndicator() {}, updateSoundButton() {},
     mapSystem: { isFullMapOpen: true, cancelGestures: () => resets.push('map'),
@@ -58,10 +60,33 @@ test('viewport events coalesce, use the host, retain valid targets while hidden 
   env.rendererBusy = false;
   events.resize(); frames.shift()();
   assert.deepEqual(sizes.at(-1), [844, 368], 'latest host size applies after compilation drains');
+  const beforeResets = resets.length, beforeAspects = aspects.length;
+  env.resolutionPreference.scale = 0.75;
+  events.resize(); observe(); frames.shift()();
+  assert.equal(scales.at(-1), 0.75);
+  assert.deepEqual(sizes.at(-1), [844, 368], 'scale changes keep logical viewport dimensions');
+  assert.equal(resets.length, beforeResets, 'resolution alone does not cancel riding or map gestures');
+  assert.equal(aspects.length, beforeAspects, 'resolution alone cannot alter camera framing');
+  env.dirtyView = false;
+  observe(); frames.shift()();
+  assert.equal(sizes.length, 8, 'unchanged resolution does not allocate again');
+  assert.equal(env.dirtyView, false);
+  env.rendererBusy = true;
+  env.resolutionPreference.scale = 0.5;
+  observe(); frames.shift()();
+  assert.equal(scales.at(-1), 0.75, 'resolution cannot resize compile-owned targets');
+  env.rendererBusy = false;
+  events.resize(); frames.shift()();
+  assert.equal(scales.at(-1), 0.5, 'latest preference applies after compile drain');
+  container.clientWidth = container.clientHeight = 1;
+  observe(); frames.shift()();
+  assert.deepEqual(sizes.at(-1), [1, 1]);
+  assert.equal(scales.at(-1), 32, 'a transient tiny host retains a valid fixed-mip SSR target at 50%');
+  env.resolutionPreference.scale = 1;
   env.startup.failed = true;
   cleanup.forEach(fn => fn());
   assert.equal(resets.at(-1), 'disconnect');
   container.clientWidth = 900;
   observe(); frames.shift()();
-  assert.equal(sizes.length, 7, 'queued resize cannot recreate graphics resources after failure');
+  assert.equal(sizes.length, 10, 'queued resize cannot recreate graphics resources after failure');
 });

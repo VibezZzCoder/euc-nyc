@@ -51,9 +51,9 @@ test('compact FPS select retains full accessible naming, short options and a 44p
   assert.match(html, /class="fps-label-short" aria-hidden="true">FPS<\/span>/);
 });
 
-test('compact touch hint clears the FPS panel and uses a bounded four-line left gutter on small phones', () => {
+test('compact touch hint clears settings and uses a bounded four-line gutter below small-phone street signs', () => {
   const hints = [...css.matchAll(/body\.touch-enabled \.touch-look-hint\s*\{([^}]+)\}/g)].map((m) => m[1]);
-  assert.equal(hints.length, 2);
+  assert.equal(hints.length, 3);
   const top = Number(hints[0].match(/\+ (\d+)px/)[1]);
   const panel = rule('body.touch-enabled .fps-control');
   const panelPaddingY = Number(panel.match(/padding:\s*(\d+)px/)[1]);
@@ -72,8 +72,12 @@ test('compact touch hint clears the FPS panel and uses a bounded four-line left 
   const short = html.match(/class="touch-look-hint-short">([^]*?)<\/span>/)[1];
   assert.deepEqual(short.split('<br>'), ['Drag', 'to look', 'Pinch', 'to zoom']);
   assert.match(rule('body.touch-enabled .touch-look-hint-short'), /white-space: nowrap/);
-  const hintBottom = edge + top + 4 * px(narrow, 'line-height');
-  assert.ok(hintBottom <= 260, 'four lines leave 10px above the observed 320x568 street signs at y=270');
+  assert.match(narrow, /top: auto/);
+  const bottom = Number(narrow.match(/bottom:[^;]+\+ (\d+)px/)[1]);
+  const hintTop = 568 - edge - bottom - 4 * px(narrow, 'line-height');
+  const signsBottom = 568 - edge - 254;
+  assert.ok(hintTop >= signsBottom + 12, 'hint clears street signs by 12px at 320x568');
+  assert.match(hints[2], /display: none/, 'transient hint steps aside in short narrow split windows');
   assert.match(rule('.touch-look-hint-short'), /display: none/);
   assert.match(rule('.touch-look-hint'), /\+ 120px/, 'wide-screen hint keeps its existing position');
 });

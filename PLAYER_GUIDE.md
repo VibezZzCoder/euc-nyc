@@ -26,6 +26,20 @@ are holding the stick, dragging the camera or panning the map, lift and touch ag
 map controls form a horizontal row below the search bar so Close stays reachable. The booking receipt can be scrolled
 to reach **Back to riding**. Foldable-sized layouts have automated coverage; physical foldable/Safari testing is pending.
 
+### Frame rate and 3D resolution
+
+The upper-left controls let you choose **Frame rate** and **3D resolution** independently. On compact touch screens,
+the labels shorten to **FPS** and **3D res**. Both choices are remembered for your next visit when browser storage is available.
+
+- **Frame rate:** Auto follows your display; 120, 60 and 30 cap scene rendering when your device can reach that rate.
+- **3D resolution:** **100%** keeps the existing sharpness and is the default. **75%** is a softer compromise;
+  **50%** is softer again and draws substantially fewer pixels. These scale both width and height: roughly 56% and
+  25% of the current pixel count, respectively. They do not mean a percentage of the phone's full Retina resolution.
+
+Lower 3D resolution can help a graphics-limited device, especially alongside an FPS cap; improvements depend on the
+device and scene. The menus, HUD, map and touch controls keep their normal size and sharpness. Riding physics, input,
+traffic, city detail and available routes remain the same. Rotation and window resizing retain your chosen resolution.
+
 ## Starting
 
 After loading, the title screen shows the city with your current rider in it. Open **Choose rider** to browse the

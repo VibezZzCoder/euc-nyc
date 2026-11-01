@@ -121,7 +121,7 @@ test('selector restores persistence, clears held input, resets pacing and preser
   let reset = 0, inputReset = 0, blur = 0;
   const select = { value: '', addEventListener: (key, fn) => { handlers[key] = fn; }, blur: () => { blur++; } };
   const preference = createFrameRatePreference(() => ({ getItem: () => '120', setItem: (...args) => writes.push(args) }));
-  const wiring = main.slice(main.indexOf('  const frameRatePreference ='), main.indexOf('  const elMode ='));
+  const wiring = main.slice(main.indexOf('  const frameRatePreference ='), main.indexOf('  const resolutionLimit ='));
   const pacer = new Function('createFrameRatePreference', 'createFramePacer', 'document', 'controllerManager', 'resetFramePacing',
     `${wiring}\nreturn framePacer;`)(() => preference, createFramePacer,
     { getElementById: (id) => { assert.equal(id, 'fps-limit'); return select; } },

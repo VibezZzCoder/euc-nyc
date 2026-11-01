@@ -51,6 +51,7 @@
   <link rel="modulepreload" href="./js/ride-geometry.js" />
   <link rel="modulepreload" href="./js/view-preferences.js" />
   <link rel="modulepreload" href="./js/frame-rate.js" />
+  <link rel="modulepreload" href="./js/render-resolution.js" />
   <link rel="modulepreload" href="./js/boroughs.js" />
   <link rel="modulepreload" href="./js/buildings.js" />
   <link rel="modulepreload" href="./js/solid-rects.js" />
@@ -235,16 +236,27 @@
         <div class="brand-subtitle">three.js · WebGPU · TSL · <span id="hud-fps">—</span> fps</div>
       </div>
     </div>
-    <label class="panel fps-control" for="fps-limit">
-      <span class="fps-label-full" aria-hidden="true">Frame rate</span>
-      <span class="fps-label-short" aria-hidden="true">FPS</span>
-      <select id="fps-limit" aria-label="Frame rate" title="Render limit; Auto follows your display. Riding physics stay unchanged.">
-        <option value="auto">Auto</option>
-        <option value="120">120</option>
-        <option value="60">60</option>
-        <option value="30">30</option>
-      </select>
-    </label>
+    <div class="performance-controls">
+      <label class="panel fps-control" for="fps-limit">
+        <span class="fps-label-full" aria-hidden="true">Frame rate</span>
+        <span class="fps-label-short" aria-hidden="true">FPS</span>
+        <select id="fps-limit" aria-label="Frame rate" title="Render limit; Auto follows your display. Riding physics stay unchanged.">
+          <option value="auto">Auto</option>
+          <option value="120">120</option>
+          <option value="60">60</option>
+          <option value="30">30</option>
+        </select>
+      </label>
+      <label class="panel resolution-control" for="render-resolution">
+        <span class="resolution-label-full" aria-hidden="true">3D resolution</span>
+        <span class="resolution-label-short" aria-hidden="true">3D res</span>
+        <select id="render-resolution" aria-label="3D resolution" title="Lower resolution renders fewer 3D pixels. Menus, map, controls and riding physics stay unchanged.">
+          <option value="100">100%</option>
+          <option value="75">75%</option>
+          <option value="50">50%</option>
+        </select>
+      </label>
+    </div>
   </header>
 
   <!-- Top-Right Toolbar: Time of Day, Teleport, Map & Clean View -->

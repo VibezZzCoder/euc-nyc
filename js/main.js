@@ -31,6 +31,7 @@ import { NemesisHud } from './nemesis-chase.js';
 import { createViewPreferences } from './view-preferences.js';
 import { createPlayerState } from './player-state.js';
 import { createFrameRatePreference, createFramePacer, frameRateHealth } from './frame-rate.js';
+import { createRenderResolutionPreference, drawingBufferRatio } from './render-resolution.js';
 import { createBookingDirector, BookingScreen } from './booking.js';
 import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene.js';
 
@@ -79,10 +80,11 @@ export async function initApp(startup) {
     powerPreference: 'high-performance',
     reversedDepthBuffer: true
   });
-  renderer.setPixelRatio(1.0);
+  const resolutionPreference = createRenderResolutionPreference();
+  let renderScale = resolutionPreference.scale;
   let renderWidth = Math.max(1, container.clientWidth || window.innerWidth);
   let renderHeight = Math.max(1, container.clientHeight || window.innerHeight);
-  renderer.setSize(renderWidth, renderHeight);
+  renderer.setDrawingBufferSize(renderWidth, renderHeight, drawingBufferRatio(renderWidth, renderHeight, renderScale));
   renderer.shadowMap.enabled = true;
   renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
   container.appendChild(renderer.domElement);
@@ -358,6 +360,19 @@ export async function initApp(startup) {
       }
       // Like pointer-activated HUD buttons, return riding keys to the game; retain native keyboard focus.
       if (pointerSelection) fpsLimit.blur();
+      pointerSelection = false;
+    });
+  }
+  const resolutionLimit = document.getElementById('render-resolution');
+  if (resolutionLimit) {
+    let pointerSelection = false;
+    resolutionLimit.value = resolutionPreference.value;
+    resolutionLimit.addEventListener('focus', () => controllerManager.resetInput());
+    resolutionLimit.addEventListener('pointerdown', () => { pointerSelection = true; });
+    resolutionLimit.addEventListener('keydown', () => { pointerSelection = false; });
+    resolutionLimit.addEventListener('change', () => {
+      if (resolutionPreference.set(resolutionLimit.value)) scheduleViewportResize();
+      if (pointerSelection) resolutionLimit.blur();
       pointerSelection = false;
     });
   }
@@ -863,13 +878,20 @@ export async function initApp(startup) {
     if (startup.failed || rendererBusy) return;
     const width = container.clientWidth, height = container.clientHeight;
     if (!(width > 0 && height > 0)) return;
-    if (width !== renderWidth || height !== renderHeight) {
+    const hostChanged = width !== renderWidth || height !== renderHeight;
+    const scale = resolutionPreference.scale;
+    if (hostChanged) {
       touchControls.reset();
       cameraSystem.onResize(width, height);
       mapSystem.cancelGestures();
-      renderer.setSize(width, height);
+    }
+    if (hostChanged || scale !== renderScale) {
+      // One atomic resize, after candidate compilation drains. Three's scene/SSR passes follow
+      // the drawing buffer; camera, DOM and 2D map sizing keep the unscaled host dimensions.
+      renderer.setDrawingBufferSize(width, height, drawingBufferRatio(width, height, scale));
       renderWidth = width;
       renderHeight = height;
+      renderScale = scale;
       dirtyView = true;
     }
     updateSoundButton();

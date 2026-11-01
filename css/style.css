@@ -132,6 +132,12 @@ kbd {
   cursor: grabbing;
 }
 
+#canvas-container > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 /* Soft scrims behind the HUD: keep small type legible over a bright midday street */
 body::before,
 body::after {
@@ -753,6 +759,29 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 #hud-fps.fps-bad { color: var(--bad); }
 
 /* A native select keeps keyboard/touch behavior; the existing telemetry stays in its own panel. */
+.performance-controls { display: flex; gap: 6px; align-items: flex-start; }
+.resolution-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  margin-top: 6px;
+  padding: 3px 6px 3px 10px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+.resolution-label-short { display: none; }
+#render-resolution {
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: #172027;
+  color: var(--text);
+  color-scheme: dark;
+  font: inherit;
+  cursor: pointer;
+}
 .fps-control {
   display: flex;
   align-items: center;
@@ -780,6 +809,7 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 
 @media (pointer: coarse) {
   #fps-limit { min-height: 44px; }
+  #render-resolution { min-height: 44px; }
 }
 
 @media (max-width: 820px) {
@@ -799,6 +829,21 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
     min-height: 44px;
     padding: 3px 2px;
   }
+  body.touch-enabled .resolution-control {
+    flex-direction: column;
+    gap: 2px;
+    width: 58px;
+    padding: 4px 3px;
+  }
+  body.touch-enabled .resolution-label-full { display: none; }
+  body.touch-enabled .resolution-label-short { display: block; line-height: 14px; }
+  body.touch-enabled #render-resolution {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 3px 0;
+    font-size: 10px;
+  }
   /* The first-run look hint clears the compact FPS panel's bottom (edge + 182px). */
   body.touch-enabled .touch-look-hint {
     top: calc(max(var(--edge), env(safe-area-inset-top)) + 192px);
@@ -806,6 +851,7 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 }
 
 body.hud-minimized .fps-control { display: none; }
+body.hud-minimized .performance-controls { display: none; }
 
 /* ------------------------------------------------------------------------------------------------------------------
    Top right: toolbar (time of day, teleport, map, clean view)
@@ -2453,6 +2499,8 @@ body.touch-enabled .pop-item { min-height: 44px; }
 }
 
 @media (max-width: 381px) {
+  /* Two 58px fields cannot fit beside the unchanged 230px gauge on the smallest phones. */
+  body.touch-enabled .performance-controls { flex-direction: column; gap: 0; }
   body.touch-enabled .toolbar { width: 194px; height: auto; flex-wrap: wrap; justify-content: center; }
   body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 114px + var(--sound-notice-space, 0px)); }
   body.touch-enabled .touch-look-hint {
@@ -2460,10 +2508,17 @@ body.touch-enabled .pop-item { min-height: 44px; }
     width: 58px;
     max-width: 58px;
     line-height: 14px;
+    top: auto;
+    bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 186px);
   }
   body.touch-enabled .touch-look-hint-full { display: none; }
   body.touch-enabled .touch-look-hint-short { display: block; white-space: nowrap; }
   body.touch-enabled .chase-banner { top: calc(max(var(--edge), env(safe-area-inset-top)) + 300px + var(--sound-notice-space, 0px)); }
+}
+
+@media (max-width: 381px) and (max-height: 500px) {
+  /* In a short split window, leave room for the actual riding controls rather than the transient hint. */
+  body.touch-enabled .touch-look-hint { display: none; }
 }
 
 @media (max-height: 500px) {
