@@ -265,7 +265,8 @@ export class NycTerrainSampler {
    *   maxZ }] }
    * @param {number} [options.sidewalkHeight] curb-island top, m (city-config.js ISLAND_BOUNDS.sidewalkHeight)
    * @param {object[]} [options.tops] raised tops from the builders: { poly, top, surface, minX, maxX, minZ, maxZ,
-   *   plane?: { x, y, z, dx, dz }, shore?: boolean, layered?: boolean, replacesBlock?: boolean }.
+   *   plane?: { x, y, z, dx, dz }, shore?: boolean, layered?: boolean, replacesBlock?: boolean,
+   *   capabilities?: { feature: string, transition?: boolean, restartsAtRest?: boolean } }.
    *   `replacesBlock` replaces synthetic block ground with a drawn cut; `shore` marks ground over the shoreline;
    *   `layered` makes support conditional on referenceY. Boxes may also be layered, or `support: false` (body rays only).
    * @param {boolean} [options.shoreRails] true when the builder supplied the actual gapped esplanade railing bodies
@@ -275,6 +276,9 @@ export class NycTerrainSampler {
     this.lawn = lawn;
     this.sidewalkHeight = sidewalkHeight;
     this.topGrid = new Map();
+    // Sparse, surface-owned park metadata, independent of render visibility. No city-sized field or enclosing
+    // rectangle between venues: a distant query is one Map lookup, without ground/solid/shore work.
+    this.capabilityGrid = new Map();
     for (const t of tops) {
       for (let ix = Math.floor(t.minX / TOP_CELL); ix <= Math.floor(t.maxX / TOP_CELL); ix++) {
         for (let iz = Math.floor(t.minZ / TOP_CELL); iz <= Math.floor(t.maxZ / TOP_CELL); iz++) {
@@ -282,6 +286,11 @@ export class NycTerrainSampler {
           let list = this.topGrid.get(key);
           if (!list) this.topGrid.set(key, (list = []));
           list.push(t);
+          if (t.capabilities?.transition === true || t.capabilities?.restartsAtRest === true) {
+            let features = this.capabilityGrid.get(key);
+            if (!features) this.capabilityGrid.set(key, (features = []));
+            features.push(t);
+          }
         }
       }
     }
@@ -327,6 +336,42 @@ export class NycTerrainSampler {
   // Map/manager callers require registeredSurfaceOnly; native recovery/entity callers retain box-top support.
   findPlacementTarget(request) {
     return findPlacementTarget(this, request);
+  }
+
+  /** NYC adaptation of EUC Thrills d37efc0's transition flag semantics (world.ts / skateparkLevel.ts).
+   * The authored support facet owns the flag; a venue's XZ bounds never grant it to another floor.
+   * referenceY is the wheel/support elevation, required and finite. Flight/lip latches remain controller-owned.
+   */
+  transitionAt(x, z, referenceY) {
+    return this.supportCapabilityAt('transition', x, z, referenceY);
+  }
+
+  /** Local speed policy only, NOT permission to stand here. Recovery must still use findRecoveryTarget's checked
+   * footprint/body/water/dynamic/departure policy. Query the chosen support elevation, not a global world setting.
+   */
+  restartsAtRest(x, z, referenceY) {
+    return this.supportCapabilityAt('restartsAtRest', x, z, referenceY);
+  }
+
+  supportCapabilityAt(capability, x, z, referenceY) {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(referenceY)) return false;
+    const features = this.capabilityGrid.get(Math.floor(x / TOP_CELL) * 100000 + Math.floor(z / TOP_CELL));
+    if (!features) return false;
+    // Reject the empty part of a local cell and unrelated elevations before doing ordinary support selection.
+    let candidate = false;
+    for (const t of features) {
+      if (t.capabilities[capability] !== true || x < t.minX || x > t.maxX || z < t.minZ || z > t.maxZ) continue;
+      if (Math.abs(topHeight(t, x, z) - referenceY) > SUPPORT_REACH || !pointInPoly(t.poly, x, z)) continue;
+      candidate = true; break;
+    }
+    if (!candidate) return false;
+    const top = this.topAt(x, z, false, referenceY);
+    if (top?.capabilities?.[capability] !== true || top.water) return false;
+    const height = topHeight(top, x, z);
+    if (Math.abs(height - referenceY) > SUPPORT_REACH) return false;
+    const ground = this.sampleGround(x, z, this._capabilityProbe ??= { normal: {} }, referenceY);
+    // A higher native solid or synthetic base can mask a registered facet. Never lend its flag to that support.
+    return Math.abs(ground.height - height) < 1e-5;
   }
 
   /** The highest top under (x, z), or null; shoreOnly restricts the search to pier ground surfaces. */

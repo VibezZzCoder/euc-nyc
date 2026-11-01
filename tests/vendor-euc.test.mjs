@@ -16,7 +16,7 @@ const seamEnd = tool.indexOf('\nconst OVERRIDES =', seamStart);
 assert.ok(seamStart >= 0 && seamEnd > seamStart);
 const prune = new Function('crypto', `${tool.slice(seamStart, seamEnd)}\nreturn pruneLiveTuningMetadata;`)(crypto);
 
-// Full reviewed colour inventory restored; only LIVE_TUNABLES is removed from pinned upstream tuning.
+// Full reviewed colour inventory restored; only LIVE_TUNABLES is removed from pinned base tuning.
 // Record all retained exports, including currently unused constants: this is not a new tuning allowlist.
 const retainedExports = `AUDIO BARKS BIRDS BLOCKOUT_COLOURS CAMERA CHALLENGE CHASE CONTACT DIAGNOSTICS
 DISTRICT_EXTERIOR DRUNK ENVIRONMENT_AMBIENCE ENVIRONMENT_BATCHING ENVIRONMENT_VEGETATION EUC FX
@@ -27,6 +27,8 @@ PUDDLE RACE RAGDOLL_BOOT_GROUND_BOX RAGDOLL_HAND_GROUND_BOX RAGDOLL_PARTICLE_RAD
 RENDER RIDER RIDER_BLOCKOUT RIDER_CONTACT RIDER_CONTACT_OVERHANG_METRES RIDER_OCCUPANCY SHARED_GROUND
 SIMULATION TARGET TERRAIN TRACK_DAY TRICKS TRICK_RUN TUNING ULTRA VEGETATION_COUCH_DETAIL
 VEGETATION_TIER_DETAIL WHEEL WILDLIFE`.split(/\s+/);
+const donorExports = ['NEAR_SOLID', 'SKATE_TRANSITION'];
+const baseTuning = Object.fromEntries(retainedExports.map(key => [key, tuning[key]]));
 
 // Include property order/descriptors, frozen/sealed/extensible state and shared references, not only JSON values.
 function tuningContract(exports) {
@@ -49,8 +51,10 @@ function tuningContract(exports) {
 }
 
 test('all 64 retained tuning exports match before-prune values, object identities and frozen states', () => {
-  assert.deepEqual(Object.keys(tuning).sort(), retainedExports);
-  assert.equal(sha256(JSON.stringify(tuningContract(tuning))),
+  assert.equal(retainedExports.length, 64);
+  assert.deepEqual(Object.keys(tuning).sort(), [...retainedExports, ...donorExports].sort());
+  // Keep the original contract hash: added donor declarations must not alter even unused base values or aliases.
+  assert.equal(sha256(JSON.stringify(tuningContract(baseTuning))),
     '0b9e6dc35a939debab5d558b45842ead3f5b5db27cd32c137a2f72568389b3c4');
   for (const [key, value] of Object.entries(tuning.TUNING)) {
     if (key in tuning) assert.equal(value, tuning[key], `TUNING aliases the named export ${key}`);
@@ -62,12 +66,44 @@ test('all 64 retained tuning exports match before-prune values, object identitie
   assert.throws(() => { tuning.EUC.maxLeanPitch = 99; }, TypeError);
 });
 
-test('generated tuning preserves the freeze call and complete before/after source outside metadata', () => {
+test('generated tuning preserves the original base bytes and separately pins the donor additions', () => {
   const generated = read('js/euc/data/tuning.js');
   assert.doesNotMatch(generated, /\bLIVE_TUNABLES\b/);
   assert.match(generated, /export const TUNING = deepFreeze\(\{/);
   // Covers full original colours, live constants before/after metadata and the original freeze side effect.
-  assert.equal(sha256(generated), '3f903c034780b71c4241ce062ee38c76be23e35d9083ed4275702d4e8e865d96');
+  const donorAt = generated.indexOf('\nexport const NEAR_SOLID =');
+  assert.ok(donorAt > 0);
+  const original = generated.slice(0, donorAt)
+    .replace(' + reviewed d37efc0 declarations (MANIFEST.json)', '') + '\n';
+  assert.equal(sha256(original), '3f903c034780b71c4241ce062ee38c76be23e35d9083ed4275702d4e8e865d96');
+  assert.equal(sha256(generated), 'a80470ad501dde43bb153f82c568d15a668c4fd7ea1cc822341ce3a390f0b53a');
+  assert.equal(sha256(generated), manifest.files['data/tuning.js'].outputSha256);
+});
+
+test('NEAR_SOLID matches the complete reviewed donor declaration, including mutable array/object state', () => {
+  const expected = {
+    liftSamplesPerSide: 10, edgeBisections: 6, flatGroundTilt: 0.3,
+    bandHeights: [0.25, 0.6, 0.95, 1.3], directions: 12, probeDistance: 1.0,
+    faceGap: 0.02, solveIterations: 4, hullDirections: 48, releaseSeconds: 0.12,
+    restGateFull: 0.25, restLiftMax: 0.02, maxPush: 0.6,
+  };
+  assert.deepEqual(tuningContract({ NEAR_SOLID: tuning.NEAR_SOLID }), tuningContract({ NEAR_SOLID: expected }));
+  assert.ok(!Object.hasOwn(tuning.TUNING, 'NEAR_SOLID'), 'the base TUNING root is not extended');
+});
+
+test('SKATE_TRANSITION matches the complete reviewed donor declaration and frozen state', () => {
+  const expected = Object.freeze({
+    wallTurnMinTilt: (20 * Math.PI) / 180, wallTurnSpeed: 1.0, wallTurnSeconds: 0.3,
+    wallTurnAlignedTilt: (10 * Math.PI) / 180, comeBackMinTilt: (42 * Math.PI) / 180,
+    comeBackMaxVerticalSpeed: 6, comeBackDriftSpeed: 0.2, comeBackTurnSeconds: 0.4,
+    comeBackMinSpeed: 2.5, comeBackMaxApproach: (70 * Math.PI) / 180,
+    comeBackLandMinTilt: (20 * Math.PI) / 180, comeBackLandShare: 0.9,
+    faceBrakeShare: 0.5, restClearAheadMetres: 3, kickLaunchWindowMetres: 0.5,
+    kickMinSlope: (5 * Math.PI) / 180, kickMaxVerticalSpeed: 6,
+    crestMaxVerticalSpeed: 4, crestWindowMetres: 0.5, hopMaxVerticalSpeed: 5.5,
+  });
+  assert.deepEqual(tuningContract({ SKATE_TRANSITION: tuning.SKATE_TRANSITION }), tuningContract({ SKATE_TRANSITION: expected }));
+  assert.ok(!Object.hasOwn(tuning.TUNING, 'SKATE_TRANSITION'), 'the base TUNING root is not extended');
 });
 
 test('chase camera is absent from the generator entries, output, manifest and generated preloads', () => {
@@ -117,5 +153,20 @@ test('all live tuning, including physical constants, independently equals the pi
   { skip: !existsSync(upstream) && 'optional upstream source fixture not present' }, async () => {
     const original = await import(upstream.href);
     const retained = Object.fromEntries(Object.entries(original).filter(([key]) => key !== 'LIVE_TUNABLES'));
-    assert.deepEqual(tuningContract(tuning), tuningContract(retained));
+    assert.deepEqual(tuningContract(baseTuning), tuningContract(retained));
+  });
+
+const donor = new URL('../EUC-thrills-latest/src/data/tuning.ts', root);
+test('the two donor exports independently equal the exact reviewed donor source fixture',
+  { skip: !existsSync(donor) && 'optional donor source fixture not present' }, async () => {
+    const record = manifest.files['data/tuning.js'].donor;
+    assert.equal(record.commit, 'd37efc07cddc0d76ff7aa585901710d357b8e5a1');
+    assert.equal(record.source, 'src/data/tuning.ts');
+    assert.deepEqual(record.selection.declarations, donorExports);
+    assert.equal(record.sourceSha256, 'a084dbc4237910707d41a949bc8d395aa6d09682c84a23fbdd049843e3fce069');
+    assert.equal(sha256(readFileSync(donor, 'utf8')), record.sourceSha256);
+    const original = await import(donor.href);
+    for (const key of donorExports) {
+      assert.deepEqual(tuningContract({ [key]: tuning[key] }), tuningContract({ [key]: original[key] }), key);
+    }
   });

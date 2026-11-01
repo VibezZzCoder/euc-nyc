@@ -1179,6 +1179,9 @@ export async function initApp(startup) {
       && ((!frozen && framePacer.shouldRender(now)) || dirtyView || !warmedUp);
     if (renderFrame) {
       dirtyView = false;
+      // Clearance changes the drawing only. Camera, traffic, input and collision retain the physical pose.
+      // Optional while iterative local previews may still have an older entity module cached.
+      riderEntity.prepareView?.(now);
       // Presentation only: use the final title/riding/booking camera once per submitted view, not per shadow pass.
       streetDetails.treeField?.update(cameraSystem.camera.position);
       if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk

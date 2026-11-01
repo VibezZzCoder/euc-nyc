@@ -170,7 +170,12 @@ function withCurrentStoneBridges(text) {
 function worldSnapshot(text, paintAPI) {
   const module = cityModule(text, paintAPI), scene = new THREE.Scene(), city = module.buildCityGrid(scene);
   const result = {};
-  for (const key of ['sidewalks', 'footprints', 'highwayLanes', 'colliders', 'trafficColliders', 'ride']) result[key] = hash(city[key]);
+  for (const key of ['sidewalks', 'footprints', 'highwayLanes', 'colliders', 'trafficColliders', 'ride']) {
+    // Riding capability metadata is verified separately in park-terrain.test.mjs. Retain the accepted geometry,
+    // support and body fingerprint here: flags must not refresh any physical/navigation/road-paint contracts.
+    const value = key === 'ride' ? JSON.parse(JSON.stringify(city[key], (name, item) => name === 'capabilities' ? undefined : item)) : city[key];
+    result[key] = hash(value);
+  }
   for (const [key, value] of Object.entries(module.snapshotSites())) result[key] = hash(value);
   const geometry = [];
   city.group.traverse(mesh => {

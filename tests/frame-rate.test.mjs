@@ -152,7 +152,7 @@ const lifecycle = main.slice(main.indexOf('  function owner()'), main.indexOf(' 
 function loopFixture(choice, gpu = Promise.resolve()) {
   const noop = () => {}, calls = {}, events = {}, order = [];
   const record = (key) => (...args) => { (calls[key] ??= []).push(args); order.push(key); };
-  const entity = { position: { x: 0, z: 0 }, speed: 0, controller: {}, tricks: { label: '' }, update: record('entity') };
+  const entity = { position: { x: 0, z: 0 }, speed: 0, controller: {}, tricks: { label: '' }, update: record('entity'), prepareView: record('riderView') };
   const camera = { position: { x: 0, y: 0, z: 0 }, aspect: 1 };
   // Keep currentPos deliberately distinct: trees must use the actual rendered camera, not its follow target.
   const currentPos = { x: -10000, y: -10000, z: -10000 };
@@ -250,6 +250,7 @@ test('production loop throttles renders/culling/tree presentation, preserving ga
       assert.equal(f.calls.render.length, target * 3 + 1, 'one extra startup warm-up submission');
       assert.equal(f.calls.culling.length, target * 3 - 1);
       assert.equal(f.calls.trees.length, target * 3, 'one tree update per admitted frame, including boot');
+      assert.equal(f.calls.riderView.length, target * 3, 'rider clearance/posing follows view admission, not simulation callbacks');
       assert.deepEqual(f.treeViews, f.renderViews.slice(1), 'boot submissions share one tree update; every later view has its own');
       assert.ok(Math.abs(Number(f.elFps.textContent) - target) <= 3, 'telemetry counts renders, not callbacks');
       await Promise.resolve();
@@ -274,9 +275,10 @@ test('tree admission follows the final title, riding, booking and map-return cam
       if (!frozen) assert.ok(f.order.indexOf('camera') < f.order.indexOf('trees'));
       else assert.ok(!f.order.includes('camera'), 'paused view retains the final camera');
       assert.ok(f.order.indexOf('trees') < f.order.indexOf('render'));
+      assert.ok(f.order.indexOf('riderView') < f.order.indexOf('render'), 'final rig/headlight precede submission');
       if (!first) assert.ok(f.order.indexOf('trees') < f.order.indexOf('culling'));
     } else {
-      assert.ok(!f.order.includes('trees') && !f.order.includes('culling'));
+      assert.ok(!f.order.includes('trees') && !f.order.includes('culling') && !f.order.includes('riderView'));
       assert.ok(f.order.includes('camera') && f.order.includes('streetLights'), 'callback updates remain live');
     }
   };

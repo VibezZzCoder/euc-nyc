@@ -1,8 +1,8 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/eucStepPrimitives.ts (sliced for euc-newyork: see the tool).
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/eucStepPrimitives.ts + reviewed d37efc0 declarations (MANIFEST.json) (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 /*! EUC Thrills — (c) 2026 VibezZzCoder — MIT — https://github.com/VibezZzCoder/EUC-thrills */
 export const EUC_STEP_PRIMITIVE_FIELDS = Object.freeze([
-    'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed', 'dynamicImpactNormalX', 'dynamicImpactNormalZ', 'dynamicSpinApplied', 'dynamicStyleHeadingPrevious', 'placementSerial',
+    'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed', 'dynamicImpactNormalX', 'dynamicImpactNormalZ', 'dynamicSpinApplied', 'dynamicComeBackApplied', 'dynamicStyleHeadingPrevious', 'placementSerial',
     'dynamicPlacementBlocked', 'x', 'y', 'z', 'headingY', 'speed',
     'leanPitch', 'riderPitch', 'slopeLean', 'riderLookYaw', 'riderTurnTwist', 'technicalTurn',
     'longitudinalAccel', 'rollAngle', 'riderLean', 'leanSettle', 'yawRate', 'lateralAccel',
@@ -19,7 +19,7 @@ export const EUC_STEP_PRIMITIVE_FIELDS = Object.freeze([
     'attackHold', 'attack', 'carveStance', 'absorb', 'airBlend', 'airPitch',
     'landingTimer', 'landingQuality', 'landingImpact', 'landingMisalignment', 'landingScore', 'landingSpeedLoss',
     'landings', 'pedalStrike', 'pedalClearance', 'justTookOff', 'justTouchedDown', 'justHopped',
-    'spinSwept', 'flights', 'stylePhaseA', 'stylePhaseB', 'styleGate', 'styleSway',
+    'spinSwept', 'flights', 'wallTurnSeconds', 'wallTurnDirection', 'wallTurns', 'comeBackTurn', 'comeBackDirection', 'comeBackFlight', 'comeBackClimb', 'comeBackUpX', 'comeBackUpZ', 'comeBackAirs', 'kickRise', 'kickRun', 'kickOnTop', 'flaggedSlopeRun', 'stylePhaseA', 'stylePhaseB', 'styleGate', 'styleSway',
     'styleHeading', 'styleWeaveRate', 'styleMetres', 'stumbleTime', 'stumbleLength', 'stumbles',
     'styleYaw', 'styleRoll', 'styleStumble', 'wobbleEnergy', 'wobblePhase', 'wobbleYaw',
     'wobbleRoll', 'wobbleSway', 'wobbleRate', 'wobbleProbeDistance', 'wobbleSmoothness', 'wobbleFootCorrection',
@@ -40,6 +40,7 @@ export function copyEucStepPrimitives(to, from) {
     to.dynamicImpactNormalX = from.dynamicImpactNormalX;
     to.dynamicImpactNormalZ = from.dynamicImpactNormalZ;
     to.dynamicSpinApplied = from.dynamicSpinApplied;
+    to.dynamicComeBackApplied = from.dynamicComeBackApplied;
     to.dynamicStyleHeadingPrevious = from.dynamicStyleHeadingPrevious;
     to.placementSerial = from.placementSerial;
     to.dynamicPlacementBlocked = from.dynamicPlacementBlocked;
@@ -140,6 +141,20 @@ export function copyEucStepPrimitives(to, from) {
     to.justHopped = from.justHopped;
     to.spinSwept = from.spinSwept;
     to.flights = from.flights;
+    to.wallTurnSeconds = from.wallTurnSeconds;
+    to.wallTurnDirection = from.wallTurnDirection;
+    to.wallTurns = from.wallTurns;
+    to.comeBackTurn = from.comeBackTurn;
+    to.comeBackDirection = from.comeBackDirection;
+    to.comeBackFlight = from.comeBackFlight;
+    to.comeBackClimb = from.comeBackClimb;
+    to.comeBackUpX = from.comeBackUpX;
+    to.comeBackUpZ = from.comeBackUpZ;
+    to.comeBackAirs = from.comeBackAirs;
+    to.kickRise = from.kickRise;
+    to.kickRun = from.kickRun;
+    to.kickOnTop = from.kickOnTop;
+    to.flaggedSlopeRun = from.flaggedSlopeRun;
     to.stylePhaseA = from.stylePhaseA;
     to.stylePhaseB = from.stylePhaseB;
     to.styleGate = from.styleGate;

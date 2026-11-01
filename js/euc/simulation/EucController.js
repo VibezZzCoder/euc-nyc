@@ -1,7 +1,7 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/EucController.ts (sliced for euc-newyork: see the tool).
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/simulation/EucController.ts + reviewed d37efc0 declarations (MANIFEST.json) (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import { proposeRiderPhaseSideProjection, proposeWheelClearOfBodies, proposeWheelSideProjection } from '../shared/riderSideContact.js';
-import { EUC, PHYSICS, SIMULATION, TERRAIN, WHEEL, POPULATION, POPULATION_CONTACT, RIDER_CONTACT, RIDER_BLOCKOUT, LAUNCH_PAD } from '../data/tuning.js';
+import { EUC, PHYSICS, SIMULATION, TERRAIN, WHEEL, POPULATION, POPULATION_CONTACT, RIDER_CONTACT, RIDER_BLOCKOUT, LAUNCH_PAD, SKATE_TRANSITION } from '../data/tuning.js';
 import { SURFACES, SURFACE_IDS } from '../data/surfaces.js';
 import { SOBER_STYLE } from '../data/rideStyles.js';
 import { approach, clamp, clamp01, lerp } from '../shared/maths.js';
@@ -18,6 +18,14 @@ import { riderRollFor, settleStep } from './riderLean.js';
 import { copyGroundSample, createGroundSample, } from './world.js';
 const HELD_CONTACT_YIELD = Object.freeze({ reason: 'contact', occupantKind: 'cop',
     normalX: 0, normalZ: 0, pending: false, met: false });
+const WALL_TURN_NORMAL_Y = Math.cos(SKATE_TRANSITION.wallTurnMinTilt);
+const WALL_TURN_ALIGNED = Math.cos(SKATE_TRANSITION.wallTurnAlignedTilt);
+const COME_BACK_NORMAL_Y = Math.cos(SKATE_TRANSITION.comeBackMinTilt);
+const WALL_TURN_CREST_MIN_REACH = 0.05;
+const WALL_TURN_CREST_MARGIN = 0.125;
+const COME_BACK_APPROACH = Math.cos(SKATE_TRANSITION.comeBackMaxApproach);
+const COME_BACK_LAND_NORMAL_Y = Math.cos(SKATE_TRANSITION.comeBackLandMinTilt);
+const KICK_MIN_RISE = Math.tan(SKATE_TRANSITION.kickMinSlope);
 const PREPARED_CONTROLLER_STEPS = new WeakMap();
 export const EUC_STEP_REFERENCE_FIELDS = Object.freeze([
     'tuning', 'surfaces', 'sampler', 'spawn', 'dynamicWorld', 'dynamicPrevious',
@@ -494,6 +502,7 @@ export class EucController {
     dynamicImpactNormalX = 0;
     dynamicImpactNormalZ = 0;
     dynamicSpinApplied = 0;
+    dynamicComeBackApplied = 0;
     dynamicStyleHeadingPrevious = 0;
     placementSerial = 0;
     dynamicPlacementBlocked = false;
@@ -788,6 +797,7 @@ export class EucController {
         working.dynamicImpactNormalX = 0;
         working.dynamicImpactNormalZ = 0;
         working.dynamicSpinApplied = 0;
+        working.dynamicComeBackApplied = 0;
         working.justTookOff = false;
         working.justTouchedDown = false;
         working.justHopped = false;
@@ -1109,6 +1119,9 @@ export class EucController {
         this.justTouchedDown = false;
         this.justHopped = false;
         this.spinSwept = false;
+        this.clearTransitionMotion();
+        this.wallTurns = 0;
+        this.comeBackAirs = 0;
         this.crashes = 0;
         this.stumbles = 0;
         this.clearInstability();
@@ -1169,6 +1182,7 @@ export class EucController {
         const t = this.tuning;
         this.dynamicIntent = null;
         this.dynamicSpinApplied = 0;
+        this.dynamicComeBackApplied = 0;
         this.dynamicStyleHeadingPrevious = this.styleHeading;
         this.dynamicPrevious = this.dynamicWorld?.resolveMotion
             ? this.dynamicBody(this.x, this.z, this.y, this.headingY, this.speed * (this.airborne ? this.airDirX : Math.sin(this.headingY + this.wobbleYaw + this.styleYaw)), this.speed * (this.airborne ? this.airDirZ : Math.cos(this.headingY + this.wobbleYaw + this.styleYaw))) : null;
@@ -1203,7 +1217,8 @@ export class EucController {
         this.slope = this.slopeAccel === 0
             ? 0
             : Math.asin(clamp(-this.slopeAccel / t.gravity, -1, 1));
-        let speed = this.speed + (accel + this.slopeAccel) * dt;
+        const pull = airborne || this.sampler.transitionAt === undefined ? accel : this.faceBrake(accel, throttle);
+        let speed = this.speed + (pull + this.slopeAccel) * dt;
         this.rollingResistance = airborne
             ? 0
             : response.rollingResistance * t.rollingResistanceScale;
@@ -1298,6 +1313,18 @@ export class EucController {
             if (this.spinRemaining <= 0)
                 this.spinSwept = true;
         }
+        if (airborne) {
+            if (this.comeBackTurn > 0) {
+                const sweep = Math.min(this.comeBackTurn, (Math.PI / SKATE_TRANSITION.comeBackTurnSeconds) * dt);
+                this.headingY += sweep * this.comeBackDirection;
+                if (this.dynamicPrevious)
+                    this.dynamicComeBackApplied = sweep;
+                this.comeBackTurn -= sweep;
+            }
+        }
+        else if (this.sampler.transitionAt !== undefined) {
+            this.stepWallTurn(dt, throttle, steer, speed);
+        }
         const leanTarget = Math.atan(lateralAccel / t.gravity);
         const ordinaryLimit = (t.maxLateralG * response.grip + technicalLimitG) * t.gravity;
         const bankAccel = Math.abs(lateralAccel) > ordinaryLimit
@@ -1352,41 +1379,59 @@ export class EucController {
         if (!this.contactBrakingConstraint)
             this.reverseBlend = approach(this.reverseBlend, reverseTarget, t.reversePoseSeconds, Infinity, dt);
         const previousY = this.y;
-        if (airborne) {
+        const travelHeading = this.headingY + this.wobbleYaw + this.styleYaw;
+        let comeBack = false;
+        if (!airborne && this.sampler.transitionAt !== undefined) {
+            comeBack = this.comeBackAtLip(Math.sin(travelHeading) * speed * dt, Math.cos(travelHeading) * speed * dt, speed, steer);
+            if (comeBack)
+                speed = SKATE_TRANSITION.comeBackDriftSpeed;
+        }
+        const flying = airborne || comeBack;
+        if (flying) {
             this.verticalVelocity -= t.gravity * dt;
             this.y += this.verticalVelocity * dt;
             this.airTime += dt;
         }
-        const travelHeading = this.headingY + this.wobbleYaw + this.styleYaw;
-        const travelX = airborne ? this.airDirX : Math.sin(travelHeading);
-        const travelZ = airborne ? this.airDirZ : Math.cos(travelHeading);
+        const travelX = flying ? this.airDirX : Math.sin(travelHeading);
+        const travelZ = flying ? this.airDirZ : Math.cos(travelHeading);
         const intended = speed * dt;
         if (intended !== 0) {
             this.crashTravelX = travelX * Math.sign(intended);
             this.crashTravelZ = travelZ * Math.sign(intended);
         }
-        const moved = this.advance(travelX * intended, travelZ * intended, dt, speed, airborne);
+        const moved = this.advance(travelX * intended, travelZ * intended, dt, speed, flying);
         speed = moved.speed;
         this.collisionImpact = moved.impactSpeed;
+        if (flying && !comeBack && this.blocked && !this.comeBackFlight && this.verticalVelocity > 0
+            && intended !== 0 && this.sampler.transitionAt !== undefined
+            && this.comeBackAgainstFace(travelX * Math.sign(intended), travelZ * Math.sign(intended), intended > 0, steer)) {
+            speed = this.speed;
+        }
         this.surface = this.ground.surface;
         this.traction = this.ground.traction ?? this.ground.surface;
         this.offCourse = this.ground.offCourse;
         this.settleGroundY();
         let landed = false;
-        if (airborne) {
+        if (flying) {
             if (this.y <= this.groundY && this.verticalVelocity <= 0) {
+                const fall = this.verticalVelocity;
                 speed = this.land(speed, this.surfaceResponse());
                 landed = true;
+                if (this.comeBackFlight)
+                    speed = this.comeBackTouchdown(speed, fall);
             }
             else if (this.y - this.groundY > this.airApex) {
                 this.airApex = this.y - this.groundY;
             }
         }
         else if (moved.excess < -t.dropLaunchThreshold) {
-            this.leaveGround(previousY, speed * Math.sin(this.slope), travelX, travelZ);
+            this.leaveGround(previousY, this.transitionLaunch(speed, speed * Math.sin(this.slope)), travelX, travelZ);
         }
         else {
             this.y = this.groundY;
+            if (this.sampler.transitionAt !== undefined) {
+                this.stepKickLatch(travelX * Math.sign(intended), travelZ * Math.sign(intended), moved.distance);
+            }
             this.stepLaunchPad(speed, travelX, travelZ, dt, throttle !== 0 || steer !== 0);
         }
         this.grounded = !this.airborne;
@@ -1424,7 +1469,7 @@ export class EucController {
         }
         this.inSoftBody = inFoliage;
         this.speed = speed;
-        this.longitudinalAccel = landed || hazardStruck || softStruck
+        this.longitudinalAccel = landed || hazardStruck || softStruck || comeBack
             ? 0
             : (speed - previousSpeed) / dt;
         this.wheelSpin += (moved.keptX * travelX + moved.keptZ * travelZ) / t.wheelRadius;
@@ -1509,7 +1554,8 @@ export class EucController {
             && this.surface !== 'spill'
             && this.wobbleEnergy < t.crashSafeWobbleCeiling
             && this.tiltBack < 1e-6
-            && Math.abs(this.speed) > t.stoppedSpeed;
+            && Math.abs(this.speed) > t.stoppedSpeed
+            && this.sampler.transitionAt?.(this.x, this.z, this.y) !== true;
         if (!safe) {
             this.safeHold = 0;
             return;
@@ -2016,10 +2062,13 @@ export class EucController {
     }
     respawn() {
         const t = this.tuning;
-        const restored = this.crashSpeed * t.crashRecoverSpeedFactor;
+        if (this.sampler.findRecoveryTarget && this.recoveryRetrySeconds > 0)
+            return false;
+        let restored = this.fallenRecoverySpeed(this.crashSpeed * t.crashRecoverSpeedFactor);
         const target = this.recoveryTarget(restored);
         if (!target)
             return false;
+        restored = this.recoverySpeedAt(target.x, target.z, target.y, restored);
         this.y = target.y;
         this.x = target.x;
         this.z = target.z;
@@ -2071,6 +2120,7 @@ export class EucController {
         this.spinRemaining = 0;
         this.spinArmed = false;
         this.spinSwept = false;
+        this.clearTransitionMotion();
         this.crouch = 0;
         this.tuck = 0;
         this.attackHold = 0;
@@ -2110,6 +2160,32 @@ export class EucController {
         this.recoveryRefusedSeconds = 0;
         this.contactHoldMask = 0;
         this.contactHoldMaskOlder = 0;
+    }
+    recoverySpeedAt(x, z, referenceY, shipped) {
+        return this.sampler.restartsAtRest?.(x, z, referenceY) === true ? 0 : shipped;
+    }
+    fallenRecoverySpeed(shipped) {
+        if (!this.sampler.restartsAtRest)
+            return shipped;
+        const p = this.ragdoll.positions;
+        const x = this.ragdolling ? p[RD_PELVIS * 3] : this.x;
+        const z = this.ragdolling ? p[RD_PELVIS * 3 + 2] : this.z;
+        const referenceY = this.ragdolling ? p[RD_PELVIS * 3 + 1] : this.y;
+        const ground = this.sampler.sampleGround(x, z, this.probe, referenceY);
+        const floorY = ground.height;
+        if (!Number.isFinite(floorY) || floorY > referenceY + 0.03 || referenceY - floorY > 1.1
+            || ground.offCourse || ground.surface === 'spill' || ground.traction === 'spill' || ground.normal.y < 0.9)
+            return shipped;
+        const speed = this.recoverySpeedAt(x, z, floorY, shipped);
+        if (speed === shipped)
+            return shipped;
+        if (this.sampler.findPlacementTarget) {
+            const support = this.sampler.findPlacementTarget({ x, z, referenceY, headingY: this.headingY,
+                maxStepUp: this.tuning.maxStepUp, hull: this.dynamicWorld?.hull });
+            if (!support || Math.abs(support.y - floorY) > 1e-5)
+                return shipped;
+        }
+        return speed;
     }
     recoveryTarget(restored) {
         if (this.sampler.findRecoveryTarget) {
@@ -2226,6 +2302,8 @@ export class EucController {
         return detachedOccupancyPose(pose);
     }
     dynamicPlacementClear(x, z, headingY, speed, reason, referenceY = reason === 'recover' ? this.safeY : this.y) {
+        if (reason === 'recover')
+            speed = this.recoverySpeedAt(x, z, referenceY, speed);
         const canPlace = this.dynamicWorld?.canPlace;
         if (!canPlace)
             return true;
@@ -2303,6 +2381,8 @@ export class EucController {
         this.yawRate *= fraction;
         this.lateralAccel *= fraction;
         this.styleHeading = lerp(this.dynamicStyleHeadingPrevious, this.styleHeading, fraction);
+        if (this.dynamicComeBackApplied > 0)
+            this.comeBackTurn += this.dynamicComeBackApplied * (1 - fraction);
         if (this.dynamicSpinApplied > 0) {
             this.spinRemaining += this.dynamicSpinApplied * (1 - fraction);
             if (this.spinRemaining > 0)
@@ -2474,9 +2554,11 @@ export class EucController {
         if (horizontal === 0)
             return false;
         const normal = this.ground.normal;
-        const rise = normal.y > 1e-4
+        let rise = normal.y > 1e-4
             ? -(normal.x * deltaX + normal.z * deltaZ) / normal.y
             : 0;
+        if (rise < 0 && this.sampler.transitionAt?.(this.x, this.z, this.y) === true)
+            rise = 0;
         const distance = Math.hypot(deltaX, rise, deltaZ) + this.tuning.wheelRadius;
         const hit = raycastObstacle.call(this.sampler, {
             x: this.x,
@@ -2557,6 +2639,8 @@ export class EucController {
                 this.spinDirection = actions.steer >= t.spinSteerThreshold
                     ? -1
                     : 1;
+                if (this.comeBackTurn > 0)
+                    this.spinDirection = this.comeBackDirection;
                 this.spinsCount += 1;
             }
             this.compressTimer = 0;
@@ -2567,7 +2651,7 @@ export class EucController {
         if (this.compressing) {
             this.compressTimer = Math.max(0, this.compressTimer - dt);
             if (this.compressTimer === 0)
-                this.launchHop();
+                this.launchHop(actions.steer);
             return;
         }
         if (requested) {
@@ -2576,7 +2660,7 @@ export class EucController {
             this.compressTimer = t.hopCompressSeconds;
             this.crouchHold = 0;
             if (this.compressTimer <= 0)
-                this.launchHop();
+                this.launchHop(actions.steer);
             return;
         }
         if (actions.crouch) {
@@ -2586,10 +2670,21 @@ export class EucController {
             this.crouchHold = 0;
         }
     }
-    launchHop() {
+    launchHop(steer) {
         const t = this.tuning;
         const launch = t.hopLaunchSpeed * Math.sqrt(1 + t.hopChargeHeightBonus * this.hopCharge);
-        this.leaveGround(this.y, launch + this.speed * Math.sin(this.slope), 0, 0);
+        const forwardX = Math.sin(this.headingY);
+        const forwardZ = Math.cos(this.headingY);
+        const sense = this.speed < 0 ? -1 : 1;
+        if (this.sampler.transitionAt !== undefined
+            && Math.abs(this.speed) >= SKATE_TRANSITION.comeBackMinSpeed
+            && (this.comeBackClimb > 0 || this.ground.normal.y < COME_BACK_NORMAL_Y)
+            && this.updateComeBackClimb(forwardX * sense, forwardZ * sense)) {
+            this.startComeBack(forwardX * sense, forwardZ * sense, this.speed, launch + Math.abs(this.speed) * this.comeBackClimb, clamp(safeAxis(steer), -1, 1));
+        }
+        else {
+            this.leaveGround(this.y, this.transitionHop(launch, this.speed, this.speed * Math.sin(this.slope)), 0, 0);
+        }
         this.compressing = false;
         this.compressTimer = 0;
         this.crouchHold = 0;
@@ -2642,6 +2737,13 @@ export class EucController {
         this.justTookOff = true;
         this.spinSwept = false;
         this.flights += 1;
+        this.comeBackFlight = false;
+        this.comeBackTurn = 0;
+        this.wallTurnSeconds = 0;
+        this.comeBackClimb = 0;
+        this.kickRise = 0;
+        this.kickOnTop = false;
+        this.flaggedSlopeRun = Infinity;
     }
     land(speed, response) {
         const t = this.tuning;
@@ -2833,6 +2935,10 @@ export class EucController {
         if (this.crashing)
             return;
         if (deltaX === 0 && deltaZ === 0)
+            return;
+        if (this.sampler.transitionAt?.(this.x, this.z, this.y) === true && !this.airborne
+            && (this.comeBackClimb > 0 || this.ground.normal.y < COME_BACK_NORMAL_Y)
+            && this.sampler.transitionAt(this.x + deltaX, this.z + deltaZ, this.y) !== true)
             return;
         if (this.dynamicWorld?.canReact)
             return this.admitPhysicalReaction('separate', working => working.separate(deltaX, deltaZ), undefined);
@@ -3445,6 +3551,253 @@ export class EucController {
             safePosition: { x: this.safeX, y: this.safeY, z: this.safeZ },
             safeHeading: this.safeHeading,
         };
+    }
+    wallTurnSeconds = 0;
+    wallTurnDirection = 1;
+    wallTurns = 0;
+    comeBackTurn = 0;
+    comeBackDirection = 1;
+    comeBackFlight = false;
+    comeBackClimb = 0;
+    comeBackUpX = 0;
+    comeBackUpZ = 0;
+    comeBackAirs = 0;
+    kickRise = 0;
+    kickRun = 0;
+    kickOnTop = false;
+    flaggedSlopeRun = Infinity;
+    transitionLaunch(speed, shipped) {
+        const rule = SKATE_TRANSITION;
+        if (this.kickArmed()) {
+            return Math.max(shipped, Math.min(Math.abs(speed) * this.kickRise, rule.kickMaxVerticalSpeed));
+        }
+        if (this.onFlaggedSlope() && shipped > rule.crestMaxVerticalSpeed)
+            return rule.crestMaxVerticalSpeed;
+        return shipped;
+    }
+    onFlaggedSlope() {
+        return this.flaggedSlopeRun <= SKATE_TRANSITION.crestWindowMetres;
+    }
+    kickArmed() {
+        return this.kickRise !== 0 && this.kickOnTop && this.kickRun <= SKATE_TRANSITION.kickLaunchWindowMetres;
+    }
+    transitionHop(launch, speed, shipped) {
+        if (!this.onFlaggedSlope() && !this.kickArmed())
+            return launch + shipped;
+        return Math.min(launch + this.transitionLaunch(speed, shipped), Math.max(launch, SKATE_TRANSITION.hopMaxVerticalSpeed));
+    }
+    stepKickLatch(dirX, dirZ, distance) {
+        const normal = this.ground.normal;
+        const flagged = this.sampler.transitionAt(this.x, this.z, this.y);
+        const across = Math.hypot(normal.x, normal.z);
+        this.flaggedSlopeRun = flagged && across >= 1e-9 ? 0 : this.flaggedSlopeRun + distance;
+        if (flagged && across < 1e-9) {
+            if (this.kickRise === 0)
+                return;
+            this.kickRun += distance;
+            this.kickOnTop = true;
+            return;
+        }
+        const rise = normal.y > 0 ? -(normal.x * dirX + normal.z * dirZ) : 0;
+        if (!flagged || rise < KICK_MIN_RISE * normal.y) {
+            this.kickRise = 0;
+            this.kickOnTop = false;
+            return;
+        }
+        const sine = rise / Math.hypot(rise, normal.y);
+        this.kickRise = this.kickOnTop || this.kickRun > SKATE_TRANSITION.kickLaunchWindowMetres
+            ? sine : Math.max(this.kickRise, sine);
+        this.kickRun = 0;
+        this.kickOnTop = false;
+    }
+    stepWallTurn(dt, throttle, steer, speed) {
+        const rule = SKATE_TRANSITION;
+        const normal = this.ground.normal;
+        if (this.wallTurnSeconds <= 0) {
+            if (normal.y >= WALL_TURN_NORMAL_Y || Math.abs(speed) > rule.wallTurnSpeed)
+                return;
+            if (this.reversing || this.compressing || throttle < -0.01)
+                return;
+            const drive = throttle > 0.01
+                ? this.tuning.leanToAccel * Math.sin(clamp01(throttle) * this.tuning.maxLeanPitch) : 0;
+            if (throttle > 0.01 && this.slopeAccel + drive > 0)
+                return;
+            const across = Math.hypot(normal.x, normal.z);
+            const facingDown = (Math.sin(this.headingY) * normal.x + Math.cos(this.headingY) * normal.z) / across;
+            if (facingDown >= WALL_TURN_ALIGNED)
+                return;
+            if (!this.sampler.transitionAt(this.x, this.z, this.y))
+                return;
+            const decel = -(this.slopeAccel + drive);
+            if (speed > 0 && decel > 0) {
+                const reach = Math.max(WALL_TURN_CREST_MIN_REACH, (speed * speed) / (2 * decel)) + WALL_TURN_CREST_MARGIN;
+                const aheadX = this.x + Math.sin(this.headingY) * reach;
+                const aheadZ = this.z + Math.cos(this.headingY) * reach;
+                if (!this.sampler.transitionAt(aheadX, aheadZ, this.y))
+                    return;
+                if (this.sampler.sampleGround(aheadX, aheadZ, this.probe, this.y).normal.y >= WALL_TURN_NORMAL_Y)
+                    return;
+            }
+            this.wallTurnSeconds = rule.wallTurnSeconds;
+            this.wallTurnDirection = steer > 0.01 ? -1 : 1;
+            this.wallTurns += 1;
+        }
+        const across = Math.hypot(normal.x, normal.z);
+        if (throttle < -0.01 || across < 1e-6) {
+            this.wallTurnSeconds = 0;
+            return;
+        }
+        const fallLine = Math.atan2(normal.x, normal.z);
+        let delta = fallLine - this.headingY;
+        delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+        if (Math.abs(delta) > Math.PI - 1e-3)
+            delta = this.wallTurnDirection * (Math.PI - 1e-3);
+        this.headingY += delta * Math.min(1, dt / this.wallTurnSeconds);
+        this.wallTurnSeconds = Math.max(0, this.wallTurnSeconds - dt);
+    }
+    faceBrake(accel, throttle) {
+        const slope = this.slopeAccel;
+        if (accel * slope >= 0)
+            return accel;
+        if (!(this.speed * slope > 0 || (slope > 0 && throttle < -0.01)))
+            return accel;
+        if (this.ground.normal.y >= WALL_TURN_NORMAL_Y || !this.sampler.transitionAt(this.x, this.z, this.y))
+            return accel;
+        const most = SKATE_TRANSITION.faceBrakeShare * Math.abs(slope);
+        return clamp(accel, -most, most);
+    }
+    comeBackAtLip(deltaX, deltaZ, speed, steer) {
+        const normal = this.ground.normal;
+        if (this.comeBackClimb === 0 && normal.y >= COME_BACK_NORMAL_Y)
+            return false;
+        const length = Math.hypot(deltaX, deltaZ);
+        if (length < 1e-9)
+            return false;
+        if (!this.updateComeBackClimb(deltaX / length, deltaZ / length))
+            return false;
+        if (Math.abs(speed) < SKATE_TRANSITION.comeBackMinSpeed)
+            return false;
+        if (this.sampler.transitionAt(this.x + deltaX, this.z + deltaZ, this.y)
+            && !(this.excessAt(deltaX, deltaZ) < -this.tuning.dropLaunchThreshold))
+            return false;
+        this.startComeBack(deltaX / length, deltaZ / length, speed, Math.abs(speed) * this.comeBackClimb, steer);
+        return true;
+    }
+    updateComeBackClimb(dirX, dirZ) {
+        const normal = this.ground.normal;
+        const across = Math.hypot(normal.x, normal.z);
+        const rise = -(normal.x * dirX + normal.z * dirZ);
+        const level = across < 1e-9;
+        if ((level ? this.comeBackClimb === 0 : rise <= 0) || !this.sampler.transitionAt(this.x, this.z, this.y)) {
+            this.comeBackClimb = 0;
+            return false;
+        }
+        if (!level && normal.y < COME_BACK_NORMAL_Y && across > this.comeBackClimb && rise / across > COME_BACK_APPROACH) {
+            this.comeBackClimb = across;
+            this.comeBackUpX = -normal.x / across;
+            this.comeBackUpZ = -normal.z / across;
+        }
+        if (this.comeBackClimb === 0)
+            return false;
+        if (this.comeBackUpX * dirX + this.comeBackUpZ * dirZ <= COME_BACK_APPROACH) {
+            this.comeBackClimb = 0;
+            return false;
+        }
+        return true;
+    }
+    startComeBack(dirX, dirZ, speed, vertical, steer) {
+        const rule = SKATE_TRANSITION;
+        const upX = this.comeBackUpX;
+        const upZ = this.comeBackUpZ;
+        this.leaveGround(this.y, Math.min(vertical, rule.comeBackMaxVerticalSpeed), -dirX, -dirZ);
+        this.speed = rule.comeBackDriftSpeed;
+        this.reversing = false;
+        this.reverseHold = 0;
+        this.wallTurnSeconds = 0;
+        this.comeBackFlight = true;
+        this.comeBackTurn = speed > 0 ? Math.PI : 0;
+        const fallLine = Math.atan2(-upX, -upZ) - this.headingY;
+        this.comeBackDirection = steer >= this.tuning.spinSteerThreshold ? -1
+            : steer <= -this.tuning.spinSteerThreshold ? 1
+                : Math.sin(fallLine) < 0 ? -1 : 1;
+        this.comeBackAirs += 1;
+        this.alignComeBackWithSpin();
+    }
+    comeBackAgainstFace(dirX, dirZ, forward, steer) {
+        const rule = SKATE_TRANSITION;
+        const aheadX = this.x + dirX * 0.25;
+        const aheadZ = this.z + dirZ * 0.25;
+        if (!this.sampler.transitionAt(aheadX, aheadZ, this.y))
+            return false;
+        const face = this.sampler.sampleGround(aheadX, aheadZ, this.probe, this.y);
+        const normal = face.normal;
+        if (normal.y >= COME_BACK_NORMAL_Y || face.height <= this.y)
+            return false;
+        const across = Math.hypot(normal.x, normal.z);
+        if (-(normal.x * dirX + normal.z * dirZ) / across <= COME_BACK_APPROACH)
+            return false;
+        const vertical = Math.min(this.verticalVelocity, rule.comeBackMaxVerticalSpeed);
+        const flight = (2 * vertical) / this.tuning.gravity;
+        const turn = forward && flight >= rule.comeBackTurnSeconds * 1.25;
+        this.verticalVelocity = vertical;
+        this.comeBackUpX = -normal.x / across;
+        this.comeBackUpZ = -normal.z / across;
+        if (!forward || turn) {
+            this.airDirX = -dirX;
+            this.airDirZ = -dirZ;
+            this.speed = rule.comeBackDriftSpeed;
+        }
+        else {
+            this.airDirX = Math.sin(this.headingY);
+            this.airDirZ = Math.cos(this.headingY);
+            this.speed = 0;
+        }
+        this.comeBackFlight = true;
+        this.comeBackTurn = turn ? Math.PI : 0;
+        const fallLine = Math.atan2(normal.x, normal.z) - this.headingY;
+        this.comeBackDirection = steer >= this.tuning.spinSteerThreshold ? -1
+            : steer <= -this.tuning.spinSteerThreshold ? 1
+                : Math.sin(fallLine) < 0 ? -1 : 1;
+        this.comeBackAirs += 1;
+        this.alignComeBackWithSpin();
+        return true;
+    }
+    alignComeBackWithSpin() {
+        if (this.comeBackTurn > 0 && this.spinRemaining > 0)
+            this.comeBackDirection = this.spinDirection;
+    }
+    comeBackTouchdown(speed, fall) {
+        this.comeBackFlight = false;
+        this.comeBackTurn = 0;
+        const normal = this.ground.normal;
+        if (normal.y >= COME_BACK_LAND_NORMAL_Y)
+            return speed;
+        const along = SKATE_TRANSITION.comeBackLandShare * Math.abs(fall) * Math.sqrt(1 - normal.y * normal.y);
+        const facingDown = Math.sin(this.headingY) * normal.x + Math.cos(this.headingY) * normal.z;
+        if (facingDown >= 0)
+            return Math.max(speed, along);
+        this.reversing = true;
+        return Math.min(speed, -along);
+    }
+    clearTransitionMotion() {
+        this.dynamicComeBackApplied = 0;
+        this.wallTurnSeconds = 0;
+        this.comeBackTurn = 0;
+        this.comeBackFlight = false;
+        this.comeBackClimb = 0;
+        this.kickRise = 0;
+        this.kickRun = 0;
+        this.kickOnTop = false;
+        this.flaggedSlopeRun = Infinity;
+    }
+    get wallTurnCount() {
+        return this.wallTurns;
+    }
+    get comeBackAirCount() {
+        return this.comeBackAirs;
+    }
+    get inComeBackAir() {
+        return this.comeBackFlight;
     }
 }
 function isStyled(style) {

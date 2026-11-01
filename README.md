@@ -12,7 +12,11 @@ Exploration comes first: roam freely, find a route and enjoy the city. Tricks an
 
 **Full-roster update (2026-10-31):** choose from all eleven riders, read their rider and wheel profiles, and explore
 with selected-rider audio, a pause menu and controller-operated map cursor. Return to EUC Thrills in the same tab
-from the title or pause menu. Main-game menu launch integration and coordinated cross-game round trips are pending.
+from the title or pause menu. The main game's title menu now offers NYC; the owner reports successful round trips
+on phone and computer.
+
+**Collision + park update (2026-11-01):** improved visual tyre/torso clearance and feature-local riding at Thomas
+Jefferson and Pier 62, checked with the surrounding city active.
 
 Reviewed riders: **Cool Rider, Trollina, Red Rider, Adonisb2, Maribel Vargas, Wheel in Motion, The Drunkard, FloWithZo,
 Seal on a Wheel, Wyldist and Gnarwheel**, with their own looks, wheels and mapped crash sounds. Officer Dorkins stays
@@ -67,7 +71,8 @@ the current dialog; booking retains its deliberate controls.
 
 The menu's separated **Return to EUC Thrills main menu** action asks for confirmation; **Keep riding** cancels.
 The title's **← EUC Thrills main menu** link leaves in the same tab. Reviewed main-game source lands at its top-level
-menu from [the clean root](https://vibezzzcoder.github.io/EUC-thrills/); coordinated launch/return QA is pending.
+menu from [the clean root](https://vibezzzcoder.github.io/EUC-thrills/). The owner's phone/computer report establishes
+basic manual navigation; detailed input and back/forward-cache (BFCache) behavior remain unspecified.
 
 Pause/menu, Rider selection and the full map freeze riding and city simulation and silence playback. Closing a
 dialog restores keyboard focus to its caller; click/tap the city canvas to return to riding keys.
@@ -136,6 +141,16 @@ adds a lower banked platform and two rollers, with a low manual pad beside the o
 Jefferson** and click its skateboard icon to arrive on the clear central riding line. The other researched skate pins
 identify places within the existing city scenery.
 
+Grounded tyre and torso poses adjust for nearby stair edges and walls; these are visual
+clearance corrections, with physical wheel motion and collision still authoritative. Street handling stays native:
+the wheel's 0.216 m step-up limit still requires hopping Manhattan's 0.22 m kerbs.
+
+The existing Thomas Jefferson and Pier 62 banks, quarter-pipes and rollers have surface- and elevation-local riding
+rules: sufficiently steep stalls can turn downhill, qualifying climbs can produce come-back airs, and kicker lips
+retain the approach slope for launch. Checked park recovery can restart at rest. Automatic turns do not earn a
+player 180 label. This remains free riding on the existing geometry with the existing trick feedback; see
+[Riding the skateparks](PLAYER_GUIDE.md#riding-the-skateparks).
+
 Officer Dorkins ambushes you on a police hover-wheel. Paddle knockdowns add warning strikes and fill a small heat
 indicator; getting up keeps the chase going. Escape takes sustained distance **and** time out of sight, while he
 searches your last known position. The first three knockdowns are warnings; the fourth earns a short comedic booking
@@ -145,13 +160,24 @@ for the chase rules, release and skip controls.
 ## Developing
 
 - `node --test tests/*.test.*` runs the headless tests. Use Node 24, also needed for the EUC vendor tool's native TypeScript stripping.
-- `js/euc/` is generated. Do not edit it. To update it from a local EUC Thrills checkout (`npm ci` done there), run
-  `node tools/vendor-euc.mjs --src <path-to-EUC-thrills>`. Run it with `--check` to
-  confirm the folder is current. Scope is the explicit eleven playable IDs from EUC Thrills v1.1.0
-  `5f45fff19b258e140833841ba2473069af751a12`, plus NPC-only `cop`, not future source additions. Preserve reviewed
-  source/output hashes, inventory/privacy checks and per-file rights. The local generated graph has 40 eager and
-  60 deferred modules; selected CPU-only pixel workers retire after preparation. Module caching does not retain
-  eleven rigs, atlases or decoded audio banks. Validate the actual public-filtered snapshot separately from local tests.
+- `js/euc/` is generated. Do not edit it. The base is EUC Thrills v1.1.0
+  `5f45fff19b258e140833841ba2473069af751a12`; the focused collision/park donor is
+  `d37efc07cddc0d76ff7aa585901710d357b8e5a1` (v1.4.0). Only six reviewed donor source files participate: near-solid
+  helper, riding rig, tuning, controller, primitive-state copies and world contract. See the
+  [exact paths and adaptation scope](NOTICE-EUC-THRILLS.md#adaptation-and-other-notices). Use clean local checkouts
+  (`npm ci` in the base checkout) to regenerate or check:
+
+  ```bash
+  node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest
+  node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest --check
+  ```
+
+  `js/euc/MANIFEST.json` records both revisions, selected donor declarations and source/output hashes. This is a focused
+  dual-source adaptation, with the reviewed eleven playable IDs, NPC-only `cop`, appearances and audio unchanged from
+  the base inventory. Preserve inventory/privacy checks and per-file rights. The local graph has **101 modules:
+  41 eager / 60 deferred**; selected CPU-only pixel workers retire after preparation. Keep one active rig/audio bank
+  plus at most one replacement, with metadata-only bounded preparation; module caching must not retain eleven rigs,
+  atlases or decoded audio banks. Validate the actual public-filtered snapshot separately from local tests.
 - three.js (one pinned dev commit) and the Inter and Overpass fonts are kept in the repo (`vendor/three/`, `fonts/`),
   so the game loads from its own host only. `node tools/vendor-three.mjs` fetches them again (to move three.js, change
   the commit in the tool first); `--check` confirms they are unchanged and complete.

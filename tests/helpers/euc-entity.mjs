@@ -7,6 +7,7 @@ import { RiderTricks } from '../../js/euc-tricks.js';
 import { findPlacementTarget, placementDepartureClear } from '../../js/euc-recovery.js';
 import { RIDERS, PLAYABLE_RIDERS, isPlayableRider, rideStyleFor } from '../../js/euc-roster.js';
 import { RiderPreparation, yieldRiderStage } from '../../js/rider-preparation.js';
+import { createNearSolids, clearNearSolids, measureNearSolids } from '../../js/euc/app/nearSolids.js';
 
 export const flat = { sampleGround(_x, _z, out) {
   Object.assign(out, { height: 0, normal: { x: 0, y: 1, z: 0 }, surface: 'pavement', offCourse: false }); return out;
@@ -20,7 +21,7 @@ const source = readFileSync(new URL('../../js/euc-rider.js', import.meta.url), '
 const appearanceFor = id => ({ look: { id }, machine: { machine: RIDERS[id].machine } });
 const deps = { THREE, EucController, createPose, copyPose, lerpPose, NEUTRAL_ACTIONS, SIMULATION, INPUT, RiderTricks,
   findPlacementTarget, placementDepartureClear, RIDERS, PLAYABLE_RIDERS, isPlayableRider, rideStyleFor,
-  RiderPreparation, yieldRiderStage,
+  RiderPreparation, yieldRiderStage, createNearSolids, clearNearSolids, measureNearSolids,
   prepareAppearance: async (id, { signal } = {}) => {
     if (signal?.aborted) throw new DOMException('Cancelled fixture appearance', 'AbortError');
     if (!isPlayableRider(id)) throw new Error('Unknown playable appearance: ' + id);
@@ -28,7 +29,13 @@ const deps = { THREE, EucController, createPose, copyPose, lerpPose, NEUTRAL_ACT
   },
   releaseAppearanceCaches() {},
   createRidingRig: (look, machine) => ({ look, machine, group: new THREE.Group(), disposed: false,
-    apply(p) { this.drawn = { crouch: p.crouch, tuck: p.tuck }; },
+    drawCalls: 0, clearanceCalls: 0, clearance: null,
+    apply(p) { this.drawCalls++; this.drawPose = structuredClone(p); this.drawn = { crouch: p.crouch, tuck: p.tuck }; },
+    // Observe the host-to-drawing boundary. Geometry clearance/easing itself is tested with the real generated rig.
+    setNearSolids(lift, faces, along = 0, seconds = 0, normals) {
+      this.clearanceCalls++;
+      this.clearance = { lift, along, seconds, faces: [...faces], normals: normals ? [...normals] : [] };
+    },
     setTrickPose(foot) { this.foot = foot; }, applySwing() {}, applyStatus() {}, dispose() { this.disposed = true; } }),
   riderLook: id => ({ id }), machineLook: machine => ({ machine }), cityUniforms: { uInteriorGlow: { value: 0 } },
   createEucHeadlight: () => Object.assign(new THREE.Object3D(), { target: new THREE.Object3D() }),

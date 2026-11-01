@@ -25,6 +25,7 @@ import { prepareAppearance, releaseAppearanceCaches } from './euc/render/appeara
 import { RIDERS, PLAYABLE_RIDERS, isPlayableRider, rideStyleFor } from './euc-roster.js';
 import { RiderPreparation, yieldRiderStage } from './rider-preparation.js';
 import { RiderTricks } from './euc-tricks.js';
+import { createNearSolids, clearNearSolids, measureNearSolids } from './euc/app/nearSolids.js';
 import { findPlacementTarget, placementDepartureClear } from './euc-recovery.js';
 import { cityUniforms } from './tsl-materials.js';
 import { EUC_HEADLIGHT, headlightBeamScale, createEucHeadlight, placeEucHeadlight } from './vehicle-lights.js';
@@ -143,6 +144,13 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
   const current = createPose();
   const render = createPose();
   const tricks = new RiderTricks();
+  const nearSolids = createNearSolids();
+  let lastViewTime = null;
+  const resetClearance = () => {
+    clearNearSolids(nearSolids);
+    rig.setNearSolids(0, nearSolids.faces, 0, 0, nearSolids.normals);
+    lastViewTime = null;
+  };
   controller.writePose(current);
   copyPose(current, previous);
   copyPose(current, render);
@@ -199,7 +207,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
     headlight: headlight.spot,
     constructionMs: performance.now() - constructionStart,
 
-    /** One rendered frame: run the fixed steps this frame owes, then interpolate and pose the rig. */
+    /** Every animation callback: advance fixed steps and interpolate the authoritative physical pose. */
     update(dt, keys) {
       if (disposed) return;
       const throttle = (keys.forward ? Number(keys.forward) : 0) - (keys.backward ? Number(keys.backward) : 0);
@@ -240,6 +248,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
           copyPose(current, previous);
           copyPose(current, render);
           tricks.reset();
+          resetClearance();
           rig.setTrickPose(0, 0);
           hopPendingUntil = -1;
           lastStumbleCount = controller.stumbleCount;
@@ -251,15 +260,24 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       }
 
       lerpPose(previous, current, accumulator / STEP, render);
-      rig.applySwing(null, 0, 0);
       tricks.apply(render, accumulator / STEP, rig);
-      rig.apply(render);
-      rig.applyStatus(render.alert ?? 0, simSeconds, 1 - (render.recoverBlend ?? 0));
-      headlight.update();
 
       this.position.set(render.x, render.y, render.z);
       this.heading = render.headingY;
       this.speed = render.speed;
+    },
+
+    /** Presentation is measured/posed once per submitted view, never on skipped or hidden callbacks. */
+    prepareView(now = performance.now()) {
+      if (disposed) return;
+      const seconds = lastViewTime === null ? 0 : Math.min(0.05, Math.max(0, (now - lastViewTime) * 0.001));
+      lastViewTime = now;
+      measureNearSolids(sampler, render, nearSolids, rig.visualTyreRadius);
+      rig.setNearSolids(nearSolids.lift, nearSolids.faces, nearSolids.along, seconds, nearSolids.normals);
+      rig.applySwing(null, 0, 0);
+      rig.apply(render);
+      rig.applyStatus(render.alert ?? 0, simSeconds, 1 - (render.recoverBlend ?? 0));
+      headlight.update();
     },
 
     /** Queue this step's one-shot edges for per-frame consumers. */
@@ -325,6 +343,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       copyPose(current, previous);
       copyPose(current, render);
       tricks.reset();
+      resetClearance();
       rig.setTrickPose(0, 0);
       accumulator = 0;
       recoveryPending = false;
@@ -411,6 +430,7 @@ export function createEucEntity(scene, sampler, { x, z, heading = 0, rider = 'co
       lastStumbleCount = controller.stumbleCount;
       events.length = 0;
       rig = candidate.rig;
+      resetClearance();
       riderId = id;
       scene.remove(oldRig.group);
       scene.add(rig.group);

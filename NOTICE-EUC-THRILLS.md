@@ -8,7 +8,7 @@ read that file for the complete upstream notice. The MIT licence text is in `js/
 scope, adaptations and rights summaries follow the second rule; they do not amend the upstream grants.
 
 **Full-roster edition, 2026-10-31:** this notice covers the eleven-rider NYC roster and unchanged source audio copies.
-The main-game menu launch integration is a separate coordinated change; this notice does not claim it is complete.
+The collision/park adaptation below keeps that reviewed asset inventory and its rights exceptions.
 [Fork authors and coding agents: start here](FORK_GUIDE.md).
 
 ---
@@ -56,8 +56,8 @@ If you use this project's original assets under CC BY 4.0, attribute as:
 ## NYC edition and owner permission position
 
 **NYC Spin-off: EUC Thrills** is an owner-maintained, separately hosted city destination within EUC Thrills, adapted
-from Mr.doob's New York world. The owner intends to offer it from the main game's menu. That menu integration is
-pending; it is not established by this notice.
+from Mr.doob's New York world. The main game's title menu offers NYC, and the owner reports successful live round
+trips on phone and computer. That establishes basic manual navigation; detailed input/BFCache behavior is unspecified.
 
 VibezZzCoder considers the participants' existing EUC Thrills permissions applicable to this NYC destination and
 has authorized the reviewed full-roster content on that basis. **This records the owner's position, not independent
@@ -158,13 +158,39 @@ landing, kerb-strike, recovery and other runtime synthesized cues use fork-autho
 
 ## Adaptation and other notices
 
-- **Code (MIT):** controller/simulation helpers, `PlanTerrainSampler`, input contracts, rig/pose/trick helpers and
-  selected shared logic are converted from the pinned TypeScript source via `tools/vendor-euc.mjs`. Generated headers
-  and `js/euc/MANIFEST.json` identify source hashes and local adaptations; do not hand-edit generated files.
+**Collision/park edition, 2026-11-01:** the focused code adaptation below was checked with the surrounding city
+running. It keeps the reviewed asset inventory and does not expand any asset/participant grant.
+
+**Code provenance (MIT):** the base is EUC Thrills v1.1.0, `5f45fff19b258e140833841ba2473069af751a12`.
+Only the following six source files from the exact v1.4.0 donor,
+`d37efc07cddc0d76ff7aa585901710d357b8e5a1`, participate in the focused dual-source adaptation:
+
+| Donor source | Selected scope |
+|---|---|
+| `src/app/nearSolids.ts` | Near-solid presentation helper, with NYC elevation forwarding and selected visual tyre envelope; native axle/flat-floor behavior retained. |
+| `src/render/ridingRig.ts` | Near-solid pose channel, retaining NYC's lazy appearance loading and local air/crash exclusions and clearance-safe release easing. |
+| `src/data/tuning.ts` | Only `NEAR_SOLID` and `SKATE_TRANSITION`; existing base tuning stays unchanged. |
+| `src/simulation/EucController.ts` | Selected transition fields/methods and their required call sites; NYC retains checked, elevation-aware recovery and dynamic-contact admission. |
+| `src/simulation/eucStepPrimitives.ts` | Required transition-state copy fields alongside existing NYC state. |
+| `src/simulation/world.ts` | Transition and at-rest recovery capability contracts, adapted for NYC location/elevation and checked fallen support. |
+
+Regenerate with `node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest`; add `--check` to verify
+generated output. Generated headers and `js/euc/MANIFEST.json` identify both revisions, donor selections, source hashes,
+output hashes and local adaptations. Do not hand-edit `js/euc/`. This is a focused code adaptation rather than a broad
+engine/source migration. The graph has **101 modules (41 eager / 60 deferred)**; the reviewed roster, appearance/mark
+closure and audio remain from the base snapshot, including **18 reviewed source audio entries / 17 installed WAVs**.
+Selected CPU-only pixel workers and bounded rig/audio preparation remain in place.
+
 - NYC's controller/terrain/dynamic-world/audio glue adapts city support, buildings, furniture, traffic and pedestrians.
-  Keep stock wheel tuning: 0.22 m Manhattan kerbs must be hopped. Appearance/loading adaptations are identified in
-  generated provenance. All-eleven local WebGPU/WebGL2 runtime/browser checks are recorded in the development ledger;
-  that evidence does not expand any asset/participant grant or certify listening quality/owner acceptance.
+  Grounded tyre/stair-edge and posed torso/wall clearance are presentation-only, measured once per submitted view;
+  physical position/contact remain controller-authoritative. Stock street tuning and the **0.216 m** step-up limit
+  remain unchanged: **0.22 m** Manhattan kerbs must be hopped.
+- Existing Thomas Jefferson and Pier 62 support facets carry feature-local, elevation-aware capabilities for banks,
+  quarter-pipes and rollers. Sufficiently steep stalls can turn downhill, qualifying climbs can launch come-back airs,
+  and kicker/lip transitions retain launch slope. Flat platforms/steps/benches are not transition faces. Automatic yaw
+  earns no player 180 credit. Local at-rest recovery uses validated fallen support or a checked destination and retains
+  NYC's support, water, full-body, moving-occupant and departure checks. Existing geometry is unchanged; this remains
+  free riding with the existing trick labels, without a new bowl, mode or scoring system.
 - `js/nemesis-swing.js` adapts `src/simulation/paddle.ts` swing/arm/head logic for the NPC. The hover-wheel and city
   pursuit/booking presentation are NYC adaptations. The source game's levels/modes/menu shell and built `docs/`
   distribution are not imported as a second game.

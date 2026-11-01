@@ -9,7 +9,10 @@ there is no required trick progression or scoring objective.
 
 **Full-roster update (2026-10-31):** the eleven-rider picker includes rider and wheel profiles, selected sounds,
 NYC pause/return controls and a controller-operated map cursor. The controls below cover keyboard, gamepad and touch.
-Main-game menu launch integration and coordinated cross-game round trips remain pending.
+Launch NYC from the EUC Thrills main menu or open it directly.
+
+**Collision + park update (2026-11-01):** the clearance corrections and park behavior below improve riding while
+the surrounding city remains active.
 
 ## What you need
 
@@ -65,8 +68,9 @@ NYC will close in this tab. **Keep riding** is initially focused; Escape/B cance
 menu** requires a separate fresh confirmation. On the title screen, **← EUC Thrills main menu** is a direct same-tab
 link, distinct from the website links above. Leaving before Ride does not authorize a new NYC save.
 
-The reference main game opens its top-level menu at **https://vibezzzcoder.github.io/EUC-thrills/**, without a special
-menu query. Offering NYC from that menu and verifying round trips against the updated main game are still pending.
+The main game opens its top-level menu at **https://vibezzzcoder.github.io/EUC-thrills/**, without a special menu query,
+and its title menu offers NYC. The owner reports successful live round trips on phone and computer. This establishes
+basic manual navigation; detailed input and back/forward-cache (BFCache) behavior remain unspecified.
 NYC and the main game keep separate saves; no cross-game progress or rider transfer is promised.
 
 ## Riding
@@ -79,7 +83,7 @@ wheel and worth knowing before they surprise you:
 
 - **You lean to go.** Leaning forward accelerates, leaning back brakes, and holding back from a standstill rolls you
   backwards. Carving is leaning into the turn: the faster you go, the wider the line.
-- **Kerbs must be hopped.** Manhattan's kerbs are 22 cm, a fraction more than the wheel can climb on its own. Roll
+- **Kerbs must be hopped.** Manhattan's kerbs are 22 cm, just above the unchanged 21.6 cm step-up limit. Roll
   into one slowly and you stop at its face; hit one at speed (about 8 mph / 13 km/h or more) and you go over the
   front. Hop just before it.
 - **Crouch charges the hop.** Hold crouch for a moment, then hop, for a jump about 40% higher.
@@ -88,6 +92,10 @@ wheel and worth knowing before they surprise you:
   back**: it lifts its nose and stops answering your lean until you slow down.
 - **Top speed is about 66 mph** (107 km/h). From about 58 mph the wheel **beeps**, faster as you go faster, and *Max
   speed* blinks with the beeps. Hold more than about 62 mph and it cuts out: you crash.
+
+The game adjusts the grounded tyre pose around climbable stair edges and the posed torso beside walls
+to reduce visible clipping. These corrections affect the drawing only; wheel motion, contact and street handling
+still come from the riding simulation.
 
 ### Simple tricks
 
@@ -114,8 +122,27 @@ Ordinary reversing from a standstill does not count. These are trick labels, not
 
 Try the clear central line at **Thomas Jefferson Skatepark** or the flat run-ups at **Pier 62**. **Action** and
 **Side Tracking** are useful for watching the foot lift and tuck. The full roster uses the same trick controls;
-all-eleven native riding/one-foot/landing/crash/recovery and booking checks passed on both graphics backends.
-Animation polish and costume/mark fidelity still benefit from owner playtest.
+animation polish and costume/mark fidelity still benefit from owner playtest.
+
+### Riding the skateparks
+
+The riding behavior follows the existing banks, quarter-pipes and rollers at **Thomas Jefferson** and
+**Pier 62**, using their existing shapes and layouts:
+
+- **Steep stalls:** an uphill stall on a sufficiently steep riding face can turn you downhill to roll back out.
+- **Come-back airs:** a qualifying steep climb can send you back toward the face, with an automatic turn when needed.
+  Speed, approach angle and the shape of the lip matter; not every ramp produces this air.
+- **Kicker lips:** the launch can carry the approach slope across a short flat lip. The usual Hop and charged-hop
+  controls still apply.
+- **Local recovery at rest:** you restart stationary when the validated floor beneath your fallen body or the checked
+  recovery destination is an eligible park surface. Recovery still checks support, water, standing room, moving
+  occupants and a way out; blocked ground can require a checked fallback or another attempt.
+
+The behavior follows the actual riding surface and its height, rather than the whole area around a park. Flat
+platforms, steps and benches are not transition faces, and a street or deck at another height keeps its normal
+handling. A qualifying air keeps its in-flight behavior through landing even after leaving the feature.
+Automatic downhill/come-back turns do **not** count as a player 180 or qualify a Fakie by themselves; use the normal
+hop/release/repress spin for that feedback. This remains optional free riding with the existing trick labels.
 
 ### Crashes
 

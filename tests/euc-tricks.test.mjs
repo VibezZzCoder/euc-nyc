@@ -131,11 +131,16 @@ test('fakie requires a landed spin and continuous moving ground time; reset clea
 test('production entity: held input reaches interpolated rig, native jump is immediate, swap/placement clear tricks', async () => {
   for (const hz of [30, 60, 120]) {
     const e = entity();
-    for (let i = 0; i < hz; i++) e.update(1 / hz, { boost: true });
+    for (let i = 0; i < hz; i++) { e.update(1 / hz, { boost: true }); e.prepareView(i * 1000 / hz); }
     e.update(1 / hz, { up: true });
+    e.prepareView(1000);
     assert.equal(e.controller.canAcceptHop, false, 'hop accepted immediately into native preload');
     let foot = 0;
-    for (let i = 0; i < hz; i++) { e.update(1 / hz, { up: true }); foot = Math.max(foot, e.rig.foot); }
+    for (let i = 0; i < hz; i++) {
+      e.update(1 / hz, { up: true }); e.prepareView(1000 + (i + 1) * 1000 / hz);
+      foot = Math.max(foot, e.rig.foot);
+      assert.deepEqual(e.rig.drawn, { crouch: e.pose.crouch, tuck: e.pose.tuck }, 'submitted rig receives the interpolated trick pose');
+    }
     assert.equal(foot, 1, `${hz} Hz one foot reaches the rendered rig`);
     assert.equal(e.tricks.label, 'One-foot air');
     e.clearInput(); assert.equal(e.tricks.label, '');

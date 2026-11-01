@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/data/tuning.ts (sliced for euc-newyork: see the tool).
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/data/tuning.ts + reviewed d37efc0 declarations (MANIFEST.json) (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import { deepFreeze } from '../shared/freeze.js';
 import { MATERIALS, SURFACES } from './surfaces.js';
@@ -2002,4 +2002,41 @@ export const WILDLIFE = deepFreeze({
     viewMetres: 65,
     sharedViewMetres: 40,
     animationHz: 30,
+});
+export const NEAR_SOLID = {
+    liftSamplesPerSide: 10,
+    edgeBisections: 6,
+    flatGroundTilt: 0.3,
+    bandHeights: [0.25, 0.6, 0.95, 1.3],
+    directions: 12,
+    probeDistance: 1.0,
+    faceGap: 0.02,
+    solveIterations: 4,
+    hullDirections: 48,
+    releaseSeconds: 0.12,
+    restGateFull: 0.25,
+    restLiftMax: 0.02,
+    maxPush: 0.6,
+};
+export const SKATE_TRANSITION = Object.freeze({
+    wallTurnMinTilt: (20 * Math.PI) / 180,
+    wallTurnSpeed: 1.0,
+    wallTurnSeconds: 0.3,
+    wallTurnAlignedTilt: (10 * Math.PI) / 180,
+    comeBackMinTilt: (42 * Math.PI) / 180,
+    comeBackMaxVerticalSpeed: 6,
+    comeBackDriftSpeed: 0.2,
+    comeBackTurnSeconds: 0.4,
+    comeBackMinSpeed: 2.5,
+    comeBackMaxApproach: (70 * Math.PI) / 180,
+    comeBackLandMinTilt: (20 * Math.PI) / 180,
+    comeBackLandShare: 0.9,
+    faceBrakeShare: 0.5,
+    restClearAheadMetres: 3,
+    kickLaunchWindowMetres: 0.5,
+    kickMinSlope: (5 * Math.PI) / 180,
+    kickMaxVerticalSpeed: 6,
+    crestMaxVerticalSpeed: 4,
+    crestWindowMetres: 0.5,
+    hopMaxVerticalSpeed: 5.5,
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/vendor-euc.mjs — copy the EUC riding systems out of a local EUC Thrills clone into js/euc/ as plain ES modules.
 //
-// usage: node tools/vendor-euc.mjs [--src ../EUC-thrills] [--check]
+// usage: node tools/vendor-euc.mjs [--src ../EUC-thrills] [--donor ../EUC-thrills-latest] [--check]
 //        node tools/vendor-euc.mjs [--src ../EUC-thrills] --audit <dir>    (scan a whole tree, e.g. a release)
 //
 // The fork has no build step, so the TypeScript is converted once, here, and the JavaScript is committed. Each
@@ -28,11 +28,23 @@ const argValue = (name, fallback) => {
   return at >= 0 ? args[at + 1] : fallback;
 };
 const SRC_ROOT = path.resolve(ROOT, argValue('--src', '../EUC-thrills'));
+const DONOR_ROOT = path.resolve(ROOT, argValue('--donor', '../EUC-thrills-latest'));
 const CHECK_ONLY = args.includes('--check');
 const AUDIT_DIR = argValue('--audit', null);
 const OUT = path.join(ROOT, 'js', 'euc');
 const EXPECTED_COMMIT = '5f45fff19b258e140833841ba2473069af751a12';
-const REVIEWED_MODULES = new Set(`app/oneFootPose data/rideStyles data/riders data/machines data/surfaces data/tuning
+const DONOR_COMMIT = 'd37efc07cddc0d76ff7aa585901710d357b8e5a1';
+// Complete-file hashes identify the donor even when only individual declarations are extracted. The base remains
+// authoritative for every other module, all reviewed appearances/audio, and NYC's existing adaptation layers.
+const DONOR_HASHES = {
+  'app/nearSolids.ts': '59350bb61e53a9bda09660f6cf8a0f6cded9557815fb34cda977ca5f97ef2480',
+  'render/ridingRig.ts': '7413e04db970dd1c791eb9fa59a06cfb62556c464b9e98502baff4a12912bad0',
+  'simulation/EucController.ts': '5304c5f60cc443418d7b8836932482b2ef806b3bc69f6fe0d5565cadf91cdfe9',
+  'simulation/eucStepPrimitives.ts': '46c74ca9d4845b9c4b47049da0cd9f9861ff1c9d85220cdc29f3c2ad9f043d27',
+  'data/tuning.ts': 'a084dbc4237910707d41a949bc8d395aa6d09682c84a23fbdd049843e3fce069',
+  'simulation/world.ts': 'fc42f20124279aae9b037de4b4940b4ea2603c568023a7ce8554a88350d6f400',
+};
+const REVIEWED_MODULES = new Set(`app/oneFootPose app/nearSolids data/rideStyles data/riders data/machines data/surfaces data/tuning
 input/actions render/blockoutKit render/coolRiderAtlas render/coolRiderLook render/euc render/inkKit
 render/machineLook render/paddle render/rider render/riderClothDrape render/riderJointSurface render/riderLook
 render/ridingRig render/rigConsolidation shared/freeze shared/letterPaths shared/maths shared/ragdollBoot
@@ -48,6 +60,7 @@ data/gnarwheelLogoAsset`.split(/\s+/).map(p => `${p}.ts`));
 // The runtime entry points the fork imports. Everything else comes in through their imports.
 const ENTRIES = [
   'app/oneFootPose.ts',
+  'app/nearSolids.ts',
   'simulation/EucController.ts',
   'simulation/planSampler.ts',
   'simulation/world.ts',
@@ -156,7 +169,142 @@ function pruneLiveTuningMetadata(source) {
   return replaceOnce(source, declarations[0][0], '');
 }
 
+// Keep this after the independently testable pruning seam above. No upstream application/level migration: explicit
+// AST members/declarations only. Hashes and unchanged-member checks fail closed if the reviewed closure changes.
+const donorSources = new Map();
+const donorOrigins = new Map();
+const sha256 = text => crypto.createHash('sha256').update(text).digest('hex');
+function donorSource(rel) {
+  if (!donorSources.has(rel)) {
+    const source = fs.readFileSync(path.join(DONOR_ROOT, 'src', rel), 'utf8');
+    if (sha256(source) !== DONOR_HASHES[rel]) throw new Error(`Reviewed donor hash changed: src/${rel}`);
+    donorSources.set(rel, source);
+  }
+  return donorSources.get(rel);
+}
+function useDonor(rel, selection) {
+  donorOrigins.set(rel, { commit: DONOR_COMMIT, source: `src/${rel}`, sourceSha256: DONOR_HASHES[rel], selection });
+  return donorSource(rel);
+}
+function sourceTree(source) {
+  return ts.createSourceFile('reviewed.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+}
+function namedDeclaration(source, name) {
+  const tree = sourceTree(source);
+  const matches = tree.statements.filter(node => node.name?.text === name
+    || (ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText(tree) === name)));
+  if (matches.length !== 1) throw new Error(`Reviewed donor declaration changed: ${name}`);
+  return matches[0].getText(tree);
+}
+const TRANSITION_FIELDS = ['wallTurnSeconds', 'wallTurnDirection', 'wallTurns', 'comeBackTurn', 'comeBackDirection',
+  'comeBackFlight', 'comeBackClimb', 'comeBackUpX', 'comeBackUpZ', 'comeBackAirs', 'kickRise', 'kickRun', 'kickOnTop', 'flaggedSlopeRun'];
+const TRANSITION_METHODS = ['transitionLaunch', 'onFlaggedSlope', 'kickArmed', 'transitionHop', 'stepKickLatch',
+  'stepWallTurn', 'faceBrake', 'comeBackAtLip', 'updateComeBackClimb', 'startComeBack', 'comeBackAgainstFace',
+  'alignComeBackWithSpin', 'comeBackTouchdown', 'clearTransitionMotion', 'wallTurnCount', 'comeBackAirCount', 'inComeBackAir'];
+const TRANSITION_REPLACEMENTS = ['reset', 'stepNative', 'updateSafePosition', 'obstacleWithinWheelRadius',
+  'stepHop', 'launchHop', 'leaveGround', 'separate'];
+function controllerTransitions(base) {
+  const rel = 'simulation/EucController.ts';
+  const donor = useDonor(rel, { fields: TRANSITION_FIELDS, methods: TRANSITION_METHODS, replace: TRANSITION_REPLACEMENTS,
+    excluded: ['respawn', 'recoveryTarget', 'clearAheadRecoveryTarget', 'clearAhead'],
+    nyc: ['validated fallen-support rest policy', 'dynamic admission restores automatic turn sweep'] });
+  const members = source => {
+    const tree = sourceTree(source);
+    const cls = tree.statements.find(n => ts.isClassDeclaration(n) && n.name?.text === 'EucController');
+    if (!cls) throw new Error('Missing reviewed controller class');
+    return { tree, cls, byName: new Map(cls.members.map(m => [m.name?.getText(tree) ?? 'constructor', m])) };
+  };
+  const a = members(base), b = members(donor);
+  const selected = [...TRANSITION_FIELDS, ...TRANSITION_METHODS];
+  const ignored = ['respawn', 'recoveryTarget', 'clearAheadRecoveryTarget', 'clearAhead'];
+  // No unrelated controller difference can hitchhike in a selected member or escape the review inventory.
+  for (const [name, node] of b.byName) {
+    const old = a.byName.get(name);
+    if ((!old || node.getText(b.tree) !== old.getText(a.tree))
+      && ![...selected, ...TRANSITION_REPLACEMENTS, ...ignored].includes(name)) throw new Error(`Unreviewed controller member: ${name}`);
+  }
+  const edits = TRANSITION_REPLACEMENTS.map(name => {
+    const old = a.byName.get(name), next = b.byName.get(name);
+    if (!old || !next || old.getText(a.tree) === next.getText(b.tree)) throw new Error(`Missing transition seam: ${name}`);
+    return { start: old.getStart(a.tree), end: old.end, text: next.getText(b.tree) };
+  });
+  const additions = selected.map(name => {
+    if (a.byName.has(name) || !b.byName.has(name)) throw new Error(`Transition member inventory changed: ${name}`);
+    return b.byName.get(name).getText(b.tree);
+  });
+  edits.push({ start: a.cls.end - 1, end: a.cls.end - 1, text: `\n  ${additions.join('\n\n  ')}\n` });
+  let source = base;
+  for (const edit of edits.sort((x, y) => y.start - x.start)) source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
+  const constants = ['WALL_TURN_NORMAL_Y', 'WALL_TURN_ALIGNED', 'COME_BACK_NORMAL_Y', 'WALL_TURN_CREST_MIN_REACH',
+    'WALL_TURN_CREST_MARGIN', 'COME_BACK_APPROACH', 'COME_BACK_LAND_NORMAL_Y', 'KICK_MIN_RISE'];
+  source = replaceOnce(source, 'const PREPARED_CONTROLLER_STEPS =', constants.map(name => namedDeclaration(donor, name)).join('\n') + '\nconst PREPARED_CONTROLLER_STEPS =');
+  source = replaceOnce(source, 'RIDER_BLOCKOUT, LAUNCH_PAD }', 'RIDER_BLOCKOUT, LAUNCH_PAD, SKATE_TRANSITION }');
+  // Every feature query selects by the rider's actual elevation, including ahead/offset candidate queries. Flight
+  // latches are deliberately not gated again by the current location: they survive crossing the feature boundary.
+  let flags = 0;
+  source = source.replace(/this\.sampler\.transitionAt([?!]?)\.?(\()([^;\n]*?)(\))/g, (_all, optional, open, args) => {
+    flags++;
+    return `this.sampler.transitionAt${optional}${optional === '?' ? '.' : ''}${open}${args}, this.y)`;
+  });
+  if (flags !== 11) throw new Error(`Transition query inventory changed: ${flags}`);
+  return source;
+}
+
+function controllerGroundHeights(source) {
+  const tree = sourceTree(source), edits = [];
+  const visit = node => {
+    if (ts.isCallExpression(node) && node.expression.getText(tree) === 'this.sampler.sampleGround') {
+      if (node.arguments.length !== 3) throw new Error('Unexpected controller ground query signature');
+      const first = node.arguments[0].getText(tree);
+      const y = first.startsWith('spawn.position') ? 'spawn.position.y'
+        : first.startsWith('pelvis[') ? 'pelvis[RD_PELVIS * 3 + 1]'
+        : first.startsWith('this.safeX') ? 'this.safeY' : 'this.y';
+      edits.push({ at: node.arguments.end, y });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  if (edits.length !== 22) throw new Error(`controller height query sites changed: ${edits.length}`);
+  for (const { at, y } of edits.sort((a, b) => b.at - a.at)) source = source.slice(0, at) + `, ${y}` + source.slice(at);
+  return source;
+}
+
 const OVERRIDES = {
+  'app/nearSolids.ts': () => {
+    let source = useDonor('app/nearSolids.ts', 'complete helper; NYC elevation forwarding and selected visual tyre envelope; native physical axle and flat-floor answers preserved');
+    source = replaceOnce(source, 'sample: GroundSample): number {', 'sample: GroundSample, referenceY: number): number {');
+    source = replaceOnce(source, 'sampler.sampleGround(x, z, sample)', 'sampler.sampleGround(x, z, sample, referenceY)');
+    source = replaceOnce(source, 's, scratchSample);', 's, scratchSample, y);');
+    source = replaceOnce(source, 'midS, scratchSample);', 'midS, scratchSample, y);');
+    source = replaceOnce(source, 'x, z, rollSample)', 'x, z, rollSample, pose.y)');
+    source = replaceOnce(source, 'const scratchSample = createGroundSample();', `// Selected geometry supplies this presentation-only envelope, never a controller/wheel tuning value.
+function checkedVisualTyreRadius(radius: number): number {
+  if (!Number.isFinite(radius) || radius < TYRE_RADIUS || radius > TYRE_RADIUS * 2) {
+    throw new RangeError('Visual tyre radius must be finite and between one and two native tyre radii');
+  }
+  // The authored native circle is Float32 geometry: a few nanometres of rounding must not perturb its exact
+  // original sampling/bisection answers. Actual reviewed lugs/rim overhangs are millimetres, far past this bound.
+  return radius <= TYRE_RADIUS + 1e-7 ? TYRE_RADIUS : radius;
+}
+
+const scratchSample = createGroundSample();`);
+    source = replaceOnce(source, 'forwardZ: number,\n): number {', `forwardZ: number,
+  visualTyreRadius = TYRE_RADIUS,
+): number {
+  const radius = checkedVisualTyreRadius(visualTyreRadius);`);
+    source = replaceOnce(source, 'const spacing = TYRE_RADIUS / perSide;', 'const spacing = radius / perSide;');
+    source = replaceOnce(source, 'if (s >= TYRE_RADIUS) continue;', 'if (s >= radius) continue;');
+    source = replaceOnce(source, 'high + Math.sqrt(TYRE_RADIUS * TYRE_RADIUS - s * s)', 'high + Math.sqrt(radius * radius - s * s)');
+    source = replaceOnce(source, 'forwardX: number, forwardZ: number): number {', 'forwardX: number, forwardZ: number, radius: number): number {');
+    source = replaceOnce(source, 'tyreStepLift(sampler, x, pose.y, z, forwardX, forwardZ)', 'tyreStepLift(sampler, x, pose.y, z, forwardX, forwardZ, radius)');
+    source = replaceOnce(source, 'const spacing = TYRE_RADIUS / NEAR_SOLID.liftSamplesPerSide;', 'const spacing = radius / NEAR_SOLID.liftSamplesPerSide;');
+    source = replaceOnce(source, 'pose: EucPose, out: NearSolids): NearSolids {', 'pose: EucPose, out: NearSolids, visualTyreRadius = TYRE_RADIUS): NearSolids {');
+    source = replaceOnce(source, 'clearNearSolids(out);\n  if (pose.airHeight', 'clearNearSolids(out);\n  const radius = checkedVisualTyreRadius(visualTyreRadius);\n  if (pose.airHeight');
+    source = replaceOnce(source, 'tyreStepLift(sampler, pose.x, pose.y, pose.z, forwardX, forwardZ)', 'tyreStepLift(sampler, pose.x, pose.y, pose.z, forwardX, forwardZ, radius)');
+    source = replaceOnce(source, 'restingRoll(sampler, pose, forwardX, forwardZ)', 'restingRoll(sampler, pose, forwardX, forwardZ, radius)');
+    source = replaceOnce(source, '          forwardX, forwardZ);', '          forwardX, forwardZ, radius);');
+    return source;
+  },
   // Wheel-sidequest: original procedural rubber and motor-cover detail. Keep the existing axle/spin contract,
   // silhouette and all stationary parts. Textures are made once per machine and owned by its disposal registry.
   'render/euc.ts': (src) => {
@@ -269,15 +417,19 @@ const OVERRIDES = {
   // The city has stacked roads. Forward query height without changing the controller's tuning / contact maths.
   // Exact counts deliberately fail when the upstream query sites change.
   'simulation/EucController.ts': (src) => {
-    let count = 0;
-    let s = src.replace(/this\.sampler\.sampleGround\(([^;\n]+)\);/g, (all, args) => {
-      count++;
-      const y = args.startsWith('spawn.position') ? 'spawn.position.y'
-        : args.startsWith('pelvis[') ? 'pelvis[RD_PELVIS * 3 + 1]'
-        : args.startsWith('this.safeX') ? 'this.safeY' : 'this.y';
-      return `this.sampler.sampleGround(${args}, ${y});`;
-    });
-    if (count !== 20) throw new Error(`controller height query sites changed: ${count}`);
+    let s = controllerGroundHeights(controllerTransitions(src));
+    s = replaceOnce(s, 'private dynamicSpinApplied = 0;', `private dynamicSpinApplied = 0;
+  private dynamicComeBackApplied = 0;`);
+    s = replaceOnce(s, 'this.dynamicSpinApplied = 0;', 'this.dynamicSpinApplied = 0; this.dynamicComeBackApplied = 0;');
+    s = replaceOnce(s, 'working.dynamicSpinApplied = 0;', 'working.dynamicSpinApplied = 0; working.dynamicComeBackApplied = 0;');
+    s = replaceOnce(s, 'this.comeBackTurn -= sweep;', `if (this.dynamicPrevious) this.dynamicComeBackApplied = sweep;
+        this.comeBackTurn -= sweep;`);
+    s = replaceOnce(s, 'this.styleHeading = lerp(this.dynamicStyleHeadingPrevious, this.styleHeading, fraction);',
+      `this.styleHeading = lerp(this.dynamicStyleHeadingPrevious, this.styleHeading, fraction);
+    // Automatic yaw is subject to the same admission as a player spin. Refused angular travel remains due.
+    if (this.dynamicComeBackApplied > 0) this.comeBackTurn += this.dynamicComeBackApplied * (1 - fraction);`);
+    s = replaceOnce(s, 'private clearTransitionMotion(): void {', `private clearTransitionMotion(): void {
+    this.dynamicComeBackApplied = 0;`);
     let wheelSites = 0;
     s = s.replace(/(private (?:applyWallStandoff|obstacleWithinWheelRadius)\([^]*?const raycastObstacle = )this\.sampler\.raycastObstacle;/g,
       (_all, prefix) => { wheelSites++; return prefix + 'this.sampler.raycastWheelObstacle ?? this.sampler.raycastObstacle;'; });
@@ -340,6 +492,45 @@ const OVERRIDES = {
   }
 
   private respawn(): boolean {`);
+    s = replaceOnce(s, 'const restored = this.crashSpeed * t.crashRecoverSpeedFactor;', `// NYC: use the fallen body's validated floor, not pelvis height, for its local speed policy.
+    // Keep rejected-recovery retries bounded before doing support/footprint queries.
+    if (this.sampler.findRecoveryTarget && this.recoveryRetrySeconds > 0) return false;
+    let restored = this.fallenRecoverySpeed(this.crashSpeed * t.crashRecoverSpeedFactor);`);
+    s = replaceOnce(s, 'if (!target) return false;\n\n    this.y = target.y;', `if (!target) return false;
+    restored = this.recoverySpeedAt(target.x, target.z, target.y, restored);
+
+    this.y = target.y;`);
+    s = replaceOnce(s, 'this.spinSwept = false;\n    this.crouch = 0;', 'this.spinSwept = false;\n    this.clearTransitionMotion();\n    this.crouch = 0;');
+    s = replaceOnce(s, 'const canPlace = this.dynamicWorld?.canPlace;', `if (reason === 'recover') speed = this.recoverySpeedAt(x, z, referenceY, speed);
+    const canPlace = this.dynamicWorld?.canPlace;`);
+    s = replaceOnce(s, 'private recoveryTarget(restored: number):', `private recoverySpeedAt(x: number, z: number, referenceY: number, shipped: number): number {
+    return this.sampler.restartsAtRest?.(x, z, referenceY) === true ? 0 : shipped;
+  }
+
+  private fallenRecoverySpeed(shipped: number): number {
+    if (!this.sampler.restartsAtRest) return shipped;
+    const p = this.ragdoll.positions;
+    const x = this.ragdolling ? p[RD_PELVIS * 3] : this.x;
+    const z = this.ragdolling ? p[RD_PELVIS * 3 + 2] : this.z;
+    const referenceY = this.ragdolling ? p[RD_PELVIS * 3 + 1] : this.y;
+    const ground = this.sampler.sampleGround(x, z, this.probe, referenceY);
+    const floorY = ground.height;
+    // Match checked recovery's settled-body height window. No upward snap to an overhead floor or mid-fall policy.
+    if (!Number.isFinite(floorY) || floorY > referenceY + 0.03 || referenceY - floorY > 1.1
+      || ground.offCourse || ground.surface === 'spill' || ground.traction === 'spill' || ground.normal.y < 0.9) return shipped;
+    const speed = this.recoverySpeedAt(x, z, floorY, shipped);
+    if (speed === shipped) return shipped;
+    // NYC's existing admission owns dry footprint, actual bodies/ceilings and water. This static validation must
+    // ignore moving occupancy: a refused park placement can legitimately fall back outside while retaining rest.
+    if (this.sampler.findPlacementTarget) {
+      const support = this.sampler.findPlacementTarget({ x, z, referenceY, headingY: this.headingY,
+        maxStepUp: this.tuning.maxStepUp, hull: this.dynamicWorld?.hull });
+      if (!support || Math.abs(support.y - floorY) > 1e-5) return shipped;
+    }
+    return speed;
+  }
+
+  private recoveryTarget(restored: number):`);
     s = replaceOnce(s, 'this.crashTime += dt;', 'this.crashTime += dt;\n    this.recoveryRetrySeconds = Math.max(0, this.recoveryRetrySeconds - dt);');
     s = s.replaceAll('this.crashTime = 0;', 'this.crashTime = 0; this.recoveryRetrySeconds = 0;');
     s = replaceOnce(s, 'private recoveryTarget(restored: number): { x: number; y: number; z: number; headingY: number } | null {',
@@ -380,20 +571,43 @@ const OVERRIDES = {
     s = replaceOnce(s, 'intoSolid: boolean;', 'intoSolid: boolean;\n  velocityX?: number;\n  velocityZ?: number;');
     return s;
   },
-  'simulation/world.ts': (src) => src.replace('sampleGround(x: number, z: number, out: GroundSample): GroundSample;',
-    'sampleGround(x: number, z: number, out: GroundSample, referenceY?: number): GroundSample;')
-    .replace('export interface TerrainSampler {', `
+  'simulation/world.ts': (src) => {
+    useDonor('simulation/world.ts', 'transitionAt and restartsAtRest capability contracts; NYC location/elevation arguments and checked fallen-support validation');
+    return replaceOnce(replaceOnce(src, 'sampleGround(x: number, z: number, out: GroundSample): GroundSample;',
+      'sampleGround(x: number, z: number, out: GroundSample, referenceY?: number): GroundSample;'),
+    'export interface TerrainSampler {', `
 type RecoveryPoint = { x: number; y: number; z: number; headingY: number };
 export interface TerrainSampler {
+  /** Feature capability at the selected support elevation, never an XZ-only park toggle. */
+  transitionAt?(x: number, z: number, referenceY: number): boolean;
+  /** Local fallen/candidate restart policy. Absence/false retains native crash-speed restoration. */
+  restartsAtRest?(x: number, z: number, referenceY: number): boolean;
   raycastWheelObstacle?: TerrainSampler['raycastObstacle'];
+  /** Existing NYC static support/footprint/water validation, independent of moving occupancy. */
+  findPlacementTarget?(request: {
+    x: number; z: number; headingY: number; referenceY: number; maxStepUp: number;
+    hull?: { halfWidthMetres: number; halfLengthMetres: number; heightMetres: number };
+  }): RecoveryPoint | null;
   findRecoveryTarget?(request: {
     fallen: Vec3; safePoints: RecoveryPoint[]; headingY: number; maxStepUp: number;
     hull?: { halfWidthMetres: number; halfLengthMetres: number; heightMetres: number };
-  }, canPlace: (point: RecoveryPoint) => boolean): RecoveryPoint | null;`),
-  'simulation/eucStepPrimitives.ts': (src) => src.replace("'safeX', 'safeZ'", "'safeX', 'safeY', 'safeZ'")
-    .replace('to.safeX = from.safeX;', 'to.safeX = from.safeX;\n  to.safeY = from.safeY;')
-    .replace("'dynamicImpactSpeed'", "'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed'")
-    .replace('to.dynamicImpactSpeed = from.dynamicImpactSpeed;', 'to.vehicleImpact = from.vehicleImpact;\n  to.crashVelocityX = from.crashVelocityX;\n  to.crashVelocityZ = from.crashVelocityZ;\n  to.recoveryRetrySeconds = from.recoveryRetrySeconds;\n  to.dynamicImpactSpeed = from.dynamicImpactSpeed;'),
+  }, canPlace: (point: RecoveryPoint) => boolean): RecoveryPoint | null;`);
+  },
+  'simulation/eucStepPrimitives.ts': (src) => {
+    // Retain the base schema and its NYC additions; extract and verify the donor's exact new field/copy closure.
+    const donor = useDonor('simulation/eucStepPrimitives.ts', { fields: TRANSITION_FIELDS, nycFields: ['dynamicComeBackApplied'] });
+    for (const field of TRANSITION_FIELDS) {
+      if (!donor.includes(`'${field}'`) || !donor.includes(`to.${field} = from.${field};`)) throw new Error(`Missing donor primitive: ${field}`);
+    }
+    let s = replaceOnce(src, "'spinSwept', 'flights',", `'spinSwept', 'flights', ${TRANSITION_FIELDS.map(f => `'${f}'`).join(', ')},`);
+    s = replaceOnce(s, 'to.flights = from.flights;', 'to.flights = from.flights;\n  ' + TRANSITION_FIELDS.map(f => `to.${f} = from.${f};`).join('\n  '));
+    s = replaceOnce(s, "'dynamicSpinApplied'", "'dynamicSpinApplied', 'dynamicComeBackApplied'");
+    s = replaceOnce(s, 'to.dynamicSpinApplied = from.dynamicSpinApplied;', 'to.dynamicSpinApplied = from.dynamicSpinApplied;\n  to.dynamicComeBackApplied = from.dynamicComeBackApplied;');
+    s = replaceOnce(s, "'safeX', 'safeZ'", "'safeX', 'safeY', 'safeZ'");
+    s = replaceOnce(s, 'to.safeX = from.safeX;', 'to.safeX = from.safeX;\n  to.safeY = from.safeY;');
+    s = replaceOnce(s, "'dynamicImpactSpeed'", "'vehicleImpact', 'crashVelocityX', 'crashVelocityZ', 'recoveryRetrySeconds', 'dynamicImpactSpeed'");
+    return replaceOnce(s, 'to.dynamicImpactSpeed = from.dynamicImpactSpeed;', 'to.vehicleImpact = from.vehicleImpact;\n  to.crashVelocityX = from.crashVelocityX;\n  to.crashVelocityZ = from.crashVelocityZ;\n  to.recoveryRetrySeconds = from.recoveryRetrySeconds;\n  to.dynamicImpactSpeed = from.dynamicImpactSpeed;');
+  },
   'render/riderLook.ts': (src) => {
     return `${sliceDeclarations(src, ['COP_LOOK', 'MOTION_STILL'])}
 import { preparedRiderLook } from './appearanceRegistry.ts';
@@ -412,9 +626,57 @@ export function machineLook(id: string) {
   },
   'render/rider.ts': src => replaceOnce(replaceOnce(src, '  COOL_RIDER_LOOK,', '  riderLook,'),
     'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')"),
-  'render/ridingRig.ts': src => replaceOnce(replaceOnce(src, 'import { COOL_RIDER_LOOK, MOTION_STILL,',
-    'import { riderLook, MOTION_STILL,'), 'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')"),
-  'data/tuning.ts': pruneLiveTuningMetadata,
+  'render/ridingRig.ts': () => {
+    // The complete diff of this one rig file is the reviewed near-solid channel only. Preserve NYC's lazy look seam.
+    let source = useDonor('render/ridingRig.ts', 'near-solid presentation channel; NYC cached selected-geometry visual tyre radius, flight/crash exclusions and constraint-safe release easing; no appearance/resource graph migration');
+    source = replaceOnce(replaceOnce(source, 'import { COOL_RIDER_LOOK, MOTION_STILL,',
+      'import { riderLook, MOTION_STILL,'), 'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')");
+    source = replaceOnce(source, '  readonly nearPush: readonly [number, number];', `  readonly nearPush: readonly [number, number];
+  /** Once-built radial XZ envelope of this selected euc-tyre, before its static Z rotation. Presentation only. */
+  readonly visualTyreRadius: number;`);
+    source = replaceOnce(source, '  const paddle = createPaddle();', `  // Consolidation retains the independently spinning tyre mesh. Its local cylinder axis is Y; rotation.z
+  // places that axle on X later. Read geometry exactly once, including the selected machine's merged lugs/rim.
+  const tyrePositions = euc.tyre.geometry.getAttribute('position');
+  let visualTyreRadius = WHEEL.tyreDiameter / 2;
+  for (let index = 0; index < tyrePositions.count; index += 1) {
+    const radius = Math.hypot(tyrePositions.getX(index), tyrePositions.getZ(index));
+    if (!Number.isFinite(radius) || radius > WHEEL.tyreDiameter) throw new RangeError('Invalid selected visual tyre geometry');
+    visualTyreRadius = Math.max(visualTyreRadius, radius);
+  }
+  const paddle = createPaddle();`);
+    source = replaceOnce(source, '    get nearPush(): readonly [number, number] {', `    get visualTyreRadius(): number { return visualTyreRadius; },
+
+    get nearPush(): readonly [number, number] {`);
+    // Be robust to a retained channel at crash/air entry, not just to the host remembering to clear it.
+    source = replaceOnce(source, 'const along = crashing ? 0 : solidAlong;', `const excluded = crashing || pose.airHeight > 1e-4;
+      const lift = excluded ? 0 : solidLift;
+      const along = excluded ? 0 : solidAlong;`);
+    source = replaceOnce(source, 'pose.y + solidLift,', 'pose.y + lift,');
+    source = replaceOnce(source, '-pose.suspensionOffset - solidLift;', '-pose.suspensionOffset - lift;');
+    source = replaceOnce(source, 'if (crashing) {\n        push[0]', 'if (excluded) {\n        push[0]');
+    source = replaceOnce(source, 'push[1] = targetZ + (push[1] - targetZ) * keep;', `push[1] = targetZ + (push[1] - targetZ) * keep;
+      // NYC: magnitude alone cannot decide whether easing is safe. A smaller push at a different face
+      // is still an arrival at that face: do not blend through it while releasing the previous wall.
+      if (solidAny) {
+        const easedX = push[0] * cos - push[1] * sin;
+        const easedZ = push[0] * sin + push[1] * cos;
+        for (let entry = 0; entry < solidFaces.length; entry += 1) {
+          if (!(solidFaces[entry] < Number.POSITIVE_INFINITY) || nearest[entry] === Number.POSITIVE_INFINITY) continue;
+          const reach = nearest[entry] + easedX * solidNormals[2 * entry] + easedZ * solidNormals[2 * entry + 1];
+          if (reach < offsets[entry] + NEAR_SOLID.faceGap - 1e-9) {
+            push[0] = targetX;
+            push[1] = targetZ;
+            break;
+          }
+        }
+      }`);
+    return source;
+  },
+  'data/tuning.ts': src => {
+    const donor = useDonor('data/tuning.ts', { declarations: ['NEAR_SOLID', 'SKATE_TRANSITION'] });
+    // All 64 existing exports/aliases/frozen values remain the base snapshot's. No new TUNING root entries.
+    return pruneLiveTuningMetadata(src) + '\n' + ['NEAR_SOLID', 'SKATE_TRANSITION'].map(name => namedDeclaration(donor, name)).join('\n');
+  },
 };
 
 const require = createRequire(path.join(SRC_ROOT, 'package.json'));
@@ -872,6 +1134,12 @@ if (dirty) {
   console.error('EUC Thrills source/assets/notices have local changes; vendor only from a clean upstream checkout.');
   process.exit(1);
 }
+const donorCommit = execFileSync('git', ['-C', DONOR_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+if (donorCommit !== DONOR_COMMIT) throw new Error(`EUC Thrills donor must be pinned to ${DONOR_COMMIT}, got ${donorCommit}`);
+if (execFileSync('git', ['-C', DONOR_ROOT, 'status', '--porcelain'], { encoding: 'utf8' }).trim()) {
+  throw new Error('EUC Thrills donor has local changes; use a clean reviewed checkout.');
+}
+for (const rel of Object.keys(DONOR_HASHES)) donorSource(rel);
 
 // Static import/export-from statements (esbuild prints them at the start of a line), bare imports and import().
 const SPEC = /(?:^(?:import|export)\b[^;'"]*?\bfrom\s*|^import\s*|\bimport\s*\(\s*)(['"])([^'"\n]+)\1/gm;
@@ -883,7 +1151,8 @@ while (queue.length) {
   if (outputs.has(rel)) continue;
   if (!synthetic.has(rel) && !REVIEWED_MODULES.has(rel)) throw new Error(`Unreviewed source dependency: ${rel}`);
   const file = path.join(SRC_ROOT, 'src', rel);
-  const raw = synthetic.get(rel) ?? fs.readFileSync(file, 'utf8');
+  const donorOnly = rel === 'app/nearSolids.ts';
+  const raw = synthetic.get(rel) ?? (donorOnly ? donorSource(rel) : fs.readFileSync(file, 'utf8'));
   let adapted = OVERRIDES[rel] ? OVERRIDES[rel](raw, removedColourKeys) : raw;
   if (/^render\/(?:.*Look\.ts|(?:rider|machine)Appearance-)/.test(rel)) adapted = addPaintInputMetadata(adapted);
   const source = adaptAppearanceCaches(rel, adapted);
@@ -917,7 +1186,9 @@ while (queue.length) {
     if (spec === 'three') return all.replace(spec, path.posix.relative(path.posix.dirname(`js/euc/${rel}`), 'vendor/three/build/three.core.js'));
     return spec.startsWith('.') ? all.replace(spec, spec.replace(/\.ts$/, '.js')) : all;
   });
-  const header = `// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@${commit.slice(0, 7)} ${synthetic.has(rel) ? 'generated boundary' : `src/${rel}`}` +
+  const originCommit = donorOnly ? donorCommit : commit;
+  const header = `// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@${originCommit.slice(0, 7)} ${synthetic.has(rel) ? 'generated boundary' : `src/${rel}`}` +
+    `${donorOrigins.has(rel) && !donorOnly ? ` + reviewed ${DONOR_COMMIT.slice(0, 7)} declarations (MANIFEST.json)` : ''}` +
     `${OVERRIDES[rel] ? ' (sliced for euc-newyork: see the tool)' : ''}.\n// MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.\n`;
   const guidance = /(?:data\/riders|riderLook|machineLook|appearanceLoader|[rm].*Appearance-|pixels\/.*Atlas)/.test(rel) ? AGENT_GUIDANCE : '';
   const vectorNotice = rel === 'render/pixels/paintVector.ts'
@@ -985,6 +1256,9 @@ if (problems.length) {
 const manifest = {
   upstream: 'https://github.com/VibezZzCoder/EUC-thrills',
   commit,
+  sources: { base: { commit }, donor: { commit: donorCommit, files: Object.keys(DONOR_HASHES).map(rel => ({
+    source: `src/${rel}`, sourceSha256: DONOR_HASHES[rel], selection: donorOrigins.get(rel)?.selection,
+  })) } },
   generatedBy: 'tools/vendor-euc.mjs',
   entries: ENTRIES,
   workers: { entries: WORKER_ENTRIES.map(p => p.replace(/\.ts$/, '.js')),
@@ -1015,6 +1289,8 @@ const manifest = {
     sourceSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(SRC_ROOT, source))).digest('hex') })),
   files: Object.fromEntries([...outputs].sort(([a], [b]) => a.localeCompare(b)).map(([rel, o]) => [rel.replace(/\.ts$/, '.js'), {
     source: o.sha ? `src/${rel}` : null, sourceSha256: o.sha,
+    ...(o.sha ? { sourceCommit: rel === 'app/nearSolids.ts' ? donorCommit : commit } : {}),
+    ...(donorOrigins.has(rel) ? { donor: donorOrigins.get(rel) } : {}),
     ...(synthetic.has(rel) ? { derivedFrom: [...syntheticOrigins.get(rel).map(origin => ({ source: `src/${origin}`,
       sourceSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(SRC_ROOT, 'src', origin))).digest('hex') })),
       ...(syntheticLocalOrigins.get(rel) ?? [])] } : {}),
@@ -1058,5 +1334,5 @@ const lines = manifest.eager.map((rel) => `  <link rel="modulepreload" href="./j
 fs.writeFileSync(INDEX, `${html.slice(0, a + START.length)}\n${lines.join('\n')}\n  ${html.slice(b)}`);
 fs.writeFileSync(path.join(OUT, 'MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 const bytes = [...outputs.values()].reduce((n, o) => n + Buffer.byteLength(o.js), 0);
-console.log(`wrote ${outputs.size} modules (${Math.round(bytes / 1024)} KiB) to js/euc from EUC-thrills@${commit.slice(0, 7)}; ` +
+console.log(`wrote ${outputs.size} modules (${Math.round(bytes / 1024)} KiB) to js/euc from EUC-thrills@${commit.slice(0, 7)} + reviewed donor@${donorCommit.slice(0, 7)}; ` +
   `${eager.size} eager, ${outputs.size - eager.size} deferred; reviewed roster/content audit clean`);

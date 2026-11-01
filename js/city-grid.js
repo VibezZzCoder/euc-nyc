@@ -979,11 +979,11 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
       if (!pieces) return bodyBox(...args);
       for (const part of pieces) for (const r of prismSlices(part)) bodyBox(args[0], r.x0, r.x1, args[3], args[4], r.z0, r.z1);
     };
-    const support = (geo, u, y, s, rot, surface, layered = physical) => {
+    const support = (geo, u, y, s, rot, surface, layered = physical, capabilities = null) => {
       const mesh = new THREE.Mesh(geo, GR);
       mesh.position.set(wx(u, s), y, wz(u, s));
       mesh.rotation.y = theta + rot;
-      addRideMesh(mesh, surface, shore, layered);
+      addRideMesh(mesh, surface, shore, layered, capabilities);
     };
     return {
       theta, wx, wz,
@@ -994,11 +994,12 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
         const args = [mat, u0, u1, y0, y1, s0, s1, v, open];
         bodyParts(args, drawBox(...args));
       },
-      top: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false) => {
+      top: (mat, u0, u1, y0, y1, s0, s1, v = 0, open = false, capabilities = null) => {
         const pieces = drawBox(mat, u0, u1, y0, y1, s0, s1, v, open);
         for (const part of pieces || [[{ x: u0, z: s0 }, { x: u1, z: s0 }, { x: u1, z: s1 }, { x: u0, z: s1 }]]) {
           const poly = part.map(p => ({ x: wx(p.x, p.z), z: wz(p.x, p.z) }));
           const t = addRideTop(poly, Math.max(y0, y1), v === 4 || v === 5 || v === 6 ? 'grass' : v === 3 ? 'wood' : v === 7 ? 'brick' : 'pavement');
+          if (capabilities) t.capabilities = capabilities;
           if (shore) t.shore = true; // actual pier decks open the shore wall; inland skate surfaces do not
           t.layered = y0 > DY + 1;
           if (t.layered) {
@@ -1009,9 +1010,9 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
         }
       },
       geo: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0) => B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v),
-      ground: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0, surface = v === 4 ? 'grass' : 'pavement') => {
+      ground: (mat, geo, u = 0, y = 0, s = 0, rot = 0, v = 0, surface = v === 4 ? 'grass' : 'pavement', capabilities = null) => {
         B.geo(mat, geo, wx(u, s), y, wz(u, s), theta + rot, v);
-        support(geo, u, y, s, rot, surface);
+        support(geo, u, y, s, rot, surface, physical, capabilities);
       },
       prism: (mat, geo, y, v) => {
         B.geo(mat, geo, x0, y, z0, theta, v);
@@ -1150,7 +1151,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
   // Hudson River Park lawn piers (84, 45, 66, 26): paver promenade, curbed lawn panels with trees, benches, shade sails
   // A solid concrete section extruded across u, from one ordered [s, topY] profile. The same top triangles supply
   // riding support; compact inscribed bodies supply the sides/underside without introducing a flat support lid.
-  const skateProfile = (F, u0, u1, profile, base, smooth = false) => {
+  const skateProfile = (F, u0, u1, profile, base, smooth = false, capabilities = null) => {
     const positions = [], normals = [], sides = [];
     const triangle = (out, a, b, c) => out.push(...a, ...b, ...c);
     const quad = (out, a, b, c, d) => { triangle(out, a, b, c); triangle(out, a, c, d); };
@@ -1181,7 +1182,7 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
     const top = new THREE.BufferGeometry();
     top.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     top.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    F.ground(GR, top, 0, 0, 0, 0, 10, 'pavement');
+    F.ground(GR, top, 0, 0, 0, 0, 10, 'pavement', capabilities);
     const walls = new THREE.BufferGeometry();
     walls.setAttribute('position', new THREE.Float32BufferAttribute(sides, 3));
     walls.computeVertexNormals();
@@ -1190,63 +1191,65 @@ function buildWaterfrontPiers(group, { addRideTop, addRideSolid, addRideMesh, in
   };
   // The original landward riding line, retained within the larger park. Its north portion stays clear of the
   // existing highway sweep; the connected extension runs seaward through three more bays.
+  const parkRest = feature => ({ feature: 'pier62-' + feature, restartsAtRest: true });
+  const parkFace = feature => ({ ...parkRest(feature), transition: 'slope' });
   const pier62Section = (F, a, b, lw) => {
     const y = DY + 0.36, entry = 4, s0 = -19, s1 = 5;
     for (const [lo, hi] of [[-lw - 0.3, -entry], [entry, lw + 0.3]]) F.top(GR, a - 0.3, b + 0.3, DY, DY + 0.32, lo, hi, 0);
     F.top(GR, a + 1.8, b - 1.8, DY, DY + 0.32, -entry, entry, 0);
     for (const [lo, hi] of [[-lw, s0], [s1, lw]]) F.top(GR, a, b, DY, y, lo, hi, 4);
     for (const [u0, u1, lo, hi] of [[a, b, s0, -entry], [a + 1.8, b, -entry, entry], [a, b, entry, s1]]) {
-      F.top(GR, u0, u1, DY, y, lo, hi, 9);
+      F.top(GR, u0, u1, DY, y, lo, hi, 9, false, parkRest('court'));
     }
     // Gentle landward access; the extension supplies the new seaward entrance and the continuous joining floor.
     const across = F.sub(0, 0, Math.PI / 2);
-    skateProfile(across, -entry, entry, [[a - 1.4, DY], [a + 1.8, y]], DY);
+    skateProfile(across, -entry, entry, [[a - 1.4, DY], [a + 1.8, y]], DY, false, parkRest('entrance'));
     // Broad banked tabletop, open flat run, and a low quarter-pipe; a separate ledge leaves the main line clear.
-    skateProfile(F, a + 7.0, b - 1.5, [[-15.5, y], [-13, y + 0.55], [-11, y + 0.55], [-8.5, y]], y);
+    skateProfile(F, a + 7.0, b - 1.5, [[-15.5, y], [-13, y + 0.55], [-11, y + 0.55], [-8.5, y]], y, false, parkFace('tabletop'));
     const curve = [], radius = 2.4, start = 0.3;
     for (let i = 0; i <= 16; i++) {
       const t = i / 16 * Math.PI / 3;
       curve.push([start + radius * Math.sin(t), y + radius * (1 - Math.cos(t))]);
     }
     const lip = curve[curve.length - 1];
-    skateProfile(F, a + 7.0, b - 4.1, curve, y, true);
-    F.top(GR, a + 7.0, b - 4.1, y, lip[1], lip[0], 3.6, 10);
+    skateProfile(F, a + 7.0, b - 4.1, curve, y, true, parkFace('quarter'));
+    F.top(GR, a + 7.0, b - 4.1, y, lip[1], lip[0], 3.6, 10, false, parkRest('quarter-deck'));
     F.body(a + 7.0, b - 4.1, y, lip[1], lip[0], 3.6);
     // Flush dark coping on the deck: a projecting, shadow-casting thin bar produced teeth on the curved face.
-    F.top(GR, a + 7.0, b - 4.1, lip[1] - 0.02, lip[1] + 0.005, lip[0] + 0.02, lip[0] + 0.10, 8);
+    F.top(GR, a + 7.0, b - 4.1, lip[1] - 0.02, lip[1] + 0.005, lip[0] + 0.02, lip[0] + 0.10, 8, false, parkRest('coping'));
     F.solid(PA, a + 1.2, a + 3.1, y, y + 0.32, -8.5, -4.5, 5);
-    F.top(GR, a + 1.2, a + 3.1, y + 0.30, y + 0.32, -8.5, -4.5, 10);
+    F.top(GR, a + 1.2, a + 3.1, y + 0.30, y + 0.32, -8.5, -4.5, 10, false, parkRest('ledge'));
     for (const u of [a + 1.2, a + 3.1]) F.solid(PA, u - 0.025, u + 0.025, y + 0.295, y + 0.335, -8.5, -4.5, 9);
   };
   const pier62Extension = (F, start, end) => {
     const y = DY + 0.36, entry = 4, s0 = -21, s1 = 13;
     // One connected court over the intervening cross-aisles, with a clear spine and a flush seaward path entrance.
-    for (const [lo, hi] of [[s0, -entry], [entry, s1]]) F.top(GR, start, end, DY, y, lo, hi, 9);
-    F.top(GR, start, end - 1.8, DY, y, -entry, entry, 9);
+    for (const [lo, hi] of [[s0, -entry], [entry, s1]]) F.top(GR, start, end, DY, y, lo, hi, 9, false, parkRest('extension-court'));
+    F.top(GR, start, end - 1.8, DY, y, -entry, entry, 9, false, parkRest('extension-court'));
     const across = F.sub(0, 0, Math.PI / 2);
-    skateProfile(across, -entry, entry, [[end - 1.8, y], [end + 1.4, DY]], DY);
+    skateProfile(across, -entry, entry, [[end - 1.8, y], [end + 1.4, DY]], DY, false, parkRest('exit'));
     // Two smooth rollers form a long low line; the centre of the court remains flat for bypass and turning.
     for (const [u, height] of [[start + 9, 0.45], [start + 22, 0.65]]) {
       const profile = [];
       for (let i = 0; i <= 16; i++) profile.push([u + i / 16 * 8, y + height * (1 - Math.cos(i / 16 * Math.PI * 2)) / 2]);
-      skateProfile(across, 10, 18, profile, y, true);
+      skateProfile(across, 10, 18, profile, y, true, parkFace('roller-' + height));
     }
     // A second, taller bank line and a broad return quarter give the far court a distinct purpose and a run-up.
-    skateProfile(F, end - 16, end - 5, [[-19, y], [-16, y + 0.75], [-13, y + 0.75], [-10, y]], y);
+    skateProfile(F, end - 16, end - 5, [[-19, y], [-16, y + 0.75], [-13, y + 0.75], [-10, y]], y, false, parkFace('far-bank'));
     const curve = [], radius = 3, from = 6.6;
     for (let i = 0; i <= 20; i++) {
       const angle = i / 20 * Math.PI / 3;
       curve.push([from + radius * Math.sin(angle), y + radius * (1 - Math.cos(angle))]);
     }
     const lip = curve.at(-1), u0 = end - 24, u1 = end - 5;
-    skateProfile(F, u0, u1, curve, y, true);
-    F.top(GR, u0, u1, y, lip[1], lip[0], 12, 10);
+    skateProfile(F, u0, u1, curve, y, true, parkFace('far-quarter'));
+    F.top(GR, u0, u1, y, lip[1], lip[0], 12, 10, false, parkRest('far-quarter-deck'));
     F.body(u0, u1, y, lip[1], lip[0], 12);
-    F.top(GR, u0, u1, lip[1] - 0.02, lip[1] + 0.005, lip[0] + 0.02, lip[0] + 0.10, 8);
+    F.top(GR, u0, u1, lip[1] - 0.02, lip[1] + 0.005, lip[0] + 0.02, lip[0] + 0.10, 8, false, parkRest('far-coping'));
     // Low manual pad, longer hop-up ledge and short flat rail alongside the open central spine.
     for (const [a, b, height] of [[start + 9, start + 16, 0.20], [start + 23, start + 31, 0.40]]) {
       F.solid(PA, a, b, y, y + height, 4.4, 7, 5);
-      F.top(GR, a, b, y + height - 0.02, y + height, 4.4, 7, 10);
+      F.top(GR, a, b, y + height - 0.02, y + height, 4.4, 7, 10, false, parkRest('pad-' + height));
     }
     const rail0 = start + 35, rail1 = start + 40, sy = 5.7;
     F.strut(PA, [rail0, y + 0.48, sy], [rail1, y + 0.48, sy], 0.10, 9, 0.12, 'pavement', true);
@@ -2122,7 +2125,7 @@ function buildCityGrid(scene) {
   }
   // Register the upward faces of a ground object, after its transform is set, before static batching.
   // Facets preserve rock slopes and tapered platform edges without an enclosing box or a flat invisible lid.
-  function addRideMesh(mesh, surface = 'stone', shore = false, layered = false) {
+  function addRideMesh(mesh, surface = 'stone', shore = false, layered = false, capabilities = null) {
     mesh.updateWorldMatrix(true, false);
     const pos = mesh.geometry.attributes.position, index = mesh.geometry.index;
     const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
@@ -2135,6 +2138,10 @@ function buildCityGrid(scene) {
       if (n.y <= 1e-7) continue; // vertical walls and undersides are not support surfaces
       const t = addRideTop([a, b, c], Math.max(a.y, b.y, c.y), surface);
       t.plane = { x: a.x, y: a.y, z: a.z, dx: -n.x / n.y, dz: -n.z / n.y };
+      // A profile opts in explicitly. Only its actual sloped facets are transitions; broad level platforms are
+      // recovery surfaces, not kicker lips. Keep the exact plane/normal and physical geometry unchanged.
+      if (capabilities) t.capabilities = { ...capabilities, transition: capabilities.transition === 'slope'
+        ? Math.hypot(t.plane.dx, t.plane.dz) > 1e-6 : capabilities.transition === true };
       if (shore) t.shore = true;
       if (layered) t.layered = true;
     }
