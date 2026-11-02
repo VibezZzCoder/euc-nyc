@@ -52,6 +52,7 @@
   <link rel="modulepreload" href="./js/view-preferences.js" />
   <link rel="modulepreload" href="./js/frame-rate.js" />
   <link rel="modulepreload" href="./js/render-resolution.js" />
+  <link rel="modulepreload" href="./js/graphics-quality.js" />
   <link rel="modulepreload" href="./js/boroughs.js" />
   <link rel="modulepreload" href="./js/buildings.js" />
   <link rel="modulepreload" href="./js/solid-rects.js" />
@@ -233,13 +234,16 @@
           <a class="repo-link" href="https://github.com/VibezZzCoder/euc-nyc" target="_blank" rel="noopener noreferrer" aria-label="NYC Spin-off: EUC Thrills on GitHub (opens in a new tab)">GitHub <span aria-hidden="true">↗</span></a>
           <a class="website-link" href="https://euc.erodmen.com/" target="_blank" rel="noopener noreferrer" aria-label="EUC Thrills website (opens in a new tab)">Website <span aria-hidden="true">↗</span></a>
         </div>
-        <div class="brand-subtitle">three.js · WebGPU · TSL · <span id="hud-fps">—</span> fps</div>
+        <div class="brand-subtitle">three.js · WebGPU · TSL</div>
       </div>
     </div>
     <div class="performance-controls">
       <label class="panel fps-control" for="fps-limit">
-        <span class="fps-label-full" aria-hidden="true">Frame rate</span>
-        <span class="fps-label-short" aria-hidden="true">FPS</span>
+        <span class="fps-heading">
+          <span class="fps-label-full" aria-hidden="true">Frame rate</span>
+          <span class="fps-label-short" aria-hidden="true">FPS</span>
+          <span id="hud-fps" title="Measured frames per second">—</span>
+        </span>
         <select id="fps-limit" aria-label="Frame rate" title="Render limit; Auto follows your display. Riding physics stay unchanged.">
           <option value="auto">Auto</option>
           <option value="120">120</option>
@@ -254,6 +258,14 @@
           <option value="100">100%</option>
           <option value="75">75%</option>
           <option value="50">50%</option>
+        </select>
+      </label>
+      <label class="panel graphics-control" for="graphics-quality">
+        <span aria-hidden="true">Graphics</span>
+        <select id="graphics-quality" data-quality="high" aria-label="Graphics quality" title="Choose High, Medium or Low graphics quality to balance visual effects and performance. FPS and 3D resolution are separate settings.">
+          <option value="high" selected>High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
         </select>
       </label>
     </div>

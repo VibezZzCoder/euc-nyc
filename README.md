@@ -95,10 +95,12 @@ your session running and releases held riding, camera and map gestures; lift and
 use a horizontal row in short windows, and map search uses larger touch-friendly text. Foldable-sized layouts are
 covered by automated Chromium checks; physical foldable/Safari validation is still pending.
 
-Use the upper-left **Frame rate / FPS** and **3D resolution / 3D res** controls to tune rendering independently.
+Use the upper-left **Frame rate / FPS**, **3D resolution / 3D res** and **Graphics** controls to tune rendering independently.
 Resolution choices are **100%** (the existing default), **75%** and **50%**, remembered between visits. Lower choices
 soften only the 3D scene, leaving menus, HUD, map and touch controls sharp. They can help graphics-limited devices;
-riding physics, traffic, city detail and routes are unchanged. See [rendering options](PLAYER_GUIDE.md#frame-rate-and-3d-resolution).
+riding physics, traffic, city geometry and routes are unchanged. Graphics offers **High** (original appearance), **Medium**
+(no screen-space reflections, lower-resolution sun shadows) and **Low** (also no bloom or cast sun shadows), saved for
+your next visit. See [rendering options](PLAYER_GUIDE.md#frame-rate-3d-resolution-and-graphics).
 
 - **Ride and steer:** put your left thumb down in the bottom-left to bring up the floating stick. Push up to lean
   forward, down to brake or reverse, and sideways to carve.

@@ -167,6 +167,8 @@ function loopFixture(choice, gpu = Promise.resolve()) {
     startup: { failed: false, complete: record('complete'), fail: record('fail') },
     renderer: { setAnimationLoop: (fn) => { callback = fn; }, backend: { device: { queue: { onSubmittedWorkDone: () => gpu } } } },
     framePacer, frameRateHealth, frameRatePreference: { value: choice },
+    graphicsPreference: { value: 'high' }, graphicsLimit: null, graphicsFailed: record('graphicsFailed'),
+    graphics: { value: 'high', apply(value) { this.value = value; record('graphicsApply')(value); } },
     elFps, elSpeed: null, elSpeedKmh: null, elSpeedMeter: null,
     titleScreen: { isOpen: false, started: true, root: {}, show: record('title'), update: record('titleUpdate') },
     booking: { active: false, state: {}, update: record('booking') }, BOOKING_STAGE: {},
@@ -209,10 +211,33 @@ function loopFixture(choice, gpu = Promise.resolve()) {
   };
   const controls = new Function(...Object.keys(env), 'menuOwner', `let lastOwner = null, dirtyView = false,
     lifecycleReady = false, rendererBusy = false, stopped = false, pageAway = false;
-    ${lifecycle}\n${loop}\nreturn { reset: resetFramePacing, invalidate: () => { dirtyView = true; } };`)(...Object.values(env), menuOwner);
+    ${lifecycle}\n${loop}\nreturn { reset: resetFramePacing, invalidate: () => { dirtyView = true; },
+      setBusy: value => { rendererBusy = value; } };`)(...Object.values(env), menuOwner);
   return { step: (now) => callback(now), calls, events, order, treeViews, renderViews, cameraViews,
     ...controls, framePacer, elFps, env };
 }
+
+test('quality changes coalesce behind compilation and hidden gates; failures enter graphics recovery', () => {
+  const f = loopFixture('30');
+  f.step(0);
+  const applied = f.calls.graphicsApply.length;
+  f.setBusy(true);
+  f.env.graphicsPreference.value = 'low'; f.invalidate(); f.step(10);
+  f.env.graphicsPreference.value = 'medium'; f.invalidate(); f.step(20);
+  assert.equal(f.calls.graphicsApply.length, applied, 'never mutate renderer-owned effects during compile');
+  f.setBusy(false); f.step(30);
+  assert.deepEqual(f.calls.graphicsApply.at(-1), ['medium'], 'only the latest choice is applied');
+  f.env.document.hidden = true;
+  f.env.graphicsPreference.value = 'high'; f.invalidate(); f.step(40);
+  assert.equal(f.env.graphics.value, 'medium');
+  f.env.document.hidden = false; f.step(50);
+  assert.equal(f.env.graphics.value, 'high');
+  f.env.graphics.apply = () => { throw new Error('quality failure'); };
+  const renders = f.calls.render.length;
+  f.invalidate(); f.step(60);
+  assert.equal(f.calls.render.length, renders, 'failed application cannot submit a partial frame');
+  assert.equal(f.calls.graphicsFailed.length, 1);
+});
 
 test('a cached pre-tricks rider still renders the first frame and completes startup', async () => {
   const f = loopFixture('auto');

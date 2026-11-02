@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, smoothstep } from 'three/tsl';
+import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, vec4, smoothstep } from 'three/tsl';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { createPostProcessing } from './post-processing.js';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
@@ -32,6 +32,7 @@ import { createViewPreferences } from './view-preferences.js';
 import { createPlayerState } from './player-state.js';
 import { createFrameRatePreference, createFramePacer, frameRateHealth } from './frame-rate.js';
 import { createRenderResolutionPreference, drawingBufferRatio } from './render-resolution.js';
+import { createGraphicsQualityPreference, createGraphicsQuality } from './graphics-quality.js';
 import { createBookingDirector, BookingScreen } from './booking.js';
 import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene.js';
 
@@ -81,6 +82,7 @@ export async function initApp(startup) {
     reversedDepthBuffer: true
   });
   const resolutionPreference = createRenderResolutionPreference();
+  const graphicsPreference = createGraphicsQualityPreference();
   let renderScale = resolutionPreference.scale;
   let renderWidth = Math.max(1, container.clientWidth || window.innerWidth);
   let renderHeight = Math.max(1, container.clientHeight || window.innerHeight);
@@ -93,6 +95,7 @@ export async function initApp(startup) {
   let runtimeCompile = null;
   let rendererBusy = false;
   let stopRuntime = async () => {};
+  let disposeEffects = () => {};
   let stopped = false;
   let pageAway = false;
   let bookingScreen = null;
@@ -118,7 +121,8 @@ export async function initApp(startup) {
     try { await compileWork; } catch { /* Drain in-flight jobs before releasing their renderer. */ }
     try { await runtimeCompile; } catch { /* Candidates own their attachments until this settles. */ }
     await renderer.setAnimationLoop(null);
-    renderer.dispose();
+    disposeEffects();
+    await renderer.dispose();
   });
 
   // Start-up phase timings (logged once as "[init] ...") to keep load-time regressions traceable
@@ -326,8 +330,32 @@ export async function initApp(startup) {
   // Roughness mip blur must not spread reflections back onto matte or nonreflective surfaces.
   const reflectionMask = scenePassMetalRough.r.greaterThan(0).select(smoothstep(maxSSRRoughness, 0.55, scenePassMetalRough.g), 0);
   const reflections = ssrPass.mul(reflectionMask);
-  const colorGrade = createPostProcessing(renderer, scenePassColor, reflections);
-  const renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
+  // Keep the shared MRT stable across qualities: no city-wide shader rebuild on a toggle.
+  // Lower tiers omit SSR from their graph entirely; Low also omits all bloom passes.
+  const graphics = createGraphicsQuality({
+    shadow: lightingSystem.sunLight.shadow,
+    createPipeline: quality => {
+      const grade = createPostProcessing(renderer, scenePassColor, quality === 'high' ? reflections : vec4(0),
+        { glow: quality !== 'low' });
+      const pipeline = new THREE.RenderPipeline(renderer, grade.outputNode);
+      return {
+        pipeline,
+        applyTime: id => grade.applyPreset(id),
+        park() {
+          grade.park();
+          if (quality === 'high') ssrPass.setSize(32, 32);
+        },
+        dispose() { pipeline.dispose(); grade.dispose(); }
+      };
+    }
+  });
+  disposeEffects = () => {
+    graphics.dispose();
+    ssrPass.dispose();
+    scenePass.dispose();
+  };
+  graphics.apply(graphicsPreference.value);
+  const renderPipeline = { render: () => graphics.current.pipeline.render() };
 
   // 6. Wire UI Controls (Strictly using safe DOM APIs: textContent, classList, addEventListener)
   let titleScreen = null; // TitleScreen, created with the rest of the UI below
@@ -377,6 +405,23 @@ export async function initApp(startup) {
     });
   }
   const elMode = document.getElementById('hud-active-mode');
+  const graphicsLimit = document.getElementById('graphics-quality');
+  if (graphicsLimit) {
+    let pointerSelection = false;
+    graphicsLimit.value = graphicsPreference.value;
+    graphicsLimit.dataset.quality = graphicsPreference.value;
+    graphicsLimit.addEventListener('focus', () => controllerManager.resetInput());
+    graphicsLimit.addEventListener('pointerdown', () => { pointerSelection = true; });
+    graphicsLimit.addEventListener('keydown', () => { pointerSelection = false; });
+    graphicsLimit.addEventListener('change', () => {
+      if (graphicsPreference.set(graphicsLimit.value)) {
+        graphicsLimit.setAttribute('aria-busy', 'true');
+        dirtyView = true; // Latest choice wins; no queued work or asynchronous renderer mutation.
+      }
+      if (pointerSelection) graphicsLimit.blur();
+      pointerSelection = false;
+    });
+  }
   const elCamera = document.getElementById('hud-active-camera');
   const elSpeed = document.getElementById('hud-speed');
   const elSpeedKmh = document.getElementById('hud-speed-kmh');
@@ -514,7 +559,7 @@ export async function initApp(startup) {
 
   function selectTime(timeId, remember = true) {
     lightingSystem.applyPreset(timeId);
-    colorGrade.applyPreset(lightingSystem.activePresetId);
+    graphics.applyTime(lightingSystem.activePresetId);
     timeButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-time') === timeId);
     });
@@ -1201,6 +1246,9 @@ export async function initApp(startup) {
       && ((!frozen && framePacer.shouldRender(now)) || dirtyView || !warmedUp);
     if (renderFrame) {
       dirtyView = false;
+      try {
+        graphics.apply(graphicsPreference.value);
+      } catch (error) { graphicsFailed(error); return; }
       // Clearance changes the drawing only. Camera, traffic, input and collision retain the physical pose.
       // Optional while iterative local previews may still have an older entity module cached.
       riderEntity.prepareView?.(now);
@@ -1225,6 +1273,10 @@ export async function initApp(startup) {
         markInit('warmup');
       }
       renderPipeline.render();
+      if (graphicsLimit) {
+        if (graphicsLimit.dataset.quality !== graphics.value) graphicsLimit.dataset.quality = graphics.value;
+        if (graphicsLimit.hasAttribute('aria-busy')) graphicsLimit.removeAttribute('aria-busy');
+      }
       if (!warmedUp) {
         warmedUp = true;
         markInit('firstFrame');

@@ -131,7 +131,7 @@ test('production booking placement requests checked occupancy before advancing, 
 test('restored time applies without writing preferences; an explicit same-value time choice is remembered', () => {
   const writes = [], applied = [];
   const env = { lightingSystem: { activePresetId: 'golden', applyPreset: id => applied.push(id) },
-    colorGrade: { applyPreset() {} }, timeButtons: [], viewPreferences: { setTime: id => writes.push(id) } };
+    graphics: { applyTime() {} }, timeButtons: [], viewPreferences: { setTime: id => writes.push(id) } };
   const start = main.indexOf('  function selectTime('), end = main.indexOf('  // Popovers', start);
   const select = evaluate(main.slice(start, end) + '\nreturn selectTime;', env);
   select('golden', false);

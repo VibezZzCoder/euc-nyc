@@ -30,7 +30,7 @@ test('narrow-touch FPS panel clears the existing gauge with room for its focus r
     const gaugeLeft = viewport - edge - gauge;
     assert.ok(panelRight + ring < gaugeLeft, `${viewport}px: panel/focus ${panelRight + ring}, gauge ${gaugeLeft}`);
   }
-  assert.match(css, /@media \(max-width: 820px\)\s*\{[^{}]*body\.touch-enabled \.fps-control/,
+  assert.match(css, /@media \(max-width: 820px\)\s*\{[^]*?body\.touch-enabled \.fps-control/,
     'compact layout is scoped to narrow touch screens');
   assert.match(rule('.fps-label-short'), /display: none/);
   assert.match(rule('body.touch-enabled .fps-label-full'), /display: none/);
@@ -58,7 +58,7 @@ test('compact touch hint clears settings and uses a bounded four-line gutter bel
   const panel = rule('body.touch-enabled .fps-control');
   const panelPaddingY = Number(panel.match(/padding:\s*(\d+)px/)[1]);
   const border = px(rule('.panel'), 'border');
-  const panelHeight = 2 * (panelPaddingY + border) + px(rule('body.touch-enabled .fps-label-short'), 'line-height')
+  const panelHeight = 2 * (panelPaddingY + border) + px(rule('body.touch-enabled .fps-heading'), 'line-height')
     + px(panel, 'gap') + px(rule('body.touch-enabled #fps-limit'), 'min-height');
   // Existing <=820 header top + brand height + FPS margin, relative to the safe-area edge.
   const headerOffset = Number(css.match(/\.hud-top-left \{ top: calc\([^;]+\+ (\d+)px/)[1]);

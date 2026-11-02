@@ -600,16 +600,18 @@ test('first registered graphics cleanup releases modal ownership synchronously a
   const end = main.indexOf('\n  });', start) + '\n  });'.length;
   const native = deferred(), boot = deferred(), calls = [];
   let cleanup;
-  new Function('startup', 'renderer', 'stopRuntime', 'setGameUIEnabled', 'startupPreparation', 'compileWork',
+  new Function('startup', 'renderer', 'stopRuntime', 'setGameUIEnabled', 'startupPreparation', 'compileWork', 'disposeEffects',
     `let stopped = false, rendererInit = Promise.resolve(), runtimeCompile = null; ${main.slice(start, end)}`)(
     { onStop(fn) { cleanup = fn; } }, { setAnimationLoop: () => { calls.push('loop-off'); return Promise.resolve(); },
       dispose: () => calls.push('renderer-dispose') },
     () => { calls.push('modal-close'); return native.promise; }, () => calls.push('ui-disabled'),
-    { abort: () => calls.push('startup-abort') }, boot.promise);
+    { abort: () => calls.push('startup-abort') }, boot.promise, () => calls.push('effects-dispose'));
   const stopped = cleanup();
   assert.ok(calls.includes('modal-close'), 'Retry can receive focus before boot continues its failure handler');
   native.resolve(); await tick();
   assert.ok(!calls.includes('renderer-dispose'), 'startup shaders still reference renderer inputs');
+  assert.ok(!calls.includes('effects-dispose'), 'effects remain owned while shader compilation reads their attachments');
   boot.resolve(); await stopped;
+  assert.equal(calls.at(-2), 'effects-dispose');
   assert.equal(calls.at(-1), 'renderer-dispose');
 });
