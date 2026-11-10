@@ -16,6 +16,9 @@ the surrounding city remains active.
 
 ## What you need
 
+To launch NYC directly from a phone Home Screen, open NYC's own game URL in the browser and use the browser's
+Add to Home Screen action. The city has its own icon and app scope; installation behavior varies by browser/device.
+
 An up-to-date browser with hardware acceleration. WebGPU is preferred; the renderer automatically tries WebGL2 if
 WebGPU is unavailable. Keyboard, gamepad and touch controls work. Sound starts after your first click, key or tap.
 
