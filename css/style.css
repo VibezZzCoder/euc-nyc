@@ -493,6 +493,7 @@ body[data-input='gamepad'] .title-hint--gamepad { display: block; }
 .game-menu button:focus-visible, .game-menu[data-pad-focus='true'] button:focus { outline: 2px solid var(--taxi); outline-offset: 2px; }
 .menu-kicker { color: var(--taxi); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .game-menu .menu-help { color: var(--text-2); font-size: 12px; }
+.menu-build { margin: 10px 0 0; color: var(--text-3, rgba(246, 245, 242, 0.44)); font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; text-align: center; }
 .menu-departure { margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--divider); }
 .menu-departure p { color: var(--text-2); font-size: 12px; }
 .menu-actions { display: flex; gap: 8px; }
@@ -2504,12 +2505,12 @@ body.touch-enabled .map-controls .icon-btn { width: 44px; height: 44px; }
 body.touch-enabled .fullmap-search { font-size: 16px; }
 body.touch-enabled .pop-item { min-height: 44px; }
 @media (max-width: 560px) {
-  /* Pad help plus credits can consume a portrait phone's lower half. Use the same
+  /* Help plus credits can consume a portrait phone's lower half. Use the same
      header-side horizontal actions as short landscape instead of lifting a tall stack over Close. */
-  .fullmap-modal[data-input='gamepad'] .map-controls { top: calc(var(--safe-top) + 62px); bottom: auto; flex-direction: row; translate: none; }
-  .fullmap-modal[data-input='gamepad'] .map-zoom { flex-direction: row; }
-  .fullmap-modal[data-input='gamepad'] .map-controls .icon-btn { width: 44px; height: 44px; }
-  .fullmap-modal[data-input='gamepad'] .fullmap-search-results { margin-top: 72px; }
+  .fullmap-modal .map-controls { top: calc(var(--safe-top) + 62px); bottom: auto; flex-direction: row; translate: none; }
+  .fullmap-modal .map-zoom { flex-direction: row; }
+  .fullmap-modal .map-controls .icon-btn { width: 44px; height: 44px; }
+  .fullmap-modal .fullmap-search-results { margin-top: 72px; }
 }
 @media (max-width: 820px) {
   /* Keep compact toolbar targets at their touch-safe width; device-specific map/menu help

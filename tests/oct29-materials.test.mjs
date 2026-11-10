@@ -425,6 +425,14 @@ test('road projection reassociation keeps strip width for realistic camera poses
   }
 });
 
+// 2026-11-09: the ghost-sign cover is computed without a constant mix() (Firefox's WebGPU compiler, Naga, cannot
+// constant-evaluate mix/smoothstep and rejected the shader). Same value; map it back to the accepted baseline text.
+const nagaSafe = (text) => text.replace(
+  "      // Not mix(0.34, 0.66, …): where tone is the constant 0.5 the whole call is a WGSL constant expression, and\n" +
+  "      // Firefox's WebGPU compiler (Naga) cannot constant-evaluate mix/smoothstep, so it rejected the shader.\n" +
+  "      const cover = fract(tone.mul(7.7)).mul(0.32).add(0.34).mul(float(1.0).sub(flake.mul(0.9)));",
+  "      const cover = mix(float(0.34), float(0.66), fract(tone.mul(7.7))).mul(float(1.0).sub(flake.mul(0.9)));");
+
 test('accepted apartments, masonry/weathering/AC detail, blank walls and architectural distances stay intact', { skip: !baseline }, () => {
   for (const [start, end] of [
     ['const evaluateApartmentInterior = Fn(', '/**\n * Treatment'],
@@ -435,5 +443,5 @@ test('accepted apartments, masonry/weathering/AC detail, blank walls and archite
     ['function createFacadeBoxes(', ' * Road markings built from the road network'],
     ['function createSidewalkMaterial(', '  const CPB = CENTRAL_PARK_BOUNDS;'],
     ['function createParkLawnMaterial(', 'export {']
-  ]) assert.equal(between(source, start, end), between(baseline, start, end));
+  ]) assert.equal(nagaSafe(between(source, start, end)), between(baseline, start, end));
 });

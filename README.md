@@ -18,6 +18,12 @@ on phone and computer.
 **Collision + park update (2026-11-01):** improved visual tyre/torso clearance and feature-local riding at Thomas
 Jefferson and Pier 62, checked with the surrounding city active.
 
+**Startup + memory update:** reduced retained shadow-building data and uploaded static geometry CPU copies,
+smaller shadow colour storage, and released hidden map buffers. Phones initially use Medium graphics / 75% 3D
+resolution; saved choices take priority. Desktop defaults remain High / 100%. Includes a Firefox shader correction,
+one-time WebGPU-to-WebGL2 failure fallback and build/backend identification in the pause menu. Desktop checks do not
+establish physical-phone stability or an FPS improvement; current iPhone/MacBook testing of this update is pending.
+
 Reviewed riders: **Cool Rider, Trollina, Red Rider, Adonisb2, Maribel Vargas, Wheel in Motion, The Drunkard, FloWithZo,
 Seal on a Wheel, Wyldist and Gnarwheel**, with their own looks, wheels and mapped crash sounds. Officer Dorkins stays
 NPC-only. Cars, buses and pedestrians are solid: hitting one at speed is a crash. City brands are fictional/generic;
@@ -34,7 +40,9 @@ exception. Street, park and landmark names are kept as place names. See the [rig
 ## Run it
 
 No build step. Serve the folder and open it in an up-to-date browser with hardware acceleration. WebGPU is preferred;
-the renderer automatically tries WebGL2 when WebGPU is unavailable:
+the renderer automatically tries WebGL2 when WebGPU is unavailable. Relevant WebGPU shader failures, or startup
+out-of-memory/device loss, also trigger one reload into WebGL2. To compare explicitly, use
+[the WebGL2 link](https://vibezzzcoder.github.io/euc-nyc/?webgpu=0):
 
 ```bash
 python3 -m http.server 8000 --bind 127.0.0.1
@@ -96,7 +104,8 @@ use a horizontal row in short windows, and map search uses larger touch-friendly
 covered by automated Chromium checks; physical foldable/Safari validation is still pending.
 
 Use the upper-left **Frame rate / FPS**, **3D resolution / 3D res** and **Graphics** controls to tune rendering independently.
-Resolution choices are **100%** (the existing default), **75%** and **50%**, remembered between visits. Lower choices
+Resolution choices are **100%**, **75%** and **50%**, remembered between visits. First-visit phones start at
+**Medium / 75%**; desktop starts at **High / 100%**. Each saved setting overrides its default independently. Lower choices
 soften only the 3D scene, leaving menus, HUD, map and touch controls sharp. They can help graphics-limited devices;
 riding physics, traffic, city geometry and routes are unchanged. Graphics offers **High** (original appearance), **Medium**
 (no screen-space reflections, lower-resolution sun shadows) and **Low** (also no bloom or cast sun shadows), saved for

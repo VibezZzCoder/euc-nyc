@@ -28,6 +28,13 @@ import {
   isTypingInField
 } from './city-config.js';
 
+// EUC SF e5753c8: shrink before growing on rotation, avoiding a transient long-edge square allocation.
+function resizeMapBitmap(canvas, width, height) {
+  if (height < canvas.height) canvas.height = height;
+  if (width !== canvas.width) canvas.width = width;
+  if (height !== canvas.height) canvas.height = height;
+}
+
 // js/nyc-map.js
 // GTA 6-Style Live Radar Minimap + Full-Screen Interactive New York City Cartographic Atlas.
 // Synchronized 1:1 with the 3D world (1 unit = 1 m; x = Manhattan-grid east, z = grid south, so both maps are drawn
@@ -1004,6 +1011,8 @@ class NYCMapSystem {
     this.modal.classList.toggle('hidden', !this.isFullMapOpen);
     this.modal.inert = !open;
     if (this.isFullMapOpen) {
+      this.releaseMiniCache();
+      if (this.miniCanvas) resizeMapBitmap(this.miniCanvas, 1, 1);
       this.returnFocus = document.activeElement;
       // the HUD's popovers live in the top layer, above the map
       for (const pop of document.querySelectorAll('.popover[popover]')) {
@@ -1026,6 +1035,9 @@ class NYCMapSystem {
       this.renderFullMap();
       this.modal.focus({ preventScroll: true });
     } else {
+      if (this.fullCanvas) resizeMapBitmap(this.fullCanvas, 1, 1);
+      if (this.fullStatic) resizeMapBitmap(this.fullStatic, 1, 1);
+      this.fullStaticKey = '';
       for (const { element, inert } of this.inertBackground) element.inert = inert;
       this.inertBackground.length = 0;
       const target = [...(pointer ? [document.getElementById('canvas-container')] : []),
@@ -1041,6 +1053,11 @@ class NYCMapSystem {
       window.getComputedStyle(element).visibility === 'visible');
   }
 
+  releaseMiniCache() {
+    if (this.miniCache) resizeMapBitmap(this.miniCache.canvas, 1, 1);
+    this.miniCache = null;
+  }
+
   resizeFullCanvas() {
     if (!this.fullCanvas) return;
     this.layoutStatus();
@@ -1053,8 +1070,9 @@ class NYCMapSystem {
     if (this.fullDpr === dpr && this.fullCanvas.width === width && this.fullCanvas.height === height) return;
     this.resetGamepadInput();
     this.fullDpr = dpr;
-    this.fullCanvas.width = width;
-    this.fullCanvas.height = height;
+    if (this.fullStatic) resizeMapBitmap(this.fullStatic, 1, 1);
+    this.fullStaticKey = '';
+    resizeMapBitmap(this.fullCanvas, width, height);
   }
 
   // The credits wrap differently with viewport width/fonts. Measure only on opening, resize and feedback changes,
@@ -1305,7 +1323,11 @@ class NYCMapSystem {
   renderMinimap() {
     if (!this.miniCtx || !this.miniCanvas) return;
     // Nothing to draw while the radar is hidden (narrow screens, clean view)
-    if (!this.miniCanvas.offsetParent || document.body.classList.contains('hud-minimized')) return;
+    if (!this.miniCanvas.offsetParent || document.body.classList.contains('hud-minimized')) {
+      this.releaseMiniCache();
+      resizeMapBitmap(this.miniCanvas, 1, 1);
+      return;
+    }
     const ctx = this.miniCtx;
     // Radar size in CSS pixels, backed at the device pixel ratio (crisp street names on HiDPI screens)
     const w = this.miniCanvas.clientWidth;
@@ -1314,9 +1336,8 @@ class NYCMapSystem {
     const bw = Math.round(w * dpr);
     const bh = Math.round(h * dpr);
     if (this.miniCanvas.width !== bw || this.miniCanvas.height !== bh) {
-      this.miniCanvas.width = bw;
-      this.miniCanvas.height = bh;
-      this.miniCache = null;
+      resizeMapBitmap(this.miniCanvas, bw, bh);
+      this.releaseMiniCache();
     }
 
     const ent = this.controllerManager.getActiveEntity();
@@ -1487,8 +1508,7 @@ class NYCMapSystem {
       this.fullStaticKey = key;
       const sc = this.fullStatic;
       if (sc.width !== this.fullCanvas.width || sc.height !== this.fullCanvas.height) {
-        sc.width = this.fullCanvas.width;
-        sc.height = this.fullCanvas.height;
+        resizeMapBitmap(sc, this.fullCanvas.width, this.fullCanvas.height);
       }
       this.renderFullMapStatic(sc.getContext('2d'), v);
     }

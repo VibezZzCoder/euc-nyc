@@ -19,11 +19,17 @@ the surrounding city remains active.
 An up-to-date browser with hardware acceleration. WebGPU is preferred; the renderer automatically tries WebGL2 if
 WebGPU is unavailable. Keyboard, gamepad and touch controls work. Sound starts after your first click, key or tap.
 
+For a WebGL2 comparison, open **[NYC with `?webgpu=0`](https://vibezzzcoder.github.io/euc-nyc/?webgpu=0)**.
+Relevant WebGPU validation failures, or startup out-of-memory/device loss, attempt one reload into WebGL2.
+The pause menu shows **Build … · WebGPU/WebGL2**, including whether automatic fallback occurred. Include that text,
+OS/browser version and the steps that failed in a device report. Desktop checks of this update are complete within
+their recorded scopes; current physical iPhone/MacBook stability and sustained device performance remain unverified.
+
 ### Changing screen size
 
 Rotating or resizing the browser keeps the same riding session and adjusts the view to the available space. If you
 are holding the stick, dragging the camera or panning the map, lift and touch again after the change. On short screens,
-map controls form a horizontal row below the search bar so Close stays reachable. The booking receipt can be scrolled
+map controls form a horizontal row below the search bar so Close stays reachable; narrow portrait screens use that row too. The booking receipt can be scrolled
 to reach **Back to riding**. Foldable-sized layouts have automated coverage; physical foldable/Safari testing is pending.
 
 ### Frame rate, 3D resolution and graphics
@@ -33,12 +39,16 @@ screens, the first two labels shorten to **FPS** and **3D res**. The number besi
 rate. All three choices are remembered for your next visit when browser storage is available.
 
 - **Frame rate:** Auto follows your display; 120, 60 and 30 cap scene rendering when your device can reach that rate.
-- **3D resolution:** **100%** keeps the existing sharpness and is the default. **75%** is a softer compromise;
+- **3D resolution:** **100%** keeps the existing sharpness. **75%** is a softer compromise;
   **50%** is softer again and draws substantially fewer pixels. These scale both width and height: roughly 56% and
   25% of the current pixel count, respectively. They do not mean a percentage of the phone's full Retina resolution.
-- **Graphics:** **High** (green, default) keeps the original appearance. **Medium** (yellow) removes screen-space
+- **Graphics:** **High** (green) keeps the original appearance. **Medium** (yellow) removes screen-space
   reflections and uses lower-resolution sun shadows, keeping bloom. **Low** (red) also removes bloom and cast sun
   shadows. Basic lighting, environment reflections and colour grading remain.
+
+Initially, phones use **Medium / 75%** and desktop uses **High / 100%**. Saved settings override these defaults
+independently. Rotating, unfolding or connecting a controller does not reset your choices. You can select High / 100%
+on a phone. The default is a starting point, not a guarantee that a particular device will remain stable.
 
 Lower Graphics or 3D resolution can help a graphics-limited device; improvements depend on the device and scene.
 Try Medium first, or Low with 50% resolution when speed matters most. An FPS cap can help with power use and pacing;

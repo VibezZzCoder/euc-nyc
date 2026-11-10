@@ -31,7 +31,9 @@ import { NemesisHud } from './nemesis-chase.js';
 import { createViewPreferences } from './view-preferences.js';
 import { createPlayerState } from './player-state.js';
 import { createFrameRatePreference, createFramePacer, frameRateHealth } from './frame-rate.js';
-import { createRenderResolutionPreference, drawingBufferRatio } from './render-resolution.js';
+import { createRenderResolutionPreference, drawingBufferRatio, initialRenderPreferences } from './render-resolution.js';
+import { installSunShadowRetentionFix } from './sun-shadow-retention.js';
+import { installGeometryResidency } from './geometry-residency.js';
 import { createGraphicsQualityPreference, createGraphicsQuality } from './graphics-quality.js';
 import { createBookingDirector, BookingScreen } from './booking.js';
 import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene.js';
@@ -40,6 +42,7 @@ import { createBookingScene, BOOKING_SITE, BOOKING_STAGE } from './booking-scene
 // Main entry point for New York City (Midtown Manhattan) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
 
 export async function initApp(startup) {
+  installSunShadowRetentionFix();
   const container = document.getElementById('canvas-container');
   const loadingOverlay = document.getElementById('loading-overlay');
   const loadingStatus = document.getElementById('loading-status');
@@ -76,13 +79,17 @@ export async function initApp(startup) {
   await showLoadingStage('Initializing graphics...');
 
   // 1. Initialize Three.js WebGPURenderer with 32-bit float reversedDepthBuffer
+  // ?webgpu=0 forces the WebGL2 backend (comparison/diagnosis, and the automatic fallback below).
+  const params = new URLSearchParams(location.search);
   const renderer = new THREE.WebGPURenderer({
     antialias: true,
     powerPreference: 'high-performance',
-    reversedDepthBuffer: true
+    reversedDepthBuffer: true,
+    forceWebGL: params.get('webgpu') === '0'
   });
-  const resolutionPreference = createRenderResolutionPreference();
-  const graphicsPreference = createGraphicsQualityPreference();
+  const initialRendering = initialRenderPreferences();
+  const resolutionPreference = createRenderResolutionPreference(undefined, initialRendering.resolution);
+  const graphicsPreference = createGraphicsQualityPreference(undefined, initialRendering.quality);
   let renderScale = resolutionPreference.scale;
   let renderWidth = Math.max(1, container.clientWidth || window.innerWidth);
   let renderHeight = Math.max(1, container.clientHeight || window.innerHeight);
@@ -96,11 +103,38 @@ export async function initApp(startup) {
   let rendererBusy = false;
   let stopRuntime = async () => {};
   let disposeEffects = () => {};
+  let geometryResidency = null;
   let stopped = false;
   let pageAway = false;
   let bookingScreen = null;
   const startupPreparation = new AbortController();
+  // Stricter WebGPU implementations (Firefox's wgpu/Naga) can reject a shader or pipeline that Chrome accepts.
+  // Three's automatic WebGL2 fallback only covers WebGPU failing to start, so a validation failure would otherwise
+  // be fatal although WebGL2 was never tried. Reload once into WebGL2 instead; ?webgpu=0 prevents any loop.
+  let startupComplete = false;
+  let webglFallbackStarted = false;
+  const fallbackToWebGL2 = (reason, detail) => {
+    if (webglFallbackStarted) return true;
+    if (params.get('webgpu') === '0' || !renderer.backend?.isWebGPUBackend) return false;
+    webglFallbackStarted = true;
+    console.warn(`[graphics] WebGPU ${reason}; reloading with WebGL2.`, detail);
+    const url = new URL(location.href);
+    url.searchParams.set('webgpu', '0'); url.searchParams.set('fallback', reason);
+    location.replace(url.href);
+    return true;
+  };
+  const consoleFunction = THREE.getConsoleFunction?.();
+  THREE.setConsoleFunction?.((type, message, ...rest) => {
+    if (type === 'error' && /pipeline creation failed/i.test(String(message))) fallbackToWebGL2('pipeline-validation', message);
+    if (consoleFunction) consoleFunction(type, message, ...rest); else console[type](message, ...rest);
+  });
   const graphicsFailed = (error) => {
+    // Startup only for out-of-memory/device loss; a validation error means this browser's WebGPU rejects our
+    // shaders, so WebGL2 is the better session at any time.
+    if (error?.api === 'WebGPU' && /validation/i.test(String(error.type))
+      && fallbackToWebGL2('shader-validation', error.message)) return;
+    if (error?.api === 'WebGPU' && !startupComplete && (/outofmemory/i.test(String(error.type)) || 'reason' in error)
+      && fallbackToWebGL2(/outofmemory/i.test(String(error.type)) ? 'out-of-memory' : 'device-lost', error.message)) return;
     startup.phase('graphics');
     startup.fail(error instanceof Error ? error : new Error(error?.message || 'The graphics device was lost.'));
   };
@@ -122,6 +156,7 @@ export async function initApp(startup) {
     try { await runtimeCompile; } catch { /* Candidates own their attachments until this settles. */ }
     await renderer.setAnimationLoop(null);
     disposeEffects();
+    geometryResidency?.dispose();
     await renderer.dispose();
   });
 
@@ -138,6 +173,14 @@ export async function initApp(startup) {
   await rendererInit;
   if (startup.failed) return;
   markInit('renderer');
+  // A device report should name the build and backend it tested (a home-screen app can keep an old cached build).
+  {
+    const buildNote = document.getElementById('menu-build');
+    const backendName = renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2';
+    const buildId = document.querySelector('meta[name="euc-build"]')?.content || 'dev';
+    const automaticFallback = backendName === 'WebGL2' && params.get('fallback');
+    if (buildNote) buildNote.textContent = `Build ${buildId} · ${backendName}${automaticFallback ? ' (automatic fallback)' : ''}`;
+  }
   startup.phase('city');
 
   // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
@@ -275,6 +318,7 @@ export async function initApp(startup) {
     .map((name) => scene.getObjectByName(name))
     .filter(Boolean);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
+  geometryResidency = installGeometryResidency(renderer, scene, cullingRoots);
   markInit('culling');
 
   // On WebGPU, small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
@@ -1060,7 +1104,7 @@ export async function initApp(startup) {
   //     leaves the main thread idle about half the time while nothing else animates; several calls side by side keep
   //     it busy (warm cache: 2.1 s instead of 4.0 s). (Rendering straight away compiled ~500 pipelines one after
   //     another: ~25 s with a cold shader cache.)
-  const COMPILE_POOL = 16;
+  const COMPILE_POOL = navigator.maxTouchPoints > 0 ? 4 : 16;
   const nextTask = () => (globalThis.scheduler?.yield ? globalThis.scheduler.yield() : new Promise((resolve) => setTimeout(resolve, 0)));
   async function precompileShaders() {
     await showLoadingStage('Preparing reflections and bloom...');
@@ -1293,6 +1337,7 @@ export async function initApp(startup) {
           if (loadingOverlay) loadingOverlay.classList.add('hidden');
           audioSystem.ready = true;
           setLoadingProgress(1);
+          startupComplete = true;
           startup.complete();
         }).catch(startup.fail);
       }
