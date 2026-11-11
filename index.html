@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="EUC NYC" />
   <!-- Build id: "dev" in source; the public exporter stamps the release date (shown in the pause menu). -->
-  <meta name="euc-build" content="2026-11-10 2222Z" />
+  <meta name="euc-build" content="2026-11-11 0030Z" />
   <meta name="description" content="NYC Spin-off: EUC Thrills. Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds. A free side project of EUC Thrills, built on Mr.doob's open-source three.js WebGPU city." />
   <!-- three.js, pinned to one dev-branch commit (mrdoob/three.js@e27dfa9, 2026-10-23) and served from this repo
        (vendor/three/, the upstream files unchanged), so nothing loads from another host. To move it: change the commit
@@ -196,6 +196,7 @@
         <button id="startup-retry" type="button">Retry</button>
         <details class="startup-details"><summary>Technical details</summary><pre id="startup-detail"></pre></details>
       </div>
+      <a id="loading-main-menu" class="loader-return" href="https://vibezzzcoder.github.io/EUC-thrills/">← EUC Thrills main menu</a>
       <noscript>This game needs JavaScript. Enable it in your browser, then reload this page.</noscript>
     </div>
   </div>
@@ -406,12 +407,6 @@
         <p class="picker-controls gamepad-prompt">LS / D-pad Browse · RS Scroll details · A Select / activate · B Back</p>
         <p class="picker-controls touch-prompt">Tap a rider for details, then Select to change.</p>
       </footer>
-    </section>
-    <section data-menu-view="return" hidden aria-labelledby="return-heading">
-      <h2 id="return-heading">Return to EUC Thrills main menu?</h2>
-      <p>This will leave NYC and open the main game's menu in this tab.</p>
-      <button id="return-keep" class="menu-primary" type="button">Keep riding</button>
-      <div class="menu-departure"><button id="return-confirm" type="button">Return to main menu</button></div>
     </section>
   </dialog>
 

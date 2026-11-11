@@ -89,17 +89,16 @@ The title screen links to the [EUC Thrills website](https://euc.erodmen.com/). W
 ### Pause and return to EUC Thrills
 
 Open **Menu** with `Escape` / `P`, gamepad **Back / View (button 8)**, or the on-screen menu button. Choose
-**Resume riding** to continue. Start still opens the map. In a picker/map/return dialog, Escape/B dismisses that
+**Resume riding** to continue. Start still opens the map. In the picker or map, Escape/B dismisses that
 dialog first; booking has its own controls and cannot be skipped with those shortcuts.
 
 The menu, Rider picker and full map freeze riding, traffic and pursuit clocks and silence playback. Returning to
 the city does not catch up the paused time. Keyboard focus returns to the control that opened a dialog; click/tap
 the city canvas to resume riding keys after using a button. Held keys/buttons must be released before fresh actions.
 
-The separated **Return to EUC Thrills main menu** action asks **Return to EUC Thrills main menu?** and explains that
-NYC will close in this tab. **Keep riding** is initially focused; Escape/B cancels back to the menu. **Return to main
-menu** requires a separate fresh confirmation. On the title screen, **← EUC Thrills main menu** is a direct same-tab
-link, distinct from the website links above. Leaving before Ride does not authorize a new NYC save.
+The separated **Return to EUC Thrills main menu** action leaves NYC in the same tab. The loading, error and title screens
+also offer **← EUC Thrills main menu**. These replace NYC in that tab's history. The title link is distinct from the
+website links above. Leaving before Ride does not authorize a new NYC save.
 
 The main game opens its top-level menu at **https://vibezzzcoder.github.io/EUC-thrills/**, without a special menu query,
 and its title menu offers NYC. The owner reports successful live round trips on phone and computer. This establishes

@@ -218,8 +218,7 @@ function menuFixture(t) {
   untouched.inert = true; body.append(hud, untouched, root, host); hud.append(caller); caller.focus();
   for (const [view, ids] of Object.entries({ pause: ['menu-resume', 'menu-rider', 'menu-return', 'game-menu-heading'],
     picker: ['rider-heading', 'rider-options', 'rider-status', 'rider-current', 'rider-confirm', 'rider-retry', 'rider-cancel',
-      'rider-count', 'rider-detail-name', 'rider-detail-state', 'rider-detail-blurb', 'rider-wheel-name', 'rider-wheel-blurb', 'rider-style-note'],
-    return: ['return-heading', 'return-keep', 'return-confirm'] })) {
+      'rider-count', 'rider-detail-name', 'rider-detail-state', 'rider-detail-blurb', 'rider-wheel-name', 'rider-wheel-blurb', 'rider-style-note'] })) {
     const section = new Node(); section.dataset.menuView = view; root.append(section);
     for (const id of ids) section.append(new Node(/(heading|options|status|current|detail|wheel|style|count)/.test(id) ? 'DIV' : 'BUTTON', id));
     if (view === 'picker') { const detail = new Node(); detail.className = 'rider-detail'; detail.scrollTop = 0; section.append(detail); }
@@ -302,21 +301,16 @@ test('right stick scrolls the selected profile with bounded dt after neutral, wi
   f.menu.highlight('gnarwheel'); assert.equal(detail.scrollTop, 0, 'new profiles start at their heading');
 });
 
-test('booking gate rejects menus; child Escape restores pause; return starts on Keep riding and rejects carryover keys', t => {
+test('booking gate rejects menus; child Escape restores pause; fresh return leaves once', t => {
   const f = menuFixture(t); f.allow(false); f.menu.openPause(); f.menu.openPicker();
   assert.equal(f.menu.isOpen, false); f.allow(true); f.menu.openPause();
   f.find('menu-rider').click(); f.key('Escape'); f.key('Escape', 'keyup');
   assert.equal(f.menu.view, 'pause'); assert.equal(f.doc.activeElement, f.find('menu-rider'));
   f.find('menu-return').focus();
   assert.equal(f.key('Enter').prevented, undefined, 'fresh native Enter remains native');
-  f.find('menu-return').click(); // native Enter activation changes the child view
-  assert.equal(f.doc.activeElement, f.find('return-keep'));
-  f.find('return-confirm').focus();
-  assert.equal(f.key('Enter', 'keydown', true).prevented, true);
-  assert.equal(f.key('Enter', 'keyup').prevented, true);
-  assert.equal(f.leaves, 0);
-  assert.equal(f.key('Enter').prevented, undefined, 'a distinct fresh press may activate the return');
-  f.find('return-confirm').click(); assert.equal(f.leaves, 1);
+  f.find('menu-return').click();
+  assert.equal(f.leaves, 1);
+  f.find('menu-return').click(); assert.equal(f.leaves, 1, 'duplicate activation cannot leave twice');
 });
 
 test('P resumes the pause view; C opens its picker; errors offer Retry/Cancel without stale reopening effects', async t => {
@@ -447,10 +441,8 @@ test('cancel/reopen enables the highlighted target BEFORE native focus and keeps
   assert.equal(f.find('rider-option-gnarwheel').disabled, false);
   assert.equal(f.doc.activeElement, f.find('rider-option-gnarwheel'), 'disabled targets cannot receive focus in this fixture');
   assert.equal(f.hud.inert, true); assert.equal(f.untouched.inert, true); assert.equal(f.root.inert, false);
-  f.menu.cancel(); f.find('menu-return').click();
-  assert.equal(f.doc.activeElement, f.find('return-keep'));
-  f.key('Escape'); f.key('Escape', 'keyup');
-  assert.equal(f.menu.view, 'pause'); assert.equal(f.doc.activeElement, f.find('menu-return'));
+  f.menu.cancel();
+  assert.equal(f.menu.view, 'pause'); assert.equal(f.doc.activeElement, f.find('menu-rider'));
   assert.equal(f.root.modalOpens, 1, 'child views retain native modal containment rather than stacking dialogs');
   assert.equal(f.root.modalCloses, undefined);
   f.menu.close();
@@ -494,7 +486,7 @@ test('real blur/visibility reset listeners discard native activation tokens and 
   assert.equal(f.menu.isOpen, false);
 });
 
-test('BFCache pagehide/confirmed departure cancels pending selection, saves only committed ID and retains active resources', async t => {
+test('BFCache pagehide/departure cancels pending selection, saves only committed ID and retains active resources', async t => {
   const ui = menuFixture(t), f = selectionFixture(), writes = [], navigation = [], callbacks = new Map();
   const main = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
   const playerState = createPlayerState({ isPlayableRider: id => ['cool-rider', 'trollina'].includes(id), getStorage: () => ({
@@ -521,7 +513,7 @@ test('BFCache pagehide/confirmed departure cancels pending selection, saves only
     cameraSystem: { _clearPointers() {} }, mapSystem: { isFullMapOpen: false, cancelGestures() {} },
     window: { addEventListener(type, fn) { assert.equal(callbacks.has(type), false); callbacks.set(type, fn); } },
     renderer: { setAnimationLoop() { loops++; }, dispose() { disposed++; } },
-    resetFrameClock: () => { clocks++; }, savePlayerState: save, MAIN_MENU_URL, location: { assign: url => navigation.push(url) }
+    resetFrameClock: () => { clocks++; }, savePlayerState: save, MAIN_MENU_URL, location: { replace: url => navigation.push(url) }
   };
   const runtime = new Function(...Object.keys(env), `let pageAway = false, stopped = false, lifecycleReady = true,
     dirtyView = false, lastOwner = null; ${lifecycle}\n${listeners}
@@ -542,13 +534,13 @@ test('BFCache pagehide/confirmed departure cancels pending selection, saves only
   assert.ok(clocks > beforeRestore); assert.equal(f.manager.inputEnabled, false);
   ui.find('rider-cancel').click(); ui.find('menu-resume').click();
   assert.equal(f.manager.inputEnabled, true); assert.equal(f.audio.paused, false);
-  ui.menu.openPause(); ui.find('menu-return').click(); ui.find('return-confirm').click();
+  ui.menu.openPause(); ui.find('menu-return').click();
   assert.deepEqual(navigation, [MAIN_MENU_URL]); assert.equal(runtime.pageAway, true);
   callbacks.get('pagehide')({ persisted: true }); callbacks.get('pageshow')({ persisted: true });
-  assert.equal(ui.menu.leaving, false); assert.equal(ui.menu.view, 'return');
+  assert.equal(ui.menu.leaving, false); assert.equal(ui.menu.view, 'pause');
   assert.equal(f.entity.rig, retainedRig); assert.equal(f.audio.active, retainedBank);
   assert.equal(disposed, 0); assert.equal(loops, 0, 'history restores reset clocks, not animation-loop installation');
-  ui.key('Escape'); ui.key('Escape', 'keyup'); ui.find('menu-resume').click();
+  ui.find('menu-resume').click();
   const resumed = f.selection.prepare('cool-rider'); await tick();
   f.banks.at(-1).work.resolve(); await resumed;
   assert.equal(f.entity.rig, retainedRig); assert.equal(f.rigs.length, 1, 'resumable owner can prepare again without rebuilding same-ID rig');
@@ -566,7 +558,7 @@ test('menu pad requires neutral sticks and partial triggers; A confirms a highli
   pad.buttons[5].pressed = false; f.menu.updateGamepad();
   pad.buttons[0].pressed = true; f.menu.updateGamepad(); assert.deepEqual(f.preparations, ['trollina']);
   f.work.resolve(); await tick();
-  f.menu.openPause(); f.find('menu-return').click();
+  f.menu.openPause(); f.menu.openPicker();
   f.menu.updateGamepad(); pad.buttons[0].pressed = false; f.menu.updateGamepad();
   pad.buttons[1].pressed = true; f.menu.updateGamepad(); assert.equal(f.menu.view, 'pause');
 });

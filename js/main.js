@@ -841,7 +841,7 @@ export async function initApp(startup) {
       pageAway = true;
       riderSelection.cancel();
       syncLifecycle();
-      location.assign(MAIN_MENU_URL);
+      location.replace(MAIN_MENU_URL);
     }
   });
   document.getElementById('btn-rider')?.addEventListener('click', () => gameMenu.openPicker());
@@ -863,9 +863,10 @@ export async function initApp(startup) {
     titleScreen?.cancelPreparation();
     syncLifecycle();
   };
-  document.getElementById('title-main-menu')?.addEventListener('click', () => {
+  document.getElementById('title-main-menu')?.addEventListener('click', event => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     pageAway = true;
-    suspendPage(); // ordinary same-tab anchor navigation; never authorizes a title save
+    suspendPage(); // same-tab return; never authorizes a title save
   });
   window.addEventListener('pagehide', () => { pageAway = true; suspendPage(); });
   window.addEventListener('pageshow', () => {

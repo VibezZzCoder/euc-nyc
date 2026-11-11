@@ -57,7 +57,7 @@ function element() {
 function fixture() {
   const elements = Object.fromEntries([
     'loading-overlay', 'loading-status', 'startup-error', 'startup-retry',
-    'startup-help', 'startup-detail'
+    'startup-help', 'startup-detail', 'loading-main-menu', 'title-main-menu'
   ].map((id) => [id, element()]));
   elements['startup-error'].hidden = true;
   elements['loading-status'].textContent = 'Loading city code and data...';
@@ -66,7 +66,7 @@ function fixture() {
   const errors = [];
   const imports = [];
   const f = {
-    window, elements, imported, errors, imports, reloads: 0, initCalls: 0,
+    window, elements, imported, errors, imports, reloads: 0, replacements: [], initCalls: 0,
     async load(initApp = () => {}) {
       imported.resolve({ initApp(startup) {
         f.initCalls++;
@@ -76,7 +76,7 @@ function fixture() {
       await flush();
     }
   };
-  window.location = { reload: () => f.reloads++ };
+  window.location = { reload: () => f.reloads++, replace: url => f.replacements.push(url) };
   vm.runInNewContext(executable, {
     document: { getElementById: (id) => elements[id] },
     window,
@@ -117,6 +117,26 @@ test('bootstrap imports the canonical entry, registers early listeners and keeps
   assert.equal(f.initCalls, 1);
   assert.equal(f.startup.failed, false);
   assert.equal(f.errors.length, 0);
+});
+
+test('startup and title returns replace only unmodified primary clicks', () => {
+  const f = fixture(), url = 'https://vibezzzcoder.github.io/EUC-thrills/';
+  for (const id of ['loading-main-menu', 'title-main-menu']) {
+    const link = f.elements[id]; link.href = url;
+    const event = { button: 0, currentTarget: link, preventDefault() { this.defaultPrevented = true; } };
+    link.dispatch('click', event);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(f.replacements.at(-1), url);
+    for (const property of ['ctrlKey', 'metaKey', 'shiftKey', 'altKey']) {
+      const modified = { button: 0, currentTarget: link, [property]: true, preventDefault() { this.defaultPrevented = true; } };
+      link.dispatch('click', modified);
+      assert.equal(modified.defaultPrevented, undefined, property);
+    }
+    const middle = { button: 1, currentTarget: link, preventDefault() { this.defaultPrevented = true; } };
+    link.dispatch('click', middle);
+    assert.equal(middle.defaultPrevented, undefined);
+  }
+  assert.equal(f.replacements.length, 2);
 });
 
 test('a rejected import retains the loader with text-only details and focused Retry', async () => {

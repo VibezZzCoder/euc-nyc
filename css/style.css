@@ -230,6 +230,16 @@ body::after {
 .startup-details summary { cursor: pointer; padding: 8px 0; }
 #startup-detail { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
 .loader noscript { margin-top: 20px; line-height: 1.6; }
+.loader-return {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 12px;
+  color: var(--text);
+  text-decoration: underline;
+}
+.loader-return:focus-visible { outline: 2px solid var(--taxi); outline-offset: 2px; }
 
 .brand-badge.loader-badge {
   width: 56px;
