@@ -48,7 +48,9 @@ test('native module entry and imports share canonical preloaded URLs on GitHub P
   assert.equal(entries.length, 1);
   assert.equal(entries[0][1], './js/boot.js');
   assert.ok(links.includes('./js/main.js'), 'the dynamic game entry is still preloaded');
-  assert.equal([...html.matchAll(/<script\b/g)].length, 2, 'only the import map and independent boot script are needed');
+  assert.equal([...html.matchAll(/<script\b/g)].length, 3, 'early viewport correction, import map and independent boot script');
+  assert.match(html, /<head>\s*<script>[\s\S]*?window\.scrollTo\(0, 0\);[\s\S]*?<\/script>/,
+    'viewport correction runs before the import map and boot script');
   const base = 'https://example.test/slop-newyork/';
   const urls = new Set(all.map((src) => new URL(src, base).href));
   const { imports } = JSON.parse(importMap[1]);

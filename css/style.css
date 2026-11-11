@@ -631,8 +631,8 @@ body.title-open.game-menu-open .title-head, body.title-open.game-menu-open .titl
 }
 
 .hud-top-right {
-  top: var(--edge);
-  right: var(--edge);
+  top: var(--safe-top);
+  right: var(--safe-right);
 }
 
 .hud-bottom-left {
