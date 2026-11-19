@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta charset="UTF-8" />
+  <!-- Everything loads from this host only. The two hashes are the inline scripts below (the scroll guard and the
+       import map); after changing either, run: node tools/csp.mjs -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Mj69BD7rWtj/Hh1a4M3Y6oieW+XoaecFigKLEQsxn7A=' 'sha256-lpn9ypXuUQKuUdByRfMhuHTvw4RhnU6WoBSiELqTkTE='; worker-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'" />
   <script>
     // The page never scrolls. If iOS shifts it anyway (installed copies on
     // iOS 26+, a closing keyboard), put it back, or taps land below what is
@@ -24,7 +28,6 @@
       }
     })();
   </script>
-  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>NYC Spin-off: EUC Thrills</title>
   <link rel="icon" type="image/png" sizes="192x192" href="./app-icon-192.png" />
@@ -34,7 +37,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="EUC NYC" />
   <!-- Build id: "dev" in source; the public exporter stamps the release date (shown in the pause menu). -->
-  <meta name="euc-build" content="2026-11-11 0354Z" />
+  <meta name="euc-build" content="2026-11-19 0050Z" />
   <meta name="description" content="NYC Spin-off: EUC Thrills. Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds. A free side project of EUC Thrills, built on Mr.doob's open-source three.js WebGPU city." />
   <!-- three.js, pinned to one dev-branch commit (mrdoob/three.js@e27dfa9, 2026-10-23) and served from this repo
        (vendor/three/, the upstream files unchanged), so nothing loads from another host. To move it: change the commit

@@ -5,7 +5,8 @@ const { join } = require('node:path');
 const vm = require('node:vm');
 
 const html = readFileSync(join(__dirname, '../index.html'), 'utf8');
-const firstScript = html.match(/<head>\s*<script>([\s\S]*?)<\/script>/);
+// The first script in the head; only the charset and Content-Security-Policy meta tags (and comments) precede it.
+const firstScript = html.match(/<head>(?:\s*(?:<meta\b[^>]*>|<!--[\s\S]*?-->))*\s*<script>([\s\S]*?)<\/script>/);
 
 function harness(withViewport = true) {
   assert.ok(firstScript, 'snap-back runs as the first head script');
