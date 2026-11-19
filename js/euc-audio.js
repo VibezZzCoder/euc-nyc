@@ -79,7 +79,9 @@ export const MOTOR = Object.freeze({
   gritQ: 6, // narrow noise band on the commutation tone: magnetic grain under load
   gritPerLoad: 1.1,
   coilHz: 4100, // PWM/coil whine: fixed carrier, amplitude-modulated by the commutation tone
-  coilLevel: 0.0004, // -6 dB with the rest of the motor
+  // Owner, 2026-11-18: the coil whine is off (as in San Juan). Real wheels have it, but it is only annoying in a game.
+  // The layer stays wired and silent; restore 0.0004 to bring it back.
+  coilLevel: 0,
   coilDepth: 0.55,
   response: 0.06, // seconds, setTargetAtTime time constant
   spinUpResponse: 0.22,

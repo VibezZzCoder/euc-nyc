@@ -110,7 +110,7 @@ test('motor level and brightness rise with load and speed; crashed and absent ar
   assert.ok(idle.level > 0 && idle.level < 0.03, 'a gentle hum at rest');
   assert.ok(cruise.level > idle.level && pushing.level > cruise.level);
   assert.ok(pushing.cutoff > cruise.cutoff && cruise.cutoff > idle.cutoff);
-  assert.ok(pushing.coil > cruise.coil && idle.coil === 0);
+  assert.ok(pushing.coil === 0 && cruise.coil === 0 && idle.coil === 0, 'the coil whine is off');
   assert.ok(pushing.level < 0.2, 'kept low in the mix');
   const air = motorTargets({ speed: 12, drive: 1.1, grounded: false });
   assert.ok(air.hz > pushing.hz && air.level < pushing.level, 'free spin: higher and lighter');
