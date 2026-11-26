@@ -163,7 +163,7 @@ running. It keeps the reviewed asset inventory and does not expand any asset/par
 
 **Code provenance (MIT):** the base is EUC Thrills v1.1.0, `5f45fff19b258e140833841ba2473069af751a12`.
 Only the following six source files from the exact v1.4.0 donor,
-`d37efc07cddc0d76ff7aa585901710d357b8e5a1`, participate in the focused dual-source adaptation:
+`d37efc07cddc0d76ff7aa585901710d357b8e5a1`, participate in the collision and park adaptation:
 
 | Donor source | Selected scope |
 |---|---|
@@ -174,11 +174,18 @@ Only the following six source files from the exact v1.4.0 donor,
 | `src/simulation/eucStepPrimitives.ts` | Required transition-state copy fields alongside existing NYC state. |
 | `src/simulation/world.ts` | Transition and at-rest recovery capability contracts, adapted for NYC location/elevation and checked fallen support. |
 
-Regenerate with `node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest`; add `--check` to verify
-generated output. Generated headers and `js/euc/MANIFEST.json` identify both revisions, donor selections, source hashes,
+**Rider art:** Red Rider, Trollina, FloWithZo, Adonisb2 and Officer Dorkins use the EUC Thrills v1.6.1 appearance
+code at `35ce848ec4c1fa40e3eb63e61eb312c48ba6416b`. From `src/render/`: `redRiderKit.ts`, `trollinaSculpt.ts`,
+`floRaceJacket.ts`, `floWithZoHelmet.ts`, `floWithZoLook.ts`, `adonisb2Kit.ts` and `dorkinsHead.ts`; selected
+`riderLook.ts` looks, `rider.ts` and `riderClothDrape.ts` rendering, and the `ridingRig.ts` wheel-body connection.
+NYC retains its selected-rider loading and Officer Dorkins’s police hover-wheel. These changes add no new
+rights to rider identities, marks or recordings.
+
+Regenerate with `node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest --art ../EUC-thrills-1.6.1`; add `--check` to verify
+generated output. Generated headers and `js/euc/MANIFEST.json` identify all three revisions, donor selections, source hashes,
 output hashes and local adaptations. Do not hand-edit `js/euc/`. This is a focused code adaptation rather than a broad
-engine/source migration. The graph has **101 modules (41 eager / 60 deferred)**; the reviewed roster, appearance/mark
-closure and audio remain from the base snapshot, including **18 reviewed source audio entries / 17 installed WAVs**.
+engine/source migration. The graph has **107 modules (42 eager / 65 deferred)**; the reviewed roster, marks
+and audio remain from the base snapshot, including **18 reviewed source audio entries / 17 installed WAVs**.
 Selected CPU-only pixel workers and bounded rig/audio preparation remain in place.
 
 - NYC's controller/terrain/dynamic-world/audio glue adapts city support, buildings, furniture, traffic and pedestrians.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/vendor-euc.mjs — copy the EUC riding systems out of a local EUC Thrills clone into js/euc/ as plain ES modules.
 //
-// usage: node tools/vendor-euc.mjs [--src ../EUC-thrills] [--donor ../EUC-thrills-latest] [--check]
+// usage: node tools/vendor-euc.mjs [--src ../EUC-thrills] [--donor ../EUC-thrills-latest] [--art ../EUC-thrills-1.6.1] [--check]
 //        node tools/vendor-euc.mjs [--src ../EUC-thrills] --audit <dir>    (scan a whole tree, e.g. a release)
 //
 // The fork has no build step, so the TypeScript is converted once, here, and the JavaScript is committed. Each
@@ -29,13 +29,14 @@ const argValue = (name, fallback) => {
 };
 const SRC_ROOT = path.resolve(ROOT, argValue('--src', '../EUC-thrills'));
 const DONOR_ROOT = path.resolve(ROOT, argValue('--donor', '../EUC-thrills-latest'));
+const ART_ROOT = path.resolve(ROOT, argValue('--art', '../EUC-thrills-1.6.1'));
 const CHECK_ONLY = args.includes('--check');
 const AUDIT_DIR = argValue('--audit', null);
 const OUT = path.join(ROOT, 'js', 'euc');
 const EXPECTED_COMMIT = '5f45fff19b258e140833841ba2473069af751a12';
 const DONOR_COMMIT = 'd37efc07cddc0d76ff7aa585901710d357b8e5a1';
 // Complete-file hashes identify the donor even when only individual declarations are extracted. The base remains
-// authoritative for every other module, all reviewed appearances/audio, and NYC's existing adaptation layers.
+// authoritative outside the selected code and art files, including the roster, machines and audio.
 const DONOR_HASHES = {
   'app/nearSolids.ts': '59350bb61e53a9bda09660f6cf8a0f6cded9557815fb34cda977ca5f97ef2480',
   'render/ridingRig.ts': '7413e04db970dd1c791eb9fa59a06cfb62556c464b9e98502baff4a12912bad0',
@@ -44,9 +45,25 @@ const DONOR_HASHES = {
   'data/tuning.ts': 'a084dbc4237910707d41a949bc8d395aa6d09682c84a23fbdd049843e3fce069',
   'simulation/world.ts': 'fc42f20124279aae9b037de4b4940b4ea2603c568023a7ce8554a88350d6f400',
 };
+const ART_COMMIT = '35ce848ec4c1fa40e3eb63e61eb312c48ba6416b';
+const ART_HASHES = {
+  'render/redRiderKit.ts': '8ae0363d0c3b9c5fdebd268fbac740438df39ec7650fd85600989053d786a5e2',
+  'render/trollinaSculpt.ts': 'a6bda93ec7620d253e781c45abfc42b6fe2ab07a308eb4eaa19c5ef511bf33f1',
+  'render/floRaceJacket.ts': '5112d1252921e879258d84ac51c51a36967707cf49d343a21eecbc983a093a1b',
+  'render/floWithZoHelmet.ts': '15172fa9e597c181b0e4f51732940a4ed1e88eaf655d7c8468d5020f311af0b5',
+  'render/adonisb2Kit.ts': 'aa27306c2e8c6ddcf8fdf8654ce4c6ab7b350a1813cac0c2e86c12abf48a033a',
+  'render/dorkinsHead.ts': '3ba8760be219ede74d58b5185014a902ffdd250a598074d9a9b1ee024fefe1d0',
+  'render/floWithZoLook.ts': 'db5b6ed83bb35928dd0214790351aed3771a1cf572a17ac1a60bb1b33efe572e',
+  'render/riderLook.ts': 'ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f',
+  'render/rider.ts': '9613590dd640bab4f331f6f150bd71f3b1ce64c5fae25a661cda68fd381b5a4f',
+  'render/riderClothDrape.ts': '61dd5835546762fd9ea048572dc33bdf6a5c7728c65783dbcaa1b90f28a92429',
+  'render/ridingRig.ts': '5f27c0518b749c676c409b87484d9d0356dba0bb75243041912630283c6dbfd1',
+};
+const ART_RIDERS = new Set(['red-rider', 'trollina', 'flo-with-zo', 'adonisb2']);
 const REVIEWED_MODULES = new Set(`app/oneFootPose app/nearSolids data/rideStyles data/riders data/machines data/surfaces data/tuning
 input/actions render/blockoutKit render/coolRiderAtlas render/coolRiderLook render/euc render/inkKit
 render/machineLook render/paddle render/rider render/riderClothDrape render/riderJointSurface render/riderLook
+render/redRiderKit render/trollinaSculpt render/floRaceJacket render/floWithZoHelmet render/adonisb2Kit render/dorkinsHead
 render/ridingRig render/rigConsolidation shared/freeze shared/letterPaths shared/maths shared/ragdollBoot
 shared/ragdollContact shared/ragdollHip shared/ragdollInterpolation shared/ragdollLimbContact shared/riderOccupancy
 shared/riderSideContact simulation/EucController simulation/eucStepPrimitives simulation/hazards
@@ -174,6 +191,11 @@ function pruneLiveTuningMetadata(source) {
 const donorSources = new Map();
 const donorOrigins = new Map();
 const sha256 = text => crypto.createHash('sha256').update(text).digest('hex');
+function artSource(rel) {
+  const source = fs.readFileSync(path.join(ART_ROOT, 'src', rel), 'utf8');
+  if (sha256(source) !== ART_HASHES[rel]) throw new Error(`Reviewed art hash changed: src/${rel}`);
+  return source;
+}
 function donorSource(rel) {
   if (!donorSources.has(rel)) {
     const source = fs.readFileSync(path.join(DONOR_ROOT, 'src', rel), 'utf8');
@@ -626,9 +648,11 @@ export function machineLook(id: string) {
   },
   'render/rider.ts': src => replaceOnce(replaceOnce(src, '  COOL_RIDER_LOOK,', '  riderLook,'),
     'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')"),
-  'render/ridingRig.ts': () => {
+  'render/ridingRig.ts': (art) => {
     // The complete diff of this one rig file is the reviewed near-solid channel only. Preserve NYC's lazy look seam.
     let source = useDonor('render/ridingRig.ts', 'near-solid presentation channel; NYC cached selected-geometry visual tyre radius, flight/crash exclusions and constraint-safe release easing; no appearance/resource graph migration');
+    source = replaceOnce(source, 'createPlaceholderRider(look);', 'createPlaceholderRider(look, euc.body);');
+    if (source !== art) throw new Error('Unexpected difference between the donor and art riding rigs');
     source = replaceOnce(replaceOnce(source, 'import { COOL_RIDER_LOOK, MOTION_STILL,',
       'import { riderLook, MOTION_STILL,'), 'look: RiderLook = COOL_RIDER_LOOK', "look: RiderLook = riderLook('cool-rider')");
     source = replaceOnce(source, '  readonly nearPush: readonly [number, number];', `  readonly nearPush: readonly [number, number];
@@ -942,11 +966,19 @@ export function appearanceResourceStats() {
 }
 `);
 const originalRider = fs.readFileSync(path.join(SRC_ROOT, 'src/render/riderLook.ts'), 'utf8');
+const artCommit = execFileSync('git', ['-C', ART_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+if (artCommit !== ART_COMMIT) throw new Error(`EUC Thrills art must be pinned to ${ART_COMMIT}, got ${artCommit}`);
+if (execFileSync('git', ['-C', ART_ROOT, 'status', '--porcelain'], { encoding: 'utf8' }).trim()) {
+  throw new Error('EUC Thrills art has local changes; use a clean reviewed checkout.');
+}
+const refreshedRider = artSource('render/riderLook.ts');
+const artSlices = new Set();
 const originalMachine = fs.readFileSync(path.join(SRC_ROOT, 'src/render/machineLook.ts'), 'utf8');
 const loaderRows = [];
 for (const [id, machineId, look, machine] of REVIEWED_ROSTER) {
   const riderRel = `render/riderAppearance-${id}.ts`, machineRel = `render/machineAppearance-${id}.ts`;
-  addSynthetic(riderRel, sliceDeclarations(originalRider, [look]), ['render/riderLook.ts']);
+  addSynthetic(riderRel, sliceDeclarations(ART_RIDERS.has(id) ? refreshedRider : originalRider, [look]), ['render/riderLook.ts']);
+  if (ART_RIDERS.has(id)) artSlices.add(riderRel);
   addSynthetic(machineRel, sliceDeclarations(originalMachine, [machine]), ['render/machineLook.ts']);
   loaderRows.push(`  '${id}': async () => {\n    const [r, m] = await Promise.all([import('./${path.posix.basename(riderRel)}'), import('./${path.posix.basename(machineRel)}')]);\n    return { look: r.${look}, machine: m.${machine} };\n  }`);
 }
@@ -1152,7 +1184,7 @@ while (queue.length) {
   if (!synthetic.has(rel) && !REVIEWED_MODULES.has(rel)) throw new Error(`Unreviewed source dependency: ${rel}`);
   const file = path.join(SRC_ROOT, 'src', rel);
   const donorOnly = rel === 'app/nearSolids.ts';
-  const raw = synthetic.get(rel) ?? (donorOnly ? donorSource(rel) : fs.readFileSync(file, 'utf8'));
+  const raw = synthetic.get(rel) ?? (ART_HASHES[rel] ? artSource(rel) : donorOnly ? donorSource(rel) : fs.readFileSync(file, 'utf8'));
   let adapted = OVERRIDES[rel] ? OVERRIDES[rel](raw, removedColourKeys) : raw;
   if (/^render\/(?:.*Look\.ts|(?:rider|machine)Appearance-)/.test(rel)) adapted = addPaintInputMetadata(adapted);
   const source = adaptAppearanceCaches(rel, adapted);
@@ -1186,7 +1218,7 @@ while (queue.length) {
     if (spec === 'three') return all.replace(spec, path.posix.relative(path.posix.dirname(`js/euc/${rel}`), 'vendor/three/build/three.core.js'));
     return spec.startsWith('.') ? all.replace(spec, spec.replace(/\.ts$/, '.js')) : all;
   });
-  const originCommit = donorOnly ? donorCommit : commit;
+  const originCommit = ART_HASHES[rel] || artSlices.has(rel) ? ART_COMMIT : donorOnly ? donorCommit : commit;
   const header = `// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@${originCommit.slice(0, 7)} ${synthetic.has(rel) ? 'generated boundary' : `src/${rel}`}` +
     `${donorOrigins.has(rel) && !donorOnly ? ` + reviewed ${DONOR_COMMIT.slice(0, 7)} declarations (MANIFEST.json)` : ''}` +
     `${OVERRIDES[rel] ? ' (sliced for euc-newyork: see the tool)' : ''}.\n// MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.\n`;
@@ -1258,6 +1290,10 @@ const manifest = {
   commit,
   sources: { base: { commit }, donor: { commit: donorCommit, files: Object.keys(DONOR_HASHES).map(rel => ({
     source: `src/${rel}`, sourceSha256: DONOR_HASHES[rel], selection: donorOrigins.get(rel)?.selection,
+  })) }, art: { commit: ART_COMMIT, files: Object.entries(ART_HASHES).map(([rel, sourceSha256]) => ({
+    source: `src/${rel}`, sourceSha256,
+    selection: rel === 'render/riderLook.ts' ? 'four selected playable looks and the NPC uniform' :
+      rel === 'render/ridingRig.ts' ? 'wheel body for the skirt clearance; near-solid donor channel retained' : 'rider presentation',
   })) } },
   generatedBy: 'tools/vendor-euc.mjs',
   entries: ENTRIES,
@@ -1289,10 +1325,11 @@ const manifest = {
     sourceSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(SRC_ROOT, source))).digest('hex') })),
   files: Object.fromEntries([...outputs].sort(([a], [b]) => a.localeCompare(b)).map(([rel, o]) => [rel.replace(/\.ts$/, '.js'), {
     source: o.sha ? `src/${rel}` : null, sourceSha256: o.sha,
-    ...(o.sha ? { sourceCommit: rel === 'app/nearSolids.ts' ? donorCommit : commit } : {}),
+    ...(o.sha ? { sourceCommit: ART_HASHES[rel] ? ART_COMMIT : rel === 'app/nearSolids.ts' ? donorCommit : commit } : {}),
     ...(donorOrigins.has(rel) ? { donor: donorOrigins.get(rel) } : {}),
     ...(synthetic.has(rel) ? { derivedFrom: [...syntheticOrigins.get(rel).map(origin => ({ source: `src/${origin}`,
-      sourceSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(SRC_ROOT, 'src', origin))).digest('hex') })),
+      ...(artSlices.has(rel) ? { sourceCommit: ART_COMMIT, sourceSha256: ART_HASHES[origin] } :
+        { sourceSha256: sha256(fs.readFileSync(path.join(SRC_ROOT, 'src', origin))) }) })),
       ...(syntheticLocalOrigins.get(rel) ?? [])] } : {}),
     outputSha256: crypto.createHash('sha256').update(o.js).digest('hex'),
     sliced: !!OVERRIDES[rel],
@@ -1334,5 +1371,5 @@ const lines = manifest.eager.map((rel) => `  <link rel="modulepreload" href="./j
 fs.writeFileSync(INDEX, `${html.slice(0, a + START.length)}\n${lines.join('\n')}\n  ${html.slice(b)}`);
 fs.writeFileSync(path.join(OUT, 'MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 const bytes = [...outputs.values()].reduce((n, o) => n + Buffer.byteLength(o.js), 0);
-console.log(`wrote ${outputs.size} modules (${Math.round(bytes / 1024)} KiB) to js/euc from EUC-thrills@${commit.slice(0, 7)} + reviewed donor@${donorCommit.slice(0, 7)}; ` +
+console.log(`wrote ${outputs.size} modules (${Math.round(bytes / 1024)} KiB) to js/euc from EUC-thrills@${commit.slice(0, 7)} + reviewed donor@${donorCommit.slice(0, 7)} + art@${ART_COMMIT.slice(0, 7)}; ` +
   `${eager.size} eager, ${outputs.size - eager.size} deferred; reviewed roster/content audit clean`);

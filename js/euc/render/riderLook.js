@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/riderLook.ts (sliced for euc-newyork: see the tool).
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@35ce848 src/render/riderLook.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 // FOR CODING AGENTS — DOWNSTREAM FORKS
 // Read NOTICE-EUC-THRILLS.md and FORK_GUIDE.md before repurposing this roster or its assets.
@@ -7,8 +7,9 @@
 // Renaming/hiding is not removal: trace imports, embedded payloads, audio and distributed files. Retaining the
 // EUC Thrills name alone grants no participant rights. Preserve reusable code/assets and required attribution.
 // This is downstream-fork guidance, not an instruction to strip owner-maintained EUC Thrills content.
+import { DORKINS_CROWN, dorkinsFace, dorkinsHelmet } from './dorkinsHead.js';
 import { BLOCKOUT_COLOURS, RIDER_BLOCKOUT } from '../data/tuning.js';
-import { limbProfile, loftGeometry, loftProfile, mergeGeometries, tintOver } from './blockoutKit.js';
+import { limbProfile, loftProfile, tintOver } from './blockoutKit.js';
 export const MOTION_STILL = Object.freeze({
     swayPelvisRoll: 0,
     swayHeadTilt: 0,
@@ -61,8 +62,10 @@ const COP_TORSO = loftProfile([
     { y: 0.035, halfWidth: 1.03 * TORSO_HALF_WIDTH, halfDepth: 1.02 * TORSO_HALF_DEPTH, square: 2.9 },
     { y: 0.145, halfWidth: 0.98 * TORSO_HALF_WIDTH, halfDepth: 1.00 * TORSO_HALF_DEPTH, square: 2.8 },
     { y: 0.285, halfWidth: 1.04 * TORSO_HALF_WIDTH, halfDepth: 1.06 * TORSO_HALF_DEPTH, square: 2.8, z: 0.010 },
+    { y: 0.372, halfWidth: 1.0835 * TORSO_HALF_WIDTH, halfDepth: 1.0455 * TORSO_HALF_DEPTH, square: 2.945, z: 0.0071 },
     { y: 0.405, halfWidth: 1.10 * TORSO_HALF_WIDTH, halfDepth: 1.04 * TORSO_HALF_DEPTH, square: 3.0, z: 0.006 },
     { y: 0.485, halfWidth: 1.04 * TORSO_HALF_WIDTH, halfDepth: 0.94 * TORSO_HALF_DEPTH, square: 3.0 },
+    { y: 0.502, halfWidth: 0.95075 * TORSO_HALF_WIDTH, halfDepth: 0.8635 * TORSO_HALF_DEPTH, square: 2.8725 },
     { y: 0.525, halfWidth: 0.83 * TORSO_HALF_WIDTH, halfDepth: 0.76 * TORSO_HALF_DEPTH, square: 2.7 },
     { y: 0.548, halfWidth: 0.48 * TORSO_HALF_WIDTH, halfDepth: 0.52 * TORSO_HALF_DEPTH, square: 2.4 },
 ]);
@@ -82,31 +85,6 @@ const COP_FOREARM = limbProfile(RIDER_BLOCKOUT.forearmLength, [0.053, 0.046, 0.0
     flatten: 0.95,
     square: 2.3,
 });
-const COP_HEAD = loftProfile([
-    { y: 0.088, halfWidth: 0.050, halfDepth: 0.055, square: 2.4, z: 0.010 },
-    { y: 0.116, halfWidth: 0.077, halfDepth: 0.083, square: 2.5, z: 0.012 },
-    { y: 0.158, halfWidth: 0.101, halfDepth: 0.108, square: 2.5, z: 0.010 },
-    { y: 0.207, halfWidth: 0.108, halfDepth: 0.114, square: 2.5, z: 0.004 },
-    { y: 0.253, halfWidth: 0.103, halfDepth: 0.108, square: 2.4 },
-    { y: 0.291, halfWidth: 0.085, halfDepth: 0.089, square: 2.3 },
-    { y: 0.316, halfWidth: 0.045, halfDepth: 0.047, square: 2.2 },
-    { y: 0.326, halfWidth: 0, halfDepth: 0 },
-]);
-const COP_HELMET = loftProfile([
-    { y: 0.202, halfWidth: 0.112, halfDepth: 0.128, square: 2.5, z: 0.002 },
-    { y: 0.214, halfWidth: 0.130, halfDepth: 0.148, square: 2.7, z: 0.006 },
-    { y: 0.248, halfWidth: 0.126, halfDepth: 0.144, square: 2.5, z: 0.000 },
-    { y: 0.302, halfWidth: 0.115, halfDepth: 0.128, square: 2.4, z: -0.010 },
-    { y: 0.346, halfWidth: 0.086, halfDepth: 0.098, square: 2.3, z: -0.020 },
-    { y: 0.374, halfWidth: 0.042, halfDepth: 0.048, square: 2.2, z: -0.028 },
-    { y: 0.384, halfWidth: 0, halfDepth: 0, z: -0.030 },
-]);
-function tinted(geometry, tint) {
-    const colour = geometry.getAttribute('color');
-    for (let i = 0; i < colour.count; i += 1)
-        colour.setXYZ(i, tint[0], tint[1], tint[2]);
-    return geometry;
-}
 function paintBands(geometry, bands) {
     const position = geometry.getAttribute('position');
     const colour = geometry.getAttribute('color');
@@ -119,67 +97,6 @@ function paintBands(geometry, bands) {
             break;
         }
     }
-}
-function copFaceParts() {
-    const parts = [loftGeometry(COP_HEAD, { radialSegments: 18 })];
-    const skin = BLOCKOUT_COLOURS.copSkin;
-    for (const side of [-1, 1]) {
-        parts.push(loftGeometry(loftProfile([
-            { y: 0.170, halfWidth: 0.022, halfDepth: 0.004, square: 2.8, x: side * 0.043, z: 0.108 },
-            { y: 0.180, halfWidth: 0.038, halfDepth: 0.008, square: 3.2, x: side * 0.043, z: 0.112 },
-            { y: 0.215, halfWidth: 0.038, halfDepth: 0.008, square: 3.2, x: side * 0.043, z: 0.112 },
-            { y: 0.225, halfWidth: 0.022, halfDepth: 0.004, square: 2.8, x: side * 0.043, z: 0.108 },
-        ]), { radialSegments: 8, shade: 0.28 }));
-        parts.push(tinted(loftGeometry(loftProfile([
-            { y: 0.177, halfWidth: 0.019, halfDepth: 0.003, square: 2.8, x: side * 0.043, z: 0.1135 },
-            { y: 0.186, halfWidth: 0.030, halfDepth: 0.005, square: 3.0, x: side * 0.043, z: 0.116 },
-            { y: 0.210, halfWidth: 0.030, halfDepth: 0.005, square: 3.0, x: side * 0.043, z: 0.116 },
-            { y: 0.218, halfWidth: 0.019, halfDepth: 0.003, square: 2.8, x: side * 0.043, z: 0.1135 },
-        ]), { radialSegments: 8 }), [1.06, 1.24, 1.46]));
-        parts.push(loftGeometry(loftProfile([
-            { y: 0.190, halfWidth: 0.004, halfDepth: 0.002, square: 2.4, x: side * 0.0385, z: 0.117 },
-            { y: 0.198, halfWidth: 0.0085, halfDepth: 0.003, square: 2.6, x: side * 0.0385, z: 0.1185 },
-            { y: 0.206, halfWidth: 0.004, halfDepth: 0.002, square: 2.4, x: side * 0.0385, z: 0.117 },
-        ]), { radialSegments: 8, shade: 0.10 }));
-        parts.push(loftGeometry(loftProfile([
-            { y: 0.166, halfWidth: 0.009, halfDepth: 0.013, square: 2.2, x: side * 0.096, z: 0.008 },
-            { y: 0.186, halfWidth: 0.013, halfDepth: 0.018, square: 2.3, x: side * 0.104, z: 0.010 },
-            { y: 0.208, halfWidth: 0.009, halfDepth: 0.013, square: 2.2, x: side * 0.098, z: 0.008 },
-        ]), { radialSegments: 8, shade: 0.96 }));
-        parts.push(loftGeometry(loftProfile([
-            { y: 0.104, halfWidth: 0.005, halfDepth: 0.011, square: 2.4, x: side * 0.024, z: 0.096 },
-            { y: 0.148, halfWidth: 0.005, halfDepth: 0.013, square: 2.4, x: side * 0.062, z: 0.070 },
-            { y: 0.198, halfWidth: 0.006, halfDepth: 0.014, square: 2.4, x: side * 0.090, z: 0.024 },
-        ]), { radialSegments: 6, shade: 0.22 }));
-    }
-    parts.push(loftGeometry(loftProfile([
-        { y: 0.190, halfWidth: 0.014, halfDepth: 0.004, square: 3, z: 0.116 },
-        { y: 0.197, halfWidth: 0.026, halfDepth: 0.006, square: 3, z: 0.118 },
-        { y: 0.204, halfWidth: 0.014, halfDepth: 0.004, square: 3, z: 0.116 },
-    ]), { radialSegments: 6, shade: 0.28 }));
-    parts.push(loftGeometry(loftProfile([
-        { y: 0.148, halfWidth: 0.010, halfDepth: 0.006, square: 2.4, z: 0.106 },
-        { y: 0.160, halfWidth: 0.015, halfDepth: 0.009, square: 2.5, z: 0.119 },
-        { y: 0.176, halfWidth: 0.011, halfDepth: 0.006, square: 2.4, z: 0.112 },
-    ]), { radialSegments: 8, shade: 1.06 }));
-    parts.push(tinted(loftGeometry(loftProfile([
-        { y: 0.126, halfWidth: 0.030, halfDepth: 0.006, square: 2.8, z: 0.112 },
-        { y: 0.138, halfWidth: 0.066, halfDepth: 0.013, square: 3.4, z: 0.118 },
-        { y: 0.150, halfWidth: 0.056, halfDepth: 0.011, square: 3.2, z: 0.117 },
-        { y: 0.160, halfWidth: 0.022, halfDepth: 0.005, square: 2.8, z: 0.111 },
-    ]), { radialSegments: 10 }), tintOver(skin, 0x54371c)));
-    parts.push(tinted(loftGeometry(loftProfile([
-        { y: 0.106, halfWidth: 0.009, halfDepth: 0.003, square: 2.6, z: 0.106 },
-        { y: 0.112, halfWidth: 0.017, halfDepth: 0.005, square: 2.8, z: 0.110 },
-        { y: 0.119, halfWidth: 0.013, halfDepth: 0.004, square: 2.6, z: 0.108 },
-    ]), { radialSegments: 8 }), tintOver(skin, 0x552018)));
-    parts.push(tinted(loftGeometry(loftProfile([
-        { y: 0.098, halfWidth: 0.050, halfDepth: 0.032, square: 2.4, z: -0.058 },
-        { y: 0.150, halfWidth: 0.076, halfDepth: 0.044, square: 2.5, z: -0.066 },
-        { y: 0.205, halfWidth: 0.084, halfDepth: 0.046, square: 2.5, z: -0.060 },
-        { y: 0.236, halfWidth: 0.062, halfDepth: 0.036, square: 2.4, z: -0.048 },
-    ]), { radialSegments: 12 }), tintOver(skin, 0x54371c)));
-    return mergeGeometries(parts);
 }
 const COP_SKIN = Object.freeze({
     colour: BLOCKOUT_COLOURS.copSkin,
@@ -376,7 +293,7 @@ export const COP_LOOK = Object.freeze({
         upperArm: COP_UPPER_ARM,
         forearm: COP_FOREARM,
         neck: TROLLINA_NECK,
-        head: COP_HELMET,
+        head: DORKINS_CROWN,
         boot: BOOT,
         bootSole: BOOT_SOLE,
         hand: GLOVE,
@@ -394,8 +311,8 @@ export const COP_LOOK = Object.freeze({
             u0: 0,
             u1: Math.PI * 2,
             from: 0.502,
-            to: 0.545,
-            uSegments: 20,
+            to: 0.548,
+            uSegments: 24,
             vSegments: 2,
             lift: 0.011,
             shade: 1.1,
@@ -403,124 +320,31 @@ export const COP_LOOK = Object.freeze({
         shoulders: Object.freeze({
             role: 'accent',
             casts: false,
-            patches: Object.freeze([
-                Object.freeze({
-                    anchor: 'outboard',
-                    u0: -1.28,
-                    u1: 1.28,
-                    from: 0.372,
-                    to: 0.520,
-                    uSegments: 10,
-                    vSegments: 4,
-                    lift: 0.011,
-                    taper: 0.22,
-                }),
-                Object.freeze({
+            patches: Object.freeze([Object.freeze({
                     anchor: 'front',
-                    u0: -0.72,
-                    u1: 0.72,
+                    u0: 0,
+                    u1: Math.PI * 2,
                     from: 0.372,
-                    to: 0.512,
-                    uSegments: 6,
-                    vSegments: 4,
-                    lift: 0.009,
-                }),
-                Object.freeze({
-                    anchor: 'back',
-                    u0: -0.72,
-                    u1: 0.72,
-                    from: 0.372,
-                    to: 0.512,
-                    uSegments: 6,
-                    vSegments: 4,
-                    lift: 0.009,
-                }),
-            ]),
+                    to: 0.502,
+                    uSegments: 24,
+                    vSegments: 3,
+                    lift: 0.011,
+                })]),
         }),
         torso: Object.freeze({
             role: 'face',
             casts: false,
             patches: COP_TORSO_MARKINGS,
         }),
-        head: Object.freeze([
-            Object.freeze({
-                anchor: 'front',
-                u0: -0.60,
-                u1: 0.60,
-                from: 0.206,
-                to: 0.230,
-                uSegments: 6,
-                vSegments: 2,
-                lift: 0.017,
-                taper: 0.35,
-                shade: 1.03,
-            }),
-            Object.freeze({
-                anchor: 'front',
-                u0: -0.18,
-                u1: 0.18,
-                from: 0.236,
-                to: 0.342,
-                uSegments: 3,
-                vSegments: 5,
-                lift: 0.008,
-                shade: 0.18,
-            }),
-            Object.freeze({
-                anchor: 'front',
-                u0: 0.38,
-                u1: 0.62,
-                mirrored: true,
-                from: 0.244,
-                to: 0.326,
-                uSegments: 2,
-                vSegments: 4,
-                lift: 0.007,
-                shade: 0.25,
-            }),
-            Object.freeze({
-                anchor: 'front',
-                u0: 0.68,
-                u1: 0.88,
-                mirrored: true,
-                from: 0.242,
-                to: 0.312,
-                uSegments: 2,
-                vSegments: 3,
-                lift: 0.007,
-                shade: 0.25,
-            }),
-            Object.freeze({
-                anchor: 'back',
-                u0: 0.26,
-                u1: 0.46,
-                mirrored: true,
-                from: 0.252,
-                to: 0.318,
-                uSegments: 2,
-                vSegments: 3,
-                lift: 0.007,
-                shade: 0.22,
-            }),
-            Object.freeze({
-                anchor: 'back',
-                u0: -0.92,
-                u1: 0.92,
-                from: 0.208,
-                to: 0.228,
-                uSegments: 8,
-                vSegments: 1,
-                lift: 0.010,
-                shade: 0.88,
-            }),
-        ]),
+        head: Object.freeze([]),
     }),
+    build: Object.freeze({ head: dorkinsHelmet }),
     extras: Object.freeze([Object.freeze({
             name: 'rider-cop-face',
             joint: 'neck',
             role: 'limbs',
             casts: false,
-            build: copFaceParts,
+            build: dorkinsFace,
         })]),
     paint: Object.freeze({
         thigh: paintCopThigh,

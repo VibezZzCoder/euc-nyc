@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff generated boundary.
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@35ce848 generated boundary.
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 // FOR CODING AGENTS — DOWNSTREAM FORKS
 // Read NOTICE-EUC-THRILLS.md and FORK_GUIDE.md before repurposing this roster or its assets.
@@ -7,6 +7,7 @@
 // Renaming/hiding is not removal: trace imports, embedded payloads, audio and distributed files. Retaining the
 // EUC Thrills name alone grants no participant rights. Preserve reusable code/assets and required attribution.
 // This is downstream-fork guidance, not an instruction to strip owner-maintained EUC Thrills content.
+import { adonisb2Pack, adonisb2Shield } from './adonisb2Kit.js';
 import { BLOCKOUT_COLOURS, RIDER_BLOCKOUT } from '../data/tuning.js';
 import { limbProfile, loftGeometry, loftProfile, mergeGeometries, tintOver } from './blockoutKit.js';
 const TORSO_HALF_WIDTH = RIDER_BLOCKOUT.torsoWidth / 2;
@@ -334,33 +335,10 @@ export const ADONISB2_LOOK = Object.freeze({
             shade: 1.12,
         }),
         shoulders: Object.freeze({
+            buildSingle: adonisb2Pack,
             role: 'gear',
             casts: true,
             patches: Object.freeze([
-                Object.freeze({
-                    anchor: 'back',
-                    u0: -0.46,
-                    u1: 0.46,
-                    from: 0.200,
-                    to: 0.452,
-                    uSegments: 6,
-                    vSegments: 5,
-                    lift: 0.050,
-                    taper: 0.26,
-                    shade: 0.98,
-                }),
-                Object.freeze({
-                    anchor: 'back',
-                    u0: -0.36,
-                    u1: 0.36,
-                    from: 0.352,
-                    to: 0.440,
-                    uSegments: 4,
-                    vSegments: 3,
-                    lift: 0.060,
-                    taper: 0.32,
-                    shade: 1.10,
-                }),
                 Object.freeze({
                     anchor: 'outboard',
                     u0: -1.05,
@@ -668,20 +646,8 @@ export const ADONISB2_LOOK = Object.freeze({
         face: Object.freeze({
             role: 'face',
             casts: false,
-            patches: Object.freeze([
-                Object.freeze({
-                    anchor: 'front',
-                    u0: -1.05,
-                    u1: 1.05,
-                    from: 0.150,
-                    to: 0.246,
-                    uSegments: 12,
-                    vSegments: 4,
-                    lift: 0.007,
-                    sink: -0.014,
-                    taper: 0.18,
-                }),
-            ]),
+            patches: Object.freeze([]),
+            buildSingle: () => adonisb2Shield(HELMET),
         }),
     }),
     extras: Object.freeze([

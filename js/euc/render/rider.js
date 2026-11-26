@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/rider.ts (sliced for euc-newyork: see the tool).
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@35ce848 src/render/rider.ts (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import * as THREE from '../../../vendor/three/build/three.core.js';
 import { solveRagdollLeg, solveRagdollLimb } from '../shared/ragdollBoot.js';
@@ -137,7 +137,7 @@ function solveChain(chain, upperOut, lowerOut) {
 function outboardAngle(side) {
     return side > 0 ? 0 : Math.PI;
 }
-export function createPlaceholderRider(look = riderLook('cool-rider')) {
+export function createPlaceholderRider(look = riderLook('cool-rider'), wheelBody) {
     const root = new THREE.Group();
     root.name = 'rider-blockout';
     const geometries = [];
@@ -176,6 +176,7 @@ export function createPlaceholderRider(look = riderLook('cool-rider')) {
             vertexColors: true,
             map: sheet !== null && override === undefined && mapsRole(role) ? sheet : null,
         }));
+        spec.configure?.(material);
         built.set(spec, material);
         return material;
     };
@@ -259,6 +260,8 @@ export function createPlaceholderRider(look = riderLook('cool-rider')) {
                 add(patch, 1);
             }
         }
+        if (group.buildSingle)
+            parts.push(paged(group.buildSingle(), group.role));
         if (group.build) {
             for (const pairSide of side === null ? [-1, 1] : [side]) {
                 const page = typeof group.art === 'function' ? group.art(pairSide) : group.art;
@@ -359,6 +362,9 @@ export function createPlaceholderRider(look = riderLook('cool-rider')) {
         surfaceUpdates.push(drapeRiderHem(torsoGeometry, pelvis, legs.map(leg => leg.hip), {
             radial: density.torso, rings: profiles.torso.length, splitSeam: mapsRole('body'),
             envelope: look.hemDrapeEnvelope,
+            gravity: look.hemDrapeGravity,
+            wheelBody: look.hemDrapeGravity ? wheelBody : undefined,
+            seatProfile: look.hemDrapeGravity ? profiles.seat : undefined,
         }));
     if (look.parts.seat !== 'body') {
         const seat = new THREE.Mesh(track(paged(loftGeometry(profiles.seat, {
@@ -390,7 +396,8 @@ export function createPlaceholderRider(look = riderLook('cool-rider')) {
         const baseSplay = RIDER_BLOCKOUT.shoulderHalfWidth + RIDER_BLOCKOUT.armSplay
             + (rightArm ? RIDER_BLOCKOUT.armAsymmetrySplay : 0)
             + look.armCarriage.splay;
-        const baseTarget = new THREE.Vector3(side * baseSplay, shoulderY - reach * RIDER_BLOCKOUT.armHangFraction + look.armCarriage.rise, RIDER_BLOCKOUT.handForward + (rightArm ? RIDER_BLOCKOUT.armAsymmetryForward : 0));
+        const baseTarget = new THREE.Vector3(side * baseSplay, shoulderY - reach * RIDER_BLOCKOUT.armHangFraction + look.armCarriage.rise, RIDER_BLOCKOUT.handForward + (rightArm ? RIDER_BLOCKOUT.armAsymmetryForward : 0)
+            + (look.armCarriage.forward ?? 0));
         const bendToward = new THREE.Vector3(0, 0, -1);
         const easedTarget = easedHandTarget(shoulder.position, baseTarget, side);
         solveChain({
@@ -407,7 +414,9 @@ export function createPlaceholderRider(look = riderLook('cool-rider')) {
             shoulder.add(panelMesh(`rider-sleeve-${sideName}`, panels.sleeve, profiles.upperArm, side));
         }
         if (profiles.sleeve) {
-            const sleeve = new THREE.Mesh(track(loftGeometry(profiles.sleeve, { radialSegments: density.limb })), bodyMaterial);
+            const sleeveGeometry = track(loftGeometry(profiles.sleeve, { radialSegments: density.limb }));
+            look.paint?.sleeve?.(sleeveGeometry, side);
+            const sleeve = new THREE.Mesh(sleeveGeometry, bodyMaterial);
             sleeve.name = `rider-cap-sleeve-${sideName}`;
             shoulder.add(sleeve);
         }

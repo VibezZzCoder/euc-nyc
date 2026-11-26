@@ -323,6 +323,8 @@ are unchanged. Release held riding controls at menu boundaries and use fresh con
 
 ## Riders
 
+Red Rider, Trollina, FloWithZo, Adonisb2 and Officer Dorkins wear their EUC Thrills v1.6.1 looks.
+
 The reviewed roster from *EUC Thrills* v1.1.0, in source order:
 
 | Rider | URL / saved rider ID |

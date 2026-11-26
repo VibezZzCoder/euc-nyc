@@ -120,6 +120,66 @@
           "selection": "transitionAt and restartsAtRest capability contracts; NYC location/elevation arguments and checked fallen-support validation"
         }
       ]
+    },
+    "art": {
+      "commit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "files": [
+        {
+          "source": "src/render/redRiderKit.ts",
+          "sourceSha256": "8ae0363d0c3b9c5fdebd268fbac740438df39ec7650fd85600989053d786a5e2",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/trollinaSculpt.ts",
+          "sourceSha256": "a6bda93ec7620d253e781c45abfc42b6fe2ab07a308eb4eaa19c5ef511bf33f1",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/floRaceJacket.ts",
+          "sourceSha256": "5112d1252921e879258d84ac51c51a36967707cf49d343a21eecbc983a093a1b",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/floWithZoHelmet.ts",
+          "sourceSha256": "15172fa9e597c181b0e4f51732940a4ed1e88eaf655d7c8468d5020f311af0b5",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/adonisb2Kit.ts",
+          "sourceSha256": "aa27306c2e8c6ddcf8fdf8654ce4c6ab7b350a1813cac0c2e86c12abf48a033a",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/dorkinsHead.ts",
+          "sourceSha256": "3ba8760be219ede74d58b5185014a902ffdd250a598074d9a9b1ee024fefe1d0",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/floWithZoLook.ts",
+          "sourceSha256": "db5b6ed83bb35928dd0214790351aed3771a1cf572a17ac1a60bb1b33efe572e",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/riderLook.ts",
+          "sourceSha256": "ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f",
+          "selection": "four selected playable looks and the NPC uniform"
+        },
+        {
+          "source": "src/render/rider.ts",
+          "sourceSha256": "9613590dd640bab4f331f6f150bd71f3b1ce64c5fae25a661cda68fd381b5a4f",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/riderClothDrape.ts",
+          "sourceSha256": "61dd5835546762fd9ea048572dc33bdf6a5c7728c65783dbcaa1b90f28a92429",
+          "selection": "rider presentation"
+        },
+        {
+          "source": "src/render/ridingRig.ts",
+          "sourceSha256": "5f27c0518b749c676c409b87484d9d0356dba0bb75243041912630283c6dbfd1",
+          "selection": "wheel body for the skirt clearance; near-solid donor channel retained"
+        }
+      ]
     }
   },
   "generatedBy": "tools/vendor-euc.mjs",
@@ -427,6 +487,7 @@
     "render/appearanceLoader.js",
     "render/appearanceRegistry.js",
     "render/blockoutKit.js",
+    "render/dorkinsHead.js",
     "render/euc.js",
     "render/machineLook.js",
     "render/paddle.js",
@@ -461,12 +522,15 @@
     "data/gnarwheelLogoAsset.js",
     "data/mvLogoAsset.js",
     "data/wimLogoAsset.js",
+    "render/adonisb2Kit.js",
     "render/appearancePixelImports.js",
     "render/appearanceWorker.js",
     "render/coolRiderAtlas.js",
     "render/coolRiderLook.js",
     "render/drunkardAtlas.js",
     "render/drunkardMachineAtlas.js",
+    "render/floRaceJacket.js",
+    "render/floWithZoHelmet.js",
     "render/floWithZoLook.js",
     "render/gnarwheelAtlas.js",
     "render/gnarwheelLook.js",
@@ -498,6 +562,7 @@
     "render/pixels/wimMachineAtlas.js",
     "render/pixels/wyldistAtlas.js",
     "render/pngDecode.js",
+    "render/redRiderKit.js",
     "render/riderAppearance-adonisb2.js",
     "render/riderAppearance-cool-rider.js",
     "render/riderAppearance-drunkard.js",
@@ -511,6 +576,7 @@
     "render/riderAppearance-wyldist.js",
     "render/sealAtlas.js",
     "render/sealOnAWheelLook.js",
+    "render/trollinaSculpt.js",
     "render/wimAtlas.js",
     "render/wimMachineAtlas.js",
     "render/wyldistAtlas.js",
@@ -539,6 +605,7 @@
       "render/blockoutKit.js",
       "render/machineAppearance-trollina.js",
       "render/riderAppearance-trollina.js",
+      "render/trollinaSculpt.js",
       "shared/freeze.js"
     ],
     "red-rider": [
@@ -546,12 +613,14 @@
       "data/tuning.js",
       "render/blockoutKit.js",
       "render/machineAppearance-red-rider.js",
+      "render/redRiderKit.js",
       "render/riderAppearance-red-rider.js",
       "shared/freeze.js"
     ],
     "adonisb2": [
       "data/surfaces.js",
       "data/tuning.js",
+      "render/adonisb2Kit.js",
       "render/blockoutKit.js",
       "render/machineAppearance-adonisb2.js",
       "render/riderAppearance-adonisb2.js",
@@ -604,6 +673,8 @@
       "data/surfaces.js",
       "data/tuning.js",
       "render/blockoutKit.js",
+      "render/floRaceJacket.js",
+      "render/floWithZoHelmet.js",
       "render/floWithZoLook.js",
       "render/machineAppearance-flo-with-zo.js",
       "render/riderAppearance-flo-with-zo.js",
@@ -875,6 +946,13 @@
       "outputSha256": "186bcd652cef52cc22a13e1585765bafb7d8d9fdceda776625df8f68ad20713b",
       "sliced": false
     },
+    "render/adonisb2Kit.js": {
+      "source": "src/render/adonisb2Kit.ts",
+      "sourceSha256": "aa27306c2e8c6ddcf8fdf8654ce4c6ab7b350a1813cac0c2e86c12abf48a033a",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "f5e1736f2934a6687785f0c714c0eb964591a933aa9a02cc2d92a24bfaeb904b",
+      "sliced": false
+    },
     "render/appearanceImports.js": {
       "source": null,
       "sourceSha256": null,
@@ -931,6 +1009,13 @@
       "outputSha256": "89f62f92432531052a38100dbc4aaedf56ad36b9fdb7d7b4b407e33609d001d6",
       "sliced": false
     },
+    "render/dorkinsHead.js": {
+      "source": "src/render/dorkinsHead.ts",
+      "sourceSha256": "3ba8760be219ede74d58b5185014a902ffdd250a598074d9a9b1ee024fefe1d0",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "93a0f2825c0a3b9410f6cb8bf3f0139763629bc1fe398465fa83148474b4d028",
+      "sliced": false
+    },
     "render/drunkardAtlas.js": {
       "source": "src/render/drunkardAtlas.ts",
       "sourceSha256": "e4fb4d4a2dd8103f147326febfd9ea38a355df15a2d627bf608684d27f3e33c6",
@@ -952,11 +1037,25 @@
       "outputSha256": "ff42ca0d27ecd3484b25b8f5caa9d3b7d213fd90958ab34ffca3a6d715e5ed64",
       "sliced": true
     },
+    "render/floRaceJacket.js": {
+      "source": "src/render/floRaceJacket.ts",
+      "sourceSha256": "5112d1252921e879258d84ac51c51a36967707cf49d343a21eecbc983a093a1b",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "53c76eb5b56e096093ee5befd0dbffc17178a10751492b7c85a5361574144e75",
+      "sliced": false
+    },
+    "render/floWithZoHelmet.js": {
+      "source": "src/render/floWithZoHelmet.ts",
+      "sourceSha256": "15172fa9e597c181b0e4f51732940a4ed1e88eaf655d7c8468d5020f311af0b5",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "911ceb4dafa6f878ef9e1b882f5cea256c2a50cd9c9e8c334c31e444fd863f95",
+      "sliced": false
+    },
     "render/floWithZoLook.js": {
       "source": "src/render/floWithZoLook.ts",
-      "sourceSha256": "c1437da95ae6089efbdcec32cf3d1f028ae127b0a13c5d8e3f7dd5bb7bc658e4",
-      "sourceCommit": "5f45fff19b258e140833841ba2473069af751a12",
-      "outputSha256": "1103013dbb5be87942aaa2a1b8354b10f18a5000aebf8d9e9bf82be69df229de",
+      "sourceSha256": "db5b6ed83bb35928dd0214790351aed3771a1cf572a17ac1a60bb1b33efe572e",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "112ac2143511aa685c2548ed77a98a64bebe56aae7330d9b11ed2051e0585092",
       "sliced": false
     },
     "render/gnarwheelAtlas.js": {
@@ -1311,11 +1410,18 @@
       "outputSha256": "7691459ec819bba6cb4a59021c698702956d466369c9937b439e6ad8d786c9db",
       "sliced": false
     },
+    "render/redRiderKit.js": {
+      "source": "src/render/redRiderKit.ts",
+      "sourceSha256": "8ae0363d0c3b9c5fdebd268fbac740438df39ec7650fd85600989053d786a5e2",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "2488ce5a3566c9277154d6c21d47da6b1f6486b1621fe7ffcd802d693c39a536",
+      "sliced": false
+    },
     "render/rider.js": {
       "source": "src/render/rider.ts",
-      "sourceSha256": "fcc67783bda9e4cc68d0522ef394c9c4145877bf48e5d56d7a79c6413d9e13b4",
-      "sourceCommit": "5f45fff19b258e140833841ba2473069af751a12",
-      "outputSha256": "941183437f2cc2358c0161dbe4c67a71d079af6ea0ef060b8fa0f06f8790a14a",
+      "sourceSha256": "9613590dd640bab4f331f6f150bd71f3b1ce64c5fae25a661cda68fd381b5a4f",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "22b8a84336b74eb168f64069e21c4a563241edb1f3a95c9c8e98088ab2679cfe",
       "sliced": true
     },
     "render/riderAppearance-adonisb2.js": {
@@ -1324,10 +1430,11 @@
       "derivedFrom": [
         {
           "source": "src/render/riderLook.ts",
-          "sourceSha256": "a5d06cdd735631c8acdc021cf6651e9843f08957e7c286d4c3d7e7fd823dacb5"
+          "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+          "sourceSha256": "ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f"
         }
       ],
-      "outputSha256": "174db90c0be2be8e05e93362d89fbb4f93c4e3a9aeca2132f1f5f57127d33f15",
+      "outputSha256": "6747bd1bb32c270d8d207b796502b181144b01a4f72c0b54596dbb8da2eaec3f",
       "sliced": false
     },
     "render/riderAppearance-cool-rider.js": {
@@ -1360,10 +1467,11 @@
       "derivedFrom": [
         {
           "source": "src/render/riderLook.ts",
-          "sourceSha256": "a5d06cdd735631c8acdc021cf6651e9843f08957e7c286d4c3d7e7fd823dacb5"
+          "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+          "sourceSha256": "ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f"
         }
       ],
-      "outputSha256": "ded751cd048e6eb5a4eec7ec99ace9c8c3e2679e0764032b3ee615d36ed826f7",
+      "outputSha256": "430ab1d7ef14bdf0c54d9e030548a6e8ccd66932d07fa3fe6b280058c688867d",
       "sliced": false
     },
     "render/riderAppearance-gnarwheel.js": {
@@ -1396,10 +1504,11 @@
       "derivedFrom": [
         {
           "source": "src/render/riderLook.ts",
-          "sourceSha256": "a5d06cdd735631c8acdc021cf6651e9843f08957e7c286d4c3d7e7fd823dacb5"
+          "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+          "sourceSha256": "ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f"
         }
       ],
-      "outputSha256": "08094b172022757d596a2dae2585d444f03dd5989af673f09fc0999244f8f068",
+      "outputSha256": "97f74709b398987d6bdce54614819ae5d9a426f32f0edbcb4040483f1f08d0f9",
       "sliced": false
     },
     "render/riderAppearance-seal-on-a-wheel.js": {
@@ -1420,10 +1529,11 @@
       "derivedFrom": [
         {
           "source": "src/render/riderLook.ts",
-          "sourceSha256": "a5d06cdd735631c8acdc021cf6651e9843f08957e7c286d4c3d7e7fd823dacb5"
+          "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+          "sourceSha256": "ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f"
         }
       ],
-      "outputSha256": "40b8578f76c85d3db9621b746b6fe8b97a0857492bc85eaa40fe411f49a2b499",
+      "outputSha256": "40593d685f80d1f24a94dd05aa9a48fb553260eadeac8826bfe21b5a71253f9e",
       "sliced": false
     },
     "render/riderAppearance-wheel-in-motion.js": {
@@ -1452,9 +1562,9 @@
     },
     "render/riderClothDrape.js": {
       "source": "src/render/riderClothDrape.ts",
-      "sourceSha256": "d716ea81d7b920c28ef80cd71e32bada0859fd6846664519dd85d1f878cec763",
-      "sourceCommit": "5f45fff19b258e140833841ba2473069af751a12",
-      "outputSha256": "36227c081000af7f8d5e9bf4a0fd7e2fd3584dfd8d9706e17d63a0e18e930d8d",
+      "sourceSha256": "61dd5835546762fd9ea048572dc33bdf6a5c7728c65783dbcaa1b90f28a92429",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "3d85bc92e80531b13698e6fe394a7681eaec491dd6951410bb9e13656a0fcffa",
       "sliced": false
     },
     "render/riderJointSurface.js": {
@@ -1466,22 +1576,22 @@
     },
     "render/riderLook.js": {
       "source": "src/render/riderLook.ts",
-      "sourceSha256": "a5d06cdd735631c8acdc021cf6651e9843f08957e7c286d4c3d7e7fd823dacb5",
-      "sourceCommit": "5f45fff19b258e140833841ba2473069af751a12",
-      "outputSha256": "e2751be4955514aaa7cb98c2fb9f0e247d79cd407f0dcc65c6200fefc8270b98",
+      "sourceSha256": "ed298f0e9ed4008ab4b2ecde04785c1295bc5a20f3f6cc4fec40d6d55eeab91f",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "572c23efbceb3489cea19303ac98633bfe332fa7482e7a51374b4674b1447c47",
       "sliced": true
     },
     "render/ridingRig.js": {
       "source": "src/render/ridingRig.ts",
-      "sourceSha256": "7968df84e06b8cc51a61a02a27fcff9dc1acea8825c84fc26568200c5b0f67e8",
-      "sourceCommit": "5f45fff19b258e140833841ba2473069af751a12",
+      "sourceSha256": "5f27c0518b749c676c409b87484d9d0356dba0bb75243041912630283c6dbfd1",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
       "donor": {
         "commit": "d37efc07cddc0d76ff7aa585901710d357b8e5a1",
         "source": "src/render/ridingRig.ts",
         "sourceSha256": "7413e04db970dd1c791eb9fa59a06cfb62556c464b9e98502baff4a12912bad0",
         "selection": "near-solid presentation channel; NYC cached selected-geometry visual tyre radius, flight/crash exclusions and constraint-safe release easing; no appearance/resource graph migration"
       },
-      "outputSha256": "710d736c7e9ed65f1635382e2f3a4b7e10eddea6e793c3964e1f1d6889784409",
+      "outputSha256": "26ca27751c85f8e96b0e1aeac4ebbf7210b3f878150e23d86668fb05c62f1f3f",
       "sliced": true
     },
     "render/rigConsolidation.js": {
@@ -1503,6 +1613,13 @@
       "sourceSha256": "2e2f24ceda63410ecee8aafb9c7ebfdafc4d96b6a78887c7d8c3c0a2ac2827bf",
       "sourceCommit": "5f45fff19b258e140833841ba2473069af751a12",
       "outputSha256": "8a031caf2915cc2f202b95db783dca4f78e029bde6f0c61f157646fd5b11819a",
+      "sliced": false
+    },
+    "render/trollinaSculpt.js": {
+      "source": "src/render/trollinaSculpt.ts",
+      "sourceSha256": "a6bda93ec7620d253e781c45abfc42b6fe2ab07a308eb4eaa19c5ef511bf33f1",
+      "sourceCommit": "35ce848ec4c1fa40e3eb63e61eb312c48ba6416b",
+      "outputSha256": "fab3d6ab0344e725c4f7f45b5b15cb504b49f86450289cf611075ceab51d4a06",
       "sliced": false
     },
     "render/wimAtlas.js": {

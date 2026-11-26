@@ -29,7 +29,7 @@ scope from turning this code into an independent game.
    rider and machine appearances, atlas painters, hair/kit helpers and NPC imports. In upstream source, shared
    `riderLook.ts`, `machineLook.ts` and `copRider.ts` can reach the whole roster. Generated NYC modules live in `js/euc/`;
    change the generator and regenerate from the pinned source, rather than editing output by hand. The current local
-   graph has 40 eager / 60 deferred modules; selected-rider workers also import generated `render/pixels/` painters.
+   graph has 42 eager / 65 deferred modules; selected-rider workers also import generated `render/pixels/` painters.
    Trace those CPU-only worker copies and `appearanceImports.js` / `appearancePixelImports.js` as well as render imports.
 3. **Remove embedded marks.** Inspect imports and payloads derived from `mvLogoAsset.ts`, `wimLogoAsset.ts` and
    `gnarwheelLogoAsset.ts`; logos may be embedded bytes rather than standalone images. SMLS is letter-path artwork in
@@ -50,7 +50,9 @@ scope from turning this code into an independent game.
    attribution, including in-game; preserve the derivative database's ODbL availability. Update guides to describe your
 actual game and validate the exact distribution, not just the working source.
 
-The reviewed NYC snapshot is EUC Thrills v1.1.0 `5f45fff19b258e140833841ba2473069af751a12`; future source assets are
+The reviewed art refresh for Red Rider, Trollina, FloWithZo, Adonisb2 and Officer Dorkins is from EUC Thrills v1.6.1
+(`35ce848ec4c1fa40e3eb63e61eb312c48ba6416b`). Six focused collision/park source files come from v1.4.0
+(`d37efc07cddc0d76ff7aa585901710d357b8e5a1`). The base snapshot is EUC Thrills v1.1.0 `5f45fff19b258e140833841ba2473069af751a12`; future source assets are
 not automatically cleared. Do not seek or redistribute private reference photographs, permission records or concept
 packs. Public source/notices identify what was reused; new permission must come from the relevant rights holder.
 

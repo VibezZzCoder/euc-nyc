@@ -15,6 +15,8 @@ with selected-rider audio, a pause menu and controller-operated map cursor. Retu
 from the title or pause menu. The main game's title menu now offers NYC; the owner reports successful round trips
 on phone and computer.
 
+**Rider art:** Red Rider, Trollina, FloWithZo, Adonisb2 and Officer Dorkins use their EUC Thrills 1.6.1 looks.
+
 **Collision + park update (2026-11-01):** improved visual tyre/torso clearance and feature-local riding at Thomas
 Jefferson and Pier 62, checked with the surrounding city active.
 
@@ -179,19 +181,20 @@ for the chase rules, release and skip controls.
 - `js/euc/` is generated. Do not edit it. The base is EUC Thrills v1.1.0
   `5f45fff19b258e140833841ba2473069af751a12`; the focused collision/park donor is
   `d37efc07cddc0d76ff7aa585901710d357b8e5a1` (v1.4.0). Only six reviewed donor source files participate: near-solid
-  helper, riding rig, tuning, controller, primitive-state copies and world contract. See the
+  helper, riding rig, tuning, controller, primitive-state copies and world contract. Five refreshed looks come from
+  v1.6.1 `35ce848ec4c1fa40e3eb63e61eb312c48ba6416b`. See the
   [exact paths and adaptation scope](NOTICE-EUC-THRILLS.md#adaptation-and-other-notices). Use clean local checkouts
   (`npm ci` in the base checkout) to regenerate or check:
 
   ```bash
-  node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest
-  node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest --check
+  node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest --art ../EUC-thrills-1.6.1
+  node tools/vendor-euc.mjs --src ../EUC-thrills --donor ../EUC-thrills-latest --art ../EUC-thrills-1.6.1 --check
   ```
 
-  `js/euc/MANIFEST.json` records both revisions, selected donor declarations and source/output hashes. This is a focused
-  dual-source adaptation, with the reviewed eleven playable IDs, NPC-only `cop`, appearances and audio unchanged from
-  the base inventory. Preserve inventory/privacy checks and per-file rights. The local graph has **101 modules:
-  41 eager / 60 deferred**; selected CPU-only pixel workers retire after preparation. Keep one active rig/audio bank
+  `js/euc/MANIFEST.json` records all three revisions, selected declarations and source/output hashes. This is a focused
+  adaptation, with the eleven playable IDs, NPC-only `cop`, machines and audio unchanged from
+  the base inventory. Preserve inventory/privacy checks and per-file rights. The local graph has **107 modules:
+  42 eager / 65 deferred**; selected CPU-only pixel workers retire after preparation. Keep one active rig/audio bank
   plus at most one replacement, with metadata-only bounded preparation; module caching must not retain eleven rigs,
   atlases or decoded audio banks. Validate the actual public-filtered snapshot separately from local tests.
 - three.js (one pinned dev commit) and the Inter and Overpass fonts are kept in the repo (`vendor/three/`, `fonts/`),

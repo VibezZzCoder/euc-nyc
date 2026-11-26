@@ -109,15 +109,21 @@ test('all eleven real rigs construct/apply/dispose; cache release is pixel-exact
 });
 
 const originalRoot = new URL('../EUC-thrills/src/', root);
+const artRoot = new URL('../EUC-thrills-1.6.1/src/', root);
 test('each generated rider matches actual original geometry, materials and logo/atlas pixels byte-for-byte',
-  { skip: !existsSync(originalRoot) && 'optional read-only pinned source fixture absent' }, async () => {
+  { skip: (!existsSync(originalRoot) || !existsSync(artRoot)) && 'optional read-only pinned source fixtures absent' }, async () => {
     const upstreamLooks = await import(new URL('render/riderLook.ts', originalRoot));
     const upstreamRider = await import(new URL('render/rider.ts', originalRoot));
+    const refreshedLooks = await import(new URL('render/riderLook.ts', artRoot));
+    const refreshedRider = await import(new URL('render/rider.ts', artRoot));
     const upstreamMachines = await import(new URL('render/machineLook.ts', originalRoot));
     for (const row of manifest.roster) {
       releaseAppearanceCaches();
       const { look } = await prepareAppearance(row.id);
-      const actual = createPlaceholderRider(look), expected = upstreamRider.createPlaceholderRider(upstreamLooks.riderLook(row.id));
+      const refreshed = ['red-rider', 'trollina', 'flo-with-zo', 'adonisb2'].includes(row.id);
+      const actual = createPlaceholderRider(look);
+      const expected = refreshed ? refreshedRider.createPlaceholderRider(refreshedLooks.riderLook(row.id))
+        : upstreamRider.createPlaceholderRider(upstreamLooks.riderLook(row.id));
       try { assert.deepEqual(riderSignature(actual), riderSignature(expected), row.id); }
       finally { actual.dispose(); expected.dispose(); releaseAppearanceCaches(); }
       const { machine } = await prepareAppearance(row.id);

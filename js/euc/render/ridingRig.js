@@ -1,4 +1,4 @@
-// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@5f45fff src/render/ridingRig.ts + reviewed d37efc0 declarations (MANIFEST.json) (sliced for euc-newyork: see the tool).
+// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@35ce848 src/render/ridingRig.ts + reviewed d37efc0 declarations (MANIFEST.json) (sliced for euc-newyork: see the tool).
 // MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.
 import * as THREE from '../../../vendor/three/build/three.core.js';
 import { NEAR_SOLID, RIDER, RIDER_BLOCKOUT, WHEEL } from '../data/tuning.js';
@@ -25,7 +25,7 @@ export function createRidingRig(look = riderLook('cool-rider'), machine = STANDA
     leanPivot.name = 'riding-lean-pivot';
     groundPivot.add(leanPivot);
     const euc = createBlockoutEUC(machine);
-    const rider = createPlaceholderRider(look);
+    const rider = createPlaceholderRider(look, euc.body);
     leanPivot.add(euc.group);
     leanPivot.add(rider.root);
     const consolidation = options.consolidate === false
