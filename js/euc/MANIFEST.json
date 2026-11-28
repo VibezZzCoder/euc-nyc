@@ -583,7 +583,8 @@
     "render/wyldistHelmet.js",
     "render/wyldistLook.js",
     "render/wyldistMachineLook.js",
-    "shared/letterPaths.js"
+    "shared/letterPaths.js",
+    "ui/riderPortraits.js"
   ],
   "appearances": {
     "cool-rider": [
@@ -1904,6 +1905,30 @@
       },
       "outputSha256": "531d7b8e138cf39b39d28ee60bce17096e48d9273732956527a9e59b5ea8692b",
       "sliced": true
+    },
+    "ui/riderPortraits.js": {
+      "source": null,
+      "sourceSha256": null,
+      "derivedFrom": [
+        {
+          "source": "src/ui/menus.ts",
+          "sourceSha256": "a5adad37dafbf8fc3b807e4778b6546b00e22e79b47ed3f0c3b1a34b963e0d8f"
+        },
+        {
+          "source": "src/data/mvLogoAsset.ts",
+          "sourceSha256": "8b44a49127e4f5da64cdc75e911cc9409a9c8884edd764f2c7b54018c1e2af31"
+        },
+        {
+          "source": "src/data/wimLogoAsset.ts",
+          "sourceSha256": "c15c2e604e966f5fbf217b988386709524acd2a7c5316351537197e4586768c8"
+        },
+        {
+          "source": "src/data/gnarwheelLogoAsset.ts",
+          "sourceSha256": "baaf2c57d01ee64f2b454ba06d5fc05b7a0e0a3fae2c13fa8e17669b3ef31dac"
+        }
+      ],
+      "outputSha256": "12413f6120a1654220bb37188767c5ee0c18320e442835f3ee3a816650ea48b6",
+      "sliced": false
     }
   },
   "shippedAudio": [

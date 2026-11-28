@@ -71,7 +71,8 @@ Current local controls:
 | Pause / menu | `Escape` or `P` | Back / View (button 8) |
 
 Use **Choose rider** on the title screen or **Change rider** while playing. Browse the roster to read each rider's
-original profile and wheel details, then use the named **Select** button. Browsing only highlights a choice; the
+original profile and wheel details, with their portrait from EUC Thrills' own rider chooser, then use the named
+**Select** button. Browsing only highlights a choice; the
 prepared selection replaces the active one when ready. On a controller, **RS** scrolls the profile details.
 Audio/worker failures offer **Retry** / **Cancel**; appearance-module
 download failure offers **Reload NYC**, keeping the committed rider and checkpoint rather than the pending choice.
@@ -193,8 +194,11 @@ for the chase rules, release and skip controls.
 
   `js/euc/MANIFEST.json` records all three revisions, selected declarations and source/output hashes. This is a focused
   adaptation, with the eleven playable IDs, NPC-only `cop`, machines and audio unchanged from
-  the base inventory. Preserve inventory/privacy checks and per-file rights. The local graph has **107 modules:
-  42 eager / 65 deferred**; selected CPU-only pixel workers retire after preparation. Keep one active rig/audio bank
+  the base inventory. Preserve inventory/privacy checks and per-file rights. The local graph has **108 modules:
+  42 eager / 66 deferred**; selected CPU-only pixel workers retire after preparation. The picker's portraits are the
+  original chooser drawings (`src/ui/menus.ts`, `RIDER_CARDS`, at the base commit), generated unchanged into the
+  deferred `js/euc/ui/riderPortraits.js` and imported only when the picker first opens; three of them carry the
+  Maribel Vargas, Wheel in Motion and Gnarwheel marks under those riders' existing terms. Keep one active rig/audio bank
   plus at most one replacement, with metadata-only bounded preparation; module caching must not retain eleven rigs,
   atlases or decoded audio banks. Validate the actual public-filtered snapshot separately from local tests.
 - three.js (one pinned dev commit) and the Inter and Overpass fonts are kept in the repo (`vendor/three/`, `fonts/`),

@@ -285,4 +285,106 @@ class TouchControls {
   }
 }
 
+/**
+ * Taps by a second finger. While one thumb holds the stick (or any other finger is down), phone browsers send
+ * `pointerdown` and `pointerup` for the other thumb's tap but no `click`, so Menu, Map, the cameras and the other HUD
+ * buttons did nothing while steering, and nor did Resume, the picker or the map's Close once they were open. This
+ * activates such a tap on release, once.
+ *   - Only touch presses on a `<button>` in the riding HUD (`.hud`), its popovers (Teleport, cameras), the game menu
+ *     (Pause and the rider picker) and the full map. Never the booking dialog (its Skip / Back to riding keep their
+ *     own deliberate activation rules) or the touch controls (they own their pointers).
+ *   - Only a press during which another finger was down at some moment. An only finger keeps the browser's click.
+ *   - It must be a tap: released within `hold` ms, never further than `slop` px from where it landed (coalesced moves
+ *     are read point by point), still over the button it landed on, no long-press menu on it. A finger already down
+ *     when a menu or the map opened over it presses nothing there: it landed on another element.
+ *   - A finger that lands on the menu's or map's own surface (not a button) and drags (a pan, pinch or list scroll)
+ *     owns the gesture until it lifts: every press down at that moment or landing meanwhile is void, as the map
+ *     cancels a gesture when a second finger joins. A surface finger at rest does not.
+ *   - Taking one tap disarms every other press still resting on a button, so lifting it later presses nothing, and a
+ *     resting finger cannot take the focus (a picker entry's highlight) back from the tapped button afterwards.
+ *   - If the browser does send a click for a release activated here (no new finger down in between, within `echo` ms
+ *     and `2 × slop` px), that click is dropped so nothing acts twice. A new contact always gets its own click.
+ *   - Focus follows a native tap: the button is focused, clicked, and outside a `<dialog>` blurred again (main.js
+ *     blurs pointer-clicked buttons there), so Space still hops after a HUD tap and the picker keeps its focus.
+ * Retains one small entry per finger on the screen. `reset()` forgets them (blur, resize, page hide).
+ */
+const HELD_TAP_SCOPE = '.hud, .popover, #game-menu, #fullmap-modal';
+const HELD_TAP_SURFACE = '#game-menu, #fullmap-modal';
+const HELD_TAP_EXCLUDED = '#booking-overlay, #touch-controls';
+
+export function bindHeldFingerTaps(doc = document, { slop = 12, echo = 400, hold = 1000, now = () => performance.now() } = {}) {
+  if (!doc?.addEventListener) return { reset() {} };
+  // pointerId -> { button, surface, moved, x, y, at, held, dead }; button null: not on a covered button; surface:
+  // landed on the menu's or map's own content; moved: that surface finger has dragged beyond the slop
+  const fingers = new Map();
+  let activated = null; // { at, x, y } of the last release activated here, until a new contact or the next click
+  const panning = () => { for (const finger of fingers.values()) if (finger.moved) return true; return false; };
+  const elementOf = (target) => (target?.nodeType === 1 ? target : target?.parentElement) ?? null;
+  const buttonOf = (target) => {
+    const button = elementOf(target)?.closest?.('button');
+    return button && !button.disabled && button.closest(HELD_TAP_SCOPE) && !button.closest(HELD_TAP_EXCLUDED) ? button : null;
+  };
+  doc.addEventListener('pointerdown', (event) => {
+    activated = null;
+    if (event.pointerType !== 'touch') return;
+    for (const finger of fingers.values()) finger.held = true;
+    const button = buttonOf(event.target);
+    const surface = !button && !!elementOf(event.target)?.closest?.(HELD_TAP_SURFACE);
+    // A pan or pinch already under way owns the gesture: a press that starts during it is void from the start.
+    fingers.set(event.pointerId, { button, surface, moved: false, x: event.clientX, y: event.clientY, at: now(),
+      held: fingers.size > 0, dead: panning() });
+  }, { capture: true, passive: true });
+  doc.addEventListener('pointermove', (event) => {
+    const finger = fingers.get(event.pointerId);
+    if (!finger || (!finger.button && !finger.surface) || (finger.surface ? finger.moved : finger.dead)) return;
+    for (const point of [event, ...(event.getCoalescedEvents?.() ?? [])]) {
+      if (Math.hypot(point.clientX - finger.x, point.clientY - finger.y) <= slop) continue;
+      if (!finger.surface) { finger.dead = true; break; }
+      finger.moved = true; // until it lifts, no press acts (those down now, and any that land meanwhile)
+      for (const other of fingers.values()) other.dead = true;
+      break;
+    }
+  }, { capture: true, passive: true });
+  // Focus before the latest focus change: Chromium focuses the element under a finger when it raises that finger's
+  // long-press menu, also for a finger merely resting while another finger tapped (and focus is a picker highlight).
+  let focused = null, before = null, tapTaken = false;
+  doc.addEventListener('focusin', (event) => { before = focused; focused = event.target; }, true);
+  // A long-press menu disarms only its own press (Chromium also raises one when the stick finger lifts mid-tap). If a
+  // tap was taken in this gesture and the menu's finger pulled focus to the element under it, focus goes back.
+  doc.addEventListener('contextmenu', (event) => {
+    const button = buttonOf(event.target);
+    for (const [id, finger] of fingers) if (id === event.pointerId || (button && finger.button === button)) finger.dead = true;
+    const pulled = doc.activeElement;
+    if (!tapTaken || !pulled || pulled !== focused || !pulled.contains?.(elementOf(event.target))) return;
+    if (before?.isConnected && !before.disabled && before.getClientRects?.().length) before.focus({ preventScroll: true });
+    else pulled.blur?.();
+  }, true);
+  const end = (event, released) => {
+    if (event.pointerType !== 'touch') return;
+    const finger = fingers.get(event.pointerId);
+    fingers.delete(event.pointerId);
+    if (!fingers.size) tapTaken = false;
+    if (!released || !finger?.button || !finger.held || finger.dead || now() - finger.at > hold
+      || Math.hypot(event.clientX - finger.x, event.clientY - finger.y) > slop
+      || buttonOf(doc.elementFromPoint?.(event.clientX, event.clientY)) !== finger.button) return;
+    for (const other of fingers.values()) other.dead = true;
+    tapTaken = fingers.size > 0;
+    activated = { at: now(), x: event.clientX, y: event.clientY };
+    const button = finger.button;
+    if (doc.activeElement !== button) button.focus?.({ preventScroll: true });
+    button.click();
+    if (!button.closest('dialog') && doc.activeElement === button) { button.blur(); focused = null; }
+  };
+  doc.addEventListener('pointerup', (event) => end(event, true), true);
+  doc.addEventListener('pointercancel', (event) => end(event, false), true);
+  doc.addEventListener('click', (event) => {
+    if (!event.isTrusted || !activated) return;
+    const echoed = now() - activated.at < echo
+      && Math.hypot(event.clientX - activated.x, event.clientY - activated.y) <= slop * 2;
+    activated = null;
+    if (echoed) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }, true);
+  return { reset() { fingers.clear(); activated = null; tapTaken = false; focused = before = null; } };
+}
+
 export { TouchControls };

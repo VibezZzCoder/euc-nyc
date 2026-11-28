@@ -1117,3 +1117,194 @@ for (const [name, Audio, files] of [['EUC', EucAudio, Object.fromEntries(SHARED_
       }));
   }
 }
+
+// ---- the fall's sounds end when the fall ends ------------------------------------------------------------------------
+// A stand-in context that records every automation call, so the shape of each fade can be read back exactly.
+
+function recordingContext(state = 'running') {
+  const param = (value = 0) => {
+    const p = { value, events: [],
+      setTargetAtTime(v, t, tc) { p.events.push(['target', v, t, tc]); },
+      setValueAtTime(v, t) { p.events.push(['set', v, t]); },
+      linearRampToValueAtTime(v, t) { p.events.push(['linear', v, t]); },
+      exponentialRampToValueAtTime(v, t) { p.events.push(['exp', v, t]); },
+      cancelScheduledValues(t) { p.events.push(['cancel', t]); },
+      cancelAndHoldAtTime(t) { p.events.push(['hold', t]); } };
+    return p;
+  };
+  const node = (extra = {}) => ({ connect(n) { return n; }, disconnect() {}, ...extra });
+  const source = (extra) => {
+    const s = node({ startedAt: NaN, stoppedAt: Infinity, onended: null, ...extra,
+      start(t = 0) { s.startedAt = t; }, stop(t = ctx.currentTime) { s.stoppedAt = Math.min(s.stoppedAt, t); } });
+    return s;
+  };
+  const ctx = {
+    state, currentTime: 0, sampleRate: 48000,
+    createGain: () => node({ gain: param(1) }),
+    createBiquadFilter: () => node({ type: '', frequency: param(), detune: param(), Q: param(), gain: param() }),
+    createStereoPanner: () => node({ pan: param() }),
+    createOscillator: () => source({ type: '', frequency: param(), detune: param() }),
+    createConstantSource: () => source({ offset: param() }),
+    createBufferSource: () => source({ playbackRate: param(1), detune: param(), buffer: null, loop: false }),
+    createBuffer: (channels, length, rate) => ({ length, duration: length / rate, sampleRate: rate, getChannelData: () => new Float32Array(length) }),
+    decodeAudioData: () => Promise.reject(new Error('stand-in context cannot decode')),
+  };
+  return ctx;
+}
+
+function fallRig(state = 'running') {
+  const fetch = globalThis.fetch;
+  globalThis.fetch = () => new Promise(() => {}); // the shared loops never arrive: not part of these cases
+  try {
+    const ctx = recordingContext(state);
+    const recording = seconds => ({ duration: seconds, length: Math.round(seconds * 48000), numberOfChannels: 1, sampleRate: 48000 });
+    const banks = { active: { id: 'drunkard' }, stats: {}, dispose() {}, cancel() {},
+      buffer: (id, key) => recording(key === 'stumbleDrunkard' ? 0.4 : 3.4) };
+    const audio = new EucAudio(ctx, ctx.createGain(), { riderBanks: banks, noise: ctx.createBuffer(1, 4800, 48000) });
+    const controller = { crashed: false, isGrounded: true, currentSurface: 'pavement', overspeed: 0, powerLoad: 0, placementSerial: 1 };
+    const entity = { type: 'euc', speed: 0, riderId: 'drunkard', controller };
+    const frame = (events = [], dt = 1 / 60) => { ctx.currentTime += dt; audio.update(entity, events); };
+    const crash = (rider = 'drunkard', speed = 6) => { controller.crashed = true; frame([{ type: 'crash', rider, speed }]); return audio.crashVoice; };
+    frame(); // one ordinary frame first, so the audio has seen the rider
+    return { ctx, audio, controller, entity, frame, crash };
+  } finally { globalThis.fetch = fetch; }
+}
+const levelOf = voice => voice.nodes.find(node => node.isLevel).gain;
+const stoppedBy = (voice, t) => voice.sources.every(s => s.stoppedAt <= t + 1e-9);
+const fadesToZeroBy = (voice, by) => levelOf(voice).events.some(([kind, v, t]) => kind === 'linear' && v === 0 && t <= by + 1e-9);
+
+test('getting up fades the crash recording to zero in a tenth of a second, from its current level, and stops it', () => {
+  const { ctx, audio, controller, frame, crash } = fallRig();
+  const voice = crash();
+  assert.ok(voice, 'a crash recording is playing');
+  for (let i = 0; i < 30; i++) frame(); // half a second down
+  assert.equal(voice.sources[0].stoppedAt, Infinity, 'still playing while down');
+  controller.crashed = false; controller.placementSerial++; // recovery in place also counts as a placement
+  frame([{ type: 'recover' }]);
+  const at = ctx.currentTime, current = CUES.crash.level * crashScale(6);
+  near(CUES.fallFade, 0.1);
+  assert.deepEqual(levelOf(voice).events.slice(-3), [['cancel', at], ['set', current, at], ['linear', 0, at + CUES.fallFade]]);
+  assert.ok(!levelOf(voice).events.some(([kind]) => kind === 'hold'), 'no cancelAndHoldAtTime');
+  assert.ok(stoppedBy(voice, at + CUES.fallFade + 0.005), 'the source stops right after the fade');
+  assert.equal(audio.crashVoice, null);
+  const cues = levelOf(voice).events.length;
+  for (let i = 0; i < 10; i++) frame();
+  assert.equal(levelOf(voice).events.length, cues, 'one fade, not one per frame');
+});
+
+test('a placement while down (map, a menu destination, the booking, its release) fades the recording', () => {
+  const { ctx, audio, controller, frame, crash } = fallRig();
+  const voice = crash();
+  ctx.currentTime += 0.3;
+  controller.placementSerial++; controller.crashed = false; // placeAt resets the controller
+  frame([{ type: 'recover' }]);
+  assert.ok(fadesToZeroBy(voice, ctx.currentTime + CUES.fallFade) && stoppedBy(voice, ctx.currentTime + CUES.fallFade + 0.005));
+  assert.equal(audio.crashVoice, null);
+});
+
+test('a placement while riding fades a stumble clip still sounding; ordinary riding leaves it alone', () => {
+  const { ctx, audio, controller, frame } = fallRig();
+  frame([{ type: 'stumble', rider: 'drunkard' }]);
+  const stumble = audio.stumbleVoice;
+  assert.ok(stumble);
+  for (let i = 0; i < 5; i++) frame();
+  assert.ok(!stumble.fadingUntil, 'riding on lets the stumble finish');
+  controller.placementSerial++;
+  frame();
+  assert.ok(fadesToZeroBy(stumble, ctx.currentTime + CUES.fallFade));
+  assert.equal(audio.stumbleVoice, null);
+});
+
+test('a second request during the fade continues from the level reached, never louder, and only ends sooner', () => {
+  const { ctx, audio, controller, frame, crash } = fallRig();
+  const voice = crash();
+  for (let i = 0; i < 30; i++) frame();
+  controller.crashed = false; frame([{ type: 'recover' }]);
+  const t0 = ctx.currentTime, full = CUES.crash.level * crashScale(6), before = levelOf(voice).events.length;
+  ctx.currentTime += 0.03; controller.placementSerial++; // the map 30 ms later
+  audio.update({ type: 'euc', speed: 0, controller }, []);
+  assert.equal(levelOf(voice).events.length, before, 'already ending: the placement leaves the fade as it is');
+  audio.fadeVoice(voice, CUES.fallFade); // a later end: ignored
+  assert.equal(levelOf(voice).events.length, before);
+  audio.fadeVoice(voice, CUES.fallFadeSuspended); // a sooner end: continues from where it is
+  const reached = full * (1 - 0.03 / CUES.fallFade), after = levelOf(voice).events.slice(before);
+  assert.deepEqual(after, [['cancel', t0 + 0.03], ['set', after[1][1], t0 + 0.03], ['linear', 0, t0 + 0.03 + CUES.fallFadeSuspended]]);
+  near(after[1][1], reached);
+});
+
+test('a fade during the recording\'s attack leaves from the partial level', () => {
+  const { ctx, audio, controller, frame } = fallRig();
+  controller.crashed = true; frame([{ type: 'crash', rider: 'drunkard', speed: 6 }], 0);
+  const voice = audio.crashVoice;
+  ctx.currentTime += 0.004; controller.crashed = false; controller.placementSerial++;
+  audio.update({ type: 'euc', speed: 0, controller }, []); // half way through the 8 ms attack
+  const set = levelOf(voice).events.find(([kind, , t]) => kind === 'set' && t === ctx.currentTime);
+  near(set[1], CUES.crash.level * crashScale(6) * 0.5);
+});
+
+test('the stumble clip and the crash recording end together on getting up', () => {
+  const { ctx, audio, controller, frame } = fallRig();
+  frame([{ type: 'stumble', rider: 'drunkard' }]);
+  const stumble = audio.stumbleVoice;
+  controller.crashed = true; frame([{ type: 'crash', rider: 'drunkard', speed: 4 }]);
+  const crashVoice = audio.crashVoice;
+  controller.crashed = false; frame([{ type: 'recover' }]);
+  for (const voice of [stumble, crashVoice]) assert.ok(fadesToZeroBy(voice, ctx.currentTime + CUES.fallFade));
+  assert.equal(audio.stumbleVoice, null);
+});
+
+test('a new crash still replaces the previous recording, which is ended; the new one plays on', () => {
+  const { audio, controller, frame, crash } = fallRig();
+  const first = crash();
+  controller.crashed = false; frame(); // a brief recovery, then down again
+  const second = crash();
+  assert.notEqual(first, second);
+  assert.ok(first.sources[0].stoppedAt < Infinity, 'the first one was ended');
+  for (let i = 0; i < 10; i++) frame();
+  assert.equal(audio.crashVoice, second);
+  assert.equal(second.sources[0].stoppedAt, Infinity);
+  assert.ok(!second.fadingUntil);
+});
+
+test('getting up or a placement touches no other sound: hops, landings, impacts, beeps and the get-up chirp carry on', () => {
+  const { ctx, audio, controller, frame, crash } = fallRig();
+  frame([{ type: 'hop', charge: 1 }, { type: 'land', impact: 6, surface: 'pavement' }, { type: 'impact', speed: 6 }]);
+  audio.tone(ctx.currentTime, 2565, 0.075, 0.04); // a beep's fallback tone
+  const crashVoice = crash();
+  const others = [...audio.voices].filter(voice => voice !== crashVoice);
+  assert.ok(others.length >= 5);
+  const shape = voice => voice.nodes.map(node => node.gain?.events.length ?? 0).join() + voice.sources.map(s => s.stoppedAt).join();
+  const before = others.map(shape);
+  controller.crashed = false; controller.placementSerial++;
+  frame([{ type: 'recover' }]);
+  assert.deepEqual(others.map(shape), before, 'no other voice was rescheduled or stopped');
+  assert.ok(others.every(voice => !voice.fadingUntil));
+  const chirp = [...audio.voices].filter(voice => voice !== crashVoice && !others.includes(voice));
+  assert.ok(chirp.length >= 1 && chirp.every(voice => !voice.fadingUntil), 'the get-up chirp plays');
+  assert.ok(fadesToZeroBy(crashVoice, ctx.currentTime + CUES.fallFade));
+});
+
+test('on a suspended context the fall ends in a few milliseconds, so nothing is left to sound on resume', () => {
+  const { ctx, audio, controller, frame, crash } = fallRig();
+  const voice = crash();
+  ctx.currentTime += 0.5;
+  ctx.state = 'suspended';
+  audio.endFall();
+  near(CUES.fallFadeSuspended, 0.004);
+  assert.ok(fadesToZeroBy(voice, ctx.currentTime + CUES.fallFadeSuspended) && stoppedBy(voice, ctx.currentTime + 0.01));
+  ctx.state = 'running';
+  controller.crashed = false; frame(); // nothing left: harmless
+  audio.dispose(); audio.endFall();
+});
+
+test('a fall that is not over keeps its recording through ordinary frames; nothing playing is harmless', () => {
+  const { audio, controller, frame, crash } = fallRig();
+  const voice = crash();
+  for (let i = 0; i < 90; i++) frame();
+  assert.equal(audio.crashVoice, voice);
+  assert.ok(!voice.fadingUntil);
+  audio.reset();
+  assert.equal(audio.crashVoice, null);
+  controller.crashed = false; controller.placementSerial++; frame(); // after a reset: nothing to fade
+  audio.update(null, []); audio.update({ type: 'euc', speed: 0, controller: { ...controller, placementSerial: 9 } }, []);
+});

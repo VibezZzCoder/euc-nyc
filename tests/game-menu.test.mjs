@@ -168,7 +168,7 @@ test('owner precedence preserves booking and clean-root same-tab destination', (
   assert.equal(MAIN_MENU_URL, 'https://vibezzzcoder.github.io/EUC-thrills/');
 });
 
-function menuFixture(t) {
+function menuFixture(t, options = {}) {
   const previous = Object.fromEntries(['window', 'document', 'navigator'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const events = target => {
     const listeners = new Map();
@@ -188,6 +188,7 @@ function menuFixture(t) {
     addEventListener(type, fn) { (this.events[type] ??= []).push(fn); }
     removeEventListener() {}
     append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
+    replaceChildren(...children) { this.children = []; this.append(...children); }
     setAttribute(key, value) { (this.attributes ??= {})[key] = value; }
     contains(node) { return node === this || this.children.some(child => child.contains(node)); }
     querySelectorAll(selector) {
@@ -221,7 +222,10 @@ function menuFixture(t) {
       'rider-count', 'rider-detail-name', 'rider-detail-state', 'rider-detail-blurb', 'rider-wheel-name', 'rider-wheel-blurb', 'rider-style-note'] })) {
     const section = new Node(); section.dataset.menuView = view; root.append(section);
     for (const id of ids) section.append(new Node(/(heading|options|status|current|detail|wheel|style|count)/.test(id) ? 'DIV' : 'BUTTON', id));
-    if (view === 'picker') { const detail = new Node(); detail.className = 'rider-detail'; detail.scrollTop = 0; section.append(detail); }
+    if (view === 'picker') {
+      const detail = new Node(); detail.className = 'rider-detail'; detail.scrollTop = 0; section.append(detail);
+      const slot = new Node('DIV', 'rider-detail-portrait'); slot.hidden = true; detail.append(slot);
+    }
   }
   Object.assign(doc, { body, createElement: tag => new Node(tag.toUpperCase()), getElementById: id => body.querySelector(`#${id}`) });
   Object.defineProperties(globalThis, { window: { configurable: true, value: win },
@@ -234,7 +238,7 @@ function menuFixture(t) {
   const preparations = [], work = deferred();
   const menu = new GameMenu({ root, riders, specs: Object.fromEntries(riders.map(id => [id, { ...RIDERS[id], name: id }])),
     getRider: () => active, canOpen: () => allowed, onChange() {}, onCancel() {}, onLeave() { leaves++; },
-    onConfirm(id) { preparations.push(id); return work.promise.then(() => { active = id; }); } });
+    onConfirm(id) { preparations.push(id); return work.promise.then(() => { active = id; }); }, ...options });
   const find = id => root.querySelector(`#${id}`);
   const key = (code, type = 'keydown', repeat = false) => {
     const event = { code, type, repeat, preventDefault() { this.prevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
@@ -609,4 +613,43 @@ test('first registered graphics cleanup releases modal ownership synchronously a
   assert.equal(calls.at(-3), 'effects-dispose');
   assert.equal(calls.at(-2), 'geometry-dispose');
   assert.equal(calls.at(-1), 'renderer-dispose');
+});
+
+test('portraits are requested on the first opening of the picker only, shown in every entry and one in the profile', async t => {
+  let requests = 0; const built = [], released = [];
+  const art = { ready: async () => true, repaint() { art.repaints = (art.repaints ?? 0) + 1; },
+    build: id => { const node = document.createElement('span'); node.className = 'rider-portrait'; node.rider = id; built.push(id); return node; },
+    release: node => { if (node) released.push(node.rider); } };
+  const f = menuFixture(t, { portraits: () => { requests++; return Promise.resolve(art); } });
+  f.menu.openPause(); f.menu.close();
+  assert.equal(requests, 0, 'the pause view and closing never load portraits');
+  f.menu.openPicker(); await tick(); await tick();
+  assert.equal(requests, 1);
+  const options = f.root.querySelectorAll('button').filter(button => button.dataset.riderOption);
+  for (const button of options) {
+    assert.equal(button.dataset.portrait, 'true');
+    assert.equal(button.querySelector('.rider-face').children.at(-1).rider, button.dataset.riderOption);
+  }
+  const slot = f.find('rider-detail-portrait');
+  assert.equal(slot.hidden, false); assert.equal(slot.children.length, 1); assert.equal(slot.children[0].rider, 'cool-rider');
+  f.menu.browse(1);
+  assert.equal(slot.children.length, 1); assert.equal(slot.children[0].rider, 'trollina');
+  assert.deepEqual(released, ['cool-rider'], 'the previous profile portrait is released');
+  assert.deepEqual(f.preparations, [], 'highlighting prepares nothing');
+  f.menu.cancel(); f.menu.openPicker(); await tick();
+  assert.equal(requests, 1, 'loaded once'); assert.ok(art.repaints >= 1, 'reopening repaints the marks');
+  assert.equal(built.length, 3 + 3, 'one per entry, plus one per profile shown (cool-rider, trollina, cool-rider again on reopening)');
+});
+
+test('a failed portrait import keeps the swatch picker working, without retrying or blocking a choice', async t => {
+  let requests = 0;
+  const f = menuFixture(t, { portraits: () => { requests++; return Promise.reject(new Error('offline')); } });
+  f.menu.openPicker(); await tick(); await tick();
+  f.menu.cancel(); f.menu.openPicker(); await tick();
+  assert.equal(requests, 1);
+  const options = f.root.querySelectorAll('button').filter(button => button.dataset.riderOption);
+  assert.ok(options.every(button => !button.dataset.portrait && button.querySelector('.rider-face').children.length === 1));
+  assert.equal(f.find('rider-detail-portrait').hidden, true);
+  f.menu.browse(1); f.find('rider-confirm').click();
+  assert.deepEqual(f.preparations, ['trollina']);
 });

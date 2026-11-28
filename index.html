@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" prefix="og: https://ogp.me/ns#">
 <head>
   <meta charset="UTF-8" />
   <!-- Everything loads from this host only. The two hashes are the inline scripts below (the scroll guard and the
@@ -37,8 +37,24 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="EUC NYC" />
   <!-- Build id: "dev" in source; the public exporter stamps the release date (shown in the pause menu). -->
-  <meta name="euc-build" content="2026-11-26 0400Z" />
+  <meta name="euc-build" content="2026-11-28 0304Z" />
   <meta name="description" content="NYC Spin-off: EUC Thrills. Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds. A free side project of EUC Thrills, built on Mr.doob's open-source three.js WebGPU city." />
+  <!-- Link preview (metadata only): the picture is screenshots/social.jpg on the hosted site. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="EUC Thrills" />
+  <meta property="og:title" content="NYC Spin-off: EUC Thrills" />
+  <meta property="og:description" content="Ride an electric unicycle through a living 3D Manhattan: hop the kerbs, carve through traffic, mind the crowds. Free, in your browser." />
+  <meta property="og:url" content="https://vibezzzcoder.github.io/euc-nyc/" />
+  <meta property="og:image" content="https://vibezzzcoder.github.io/euc-nyc/screenshots/social.jpg" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Officer Dorkins on his hover wheel beside an electric-unicycle rider near Times Square at Blue Hour, with lit billboards, a yellow taxi and traffic." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="NYC Spin-off: EUC Thrills" />
+  <meta name="twitter:description" content="Ride an electric unicycle through a living 3D Manhattan. Free, in your browser." />
+  <meta name="twitter:image" content="https://vibezzzcoder.github.io/euc-nyc/screenshots/social.jpg" />
+  <meta name="twitter:image:alt" content="Officer Dorkins on his hover wheel beside an electric-unicycle rider near Times Square at Blue Hour, with lit billboards, a yellow taxi and traffic." />
   <!-- three.js, pinned to one dev-branch commit (mrdoob/three.js@e27dfa9, 2026-10-23) and served from this repo
        (vendor/three/, the upstream files unchanged), so nothing loads from another host. To move it: change the commit
        in tools/vendor-three.mjs, run it, run the tests and the browser QA. -->
@@ -412,6 +428,7 @@
       <div class="rider-picker-body">
         <div id="rider-options" class="rider-options" role="group" aria-label="Playable riders"></div>
         <section class="rider-detail" aria-label="Highlighted rider profile">
+          <div id="rider-detail-portrait" class="rider-detail-portrait" aria-hidden="true" hidden></div>
           <p class="rider-detail-kicker">Rider profile <span id="rider-detail-state"></span></p>
           <h3 id="rider-detail-name"></h3>
           <p id="rider-detail-blurb"></p>

@@ -27,7 +27,7 @@ test('only six explicitly reviewed donor files participate; the five refreshed l
       assert.ok(manifest.sources.donor.files.some(f => f.source === record.donor.source && f.sourceSha256 === record.donor.sourceSha256));
     }
   }
-  assert.equal(Object.keys(manifest.files).length, 107); assert.equal(manifest.eager.length, 42); assert.equal(manifest.deferred.length, 65);
+  assert.equal(Object.keys(manifest.files).length, 108); assert.equal(manifest.eager.length, 42); assert.equal(manifest.deferred.length, 66);
   assert.ok(manifest.eager.includes('app/nearSolids.js'));
   assert.equal(manifest.roster.length, 11); assert.equal(manifest.audio.length, 18); assert.equal(manifest.shippedAudio.length, 17);
   assert.ok(manifest.workers.modules.every(file => !file.includes('nearSolids') && !file.includes('ridingRig')));

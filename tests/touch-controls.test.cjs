@@ -435,3 +435,223 @@ test('interruptions clear assistive toggles and held keyboard buttons without re
     assert.equal(h.input.up, 1, 'a genuinely fresh press works immediately');
   }
 });
+
+// Second-thumb taps on HUD buttons (bindHeldFingerTaps): phone browsers send no click for them.
+function heldTapHarness() {
+  const { mod } = harness();
+  const on = {};
+  let clock = 0;
+  const doc = { activeElement: null, under: null, addEventListener: (type, listener) => { on[type] = listener; },
+    elementFromPoint() { return this.under; } };
+  // where: 'hud' (riding HUD), 'popover' (Teleport / camera lists), 'menu' (the game menu <dialog>), 'map' (the full
+  // map section), 'booking' (the booking <dialog>), 'touch' (touch controls), 'none' (anywhere else)
+  const inside = { hud: ['.hud'], popover: ['.popover'], menu: ['#game-menu', 'dialog'], map: ['#fullmap-modal'],
+    booking: ['#booking-overlay', 'dialog'], touch: ['#touch-controls'], none: [] };
+  const matches = (where, selector) => selector.split(',').some((part) => inside[where].includes(part.trim()));
+  const button = (where = 'hud', name = 'button') => {
+    const b = { nodeType: 1, name, disabled: false, clicks: 0, popoverOpen: false, target: null, focusedAtClick: null,
+      click() { this.clicks++; this.focusedAtClick = doc.activeElement === this; if (this.target) this.popoverOpen = !this.popoverOpen; },
+      isConnected: true, getClientRects: () => [{}], contains: (node) => node === b,
+      focus() { doc.activeElement = this; on.focusin?.({ target: this }); },
+      blur() { if (doc.activeElement === this) doc.activeElement = null; },
+      closest(selector) { return selector === 'button' ? b : matches(where, selector) ? {} : null; } };
+    return b;
+  };
+  const surface = (where) => ({ nodeType: 1, closest: (selector) => (selector === 'button' ? null : matches(where, selector) ? {} : null) });
+  const ev = (pointerId, target, clientX, clientY, pointerType = 'touch') => ({ pointerId, target, clientX, clientY, pointerType });
+  const canvas = { nodeType: 1, closest: () => null };
+  const taps = mod.bindHeldFingerTaps(doc, { now: () => clock });
+  let stopped = 0;
+  const click = (clientX, clientY, isTrusted = true) => ({ isTrusted, clientX, clientY,
+    preventDefault() { stopped++; }, stopImmediatePropagation() {} });
+  return { on, doc, button, surface, ev, canvas, taps, click, stops: () => stopped, at: (t) => { clock = t; }, time: () => clock };
+}
+
+test('a second finger\'s tap on a HUD button acts on release, once; an only finger is left to the browser', () => {
+  const { on, doc, button, ev, canvas, taps, click, stops, at } = heldTapHarness();
+  const menu = button('hud', 'menu');
+  doc.under = menu;
+  // an only finger: nothing synthesized (the browser's own click acts)
+  on.pointerdown(ev(1, menu, 350, 30)); on.pointerup(ev(1, menu, 351, 31));
+  assert.equal(menu.clicks, 0);
+  // a thumb on the stick, then the other thumb taps Menu
+  on.pointerdown(ev(2, canvas, 100, 600)); on.pointerdown(ev(3, menu, 350, 30)); on.pointerup(ev(3, menu, 352, 31));
+  assert.equal(menu.clicks, 1);
+  assert.equal(doc.activeElement, null, 'the tapped button does not keep the focus (Space hops)');
+  // the browser's own click for that release, if it comes, is dropped once; a later click is not
+  at(30); on.click(click(352, 31)); assert.equal(stops(), 1);
+  on.click(click(352, 31)); assert.equal(stops(), 1);
+  // the stick thumb lifts first, then the button finger: still a held-finger tap
+  on.pointerdown(ev(4, menu, 350, 30)); on.pointerup(ev(2, canvas, 100, 600)); on.pointerup(ev(4, menu, 350, 30));
+  assert.equal(menu.clicks, 2);
+  // the button finger went down first and the stick thumb joined during the press
+  on.pointerdown(ev(5, menu, 350, 30)); on.pointerdown(ev(6, canvas, 90, 610)); on.pointerup(ev(5, menu, 350, 30));
+  assert.equal(menu.clicks, 3);
+  at(900); on.click(click(350, 30)); assert.equal(stops(), 1, 'a click long after is a new, intended one');
+  on.pointerup(ev(6, canvas, 90, 610));
+  // a mouse or a pen with a finger down: left to the browser
+  on.pointerdown(ev(7, canvas, 100, 600));
+  on.pointerdown(ev(8, menu, 350, 30, 'mouse')); on.pointerup(ev(8, menu, 350, 30, 'mouse'));
+  on.pointerdown(ev(9, menu, 350, 30, 'pen')); on.pointerup(ev(9, menu, 350, 30, 'pen'));
+  assert.equal(menu.clicks, 3);
+  // cancelled, dragged off its button, released over another place: nothing
+  on.pointerdown(ev(10, menu, 350, 30)); on.pointercancel(ev(10, menu, 350, 30));
+  on.pointerdown(ev(11, menu, 350, 30)); on.pointerup(ev(11, menu, 390, 30));
+  on.pointerdown(ev(12, menu, 350, 30)); doc.under = canvas; on.pointerup(ev(12, menu, 351, 30)); doc.under = menu;
+  assert.equal(menu.clicks, 3);
+  on.pointerup(ev(7, canvas, 100, 600));
+  // after a reset (blur, rotation, page hide) a lone tap is single again
+  on.pointerdown(ev(13, canvas, 100, 600)); taps.reset();
+  on.pointerdown(ev(14, menu, 350, 30)); on.pointerup(ev(14, menu, 350, 30));
+  assert.equal(menu.clicks, 3);
+});
+
+test('held-finger taps: a quick new tap acts, a resting finger, a long press and a drag away and back do not', () => {
+  const { on, doc, button, ev, canvas, taps, click, stops, at, time } = heldTapHarness();
+  const map = button('hud', 'map'), sound = button('hud', 'sound');
+  at(1000); doc.under = map;
+  on.pointerdown(ev(20, canvas, 100, 600)); on.pointerdown(ev(21, map, 350, 30)); on.pointerup(ev(21, map, 350, 30));
+  assert.equal(map.clicks, 1);
+  // two quick taps on one button while steering act twice
+  at(1150); on.pointerdown(ev(22, map, 351, 31)); on.pointerup(ev(22, map, 351, 31));
+  assert.equal(map.clicks, 2, 'a second held tap straight after is its own tap');
+  // a new lone contact straight after an activated tap keeps its own browser click
+  on.pointerup(ev(20, canvas, 100, 600)); at(1246);
+  on.pointerdown(ev(23, map, 352, 31)); on.pointerup(ev(23, map, 352, 31)); on.click(click(352, 31));
+  assert.equal(stops(), 0, 'not an echo: a new finger went down');
+  // a finger resting on Sound while Map is tapped does not press Sound when it lifts
+  taps.reset(); at(3000);
+  on.pointerdown(ev(30, sound, 200, 100)); on.pointerdown(ev(31, map, 350, 30)); doc.under = map; on.pointerup(ev(31, map, 350, 30));
+  doc.under = sound; on.pointerup(ev(30, sound, 200, 100));
+  assert.equal(map.clicks, 3); assert.equal(sound.clicks, 0, 'the resting finger presses nothing');
+  // a long-press menu, a long hold
+  taps.reset(); on.pointerdown(ev(32, canvas, 100, 600));
+  on.pointerdown(ev(33, sound, 200, 100)); on.contextmenu({ pointerId: 33, target: sound }); on.pointerup(ev(33, sound, 200, 100));
+  // the stick finger's own context menu (raised when it lifts mid-tap) does not disarm the button press
+  on.pointerdown(ev(38, sound, 200, 100)); on.contextmenu({ pointerId: 32, target: canvas }); on.pointerup(ev(32, canvas, 100, 600));
+  on.pointerup(ev(38, sound, 200, 100));
+  assert.equal(sound.clicks, 1, 'the stick lifting first still lets the tap act');
+  on.pointerdown(ev(39, canvas, 100, 600));
+  on.pointerdown(ev(34, sound, 200, 100)); at(time() + 1500); on.pointerup(ev(34, sound, 200, 100));
+  assert.equal(sound.clicks, 1, 'a long press is not a tap');
+  // a press dragged away and back (coalesced points included) is not a tap; a small wobble is
+  on.pointerdown(ev(35, sound, 200, 100)); on.pointermove(ev(35, sound, 100, 134)); on.pointermove(ev(35, sound, 200, 100));
+  on.pointerup(ev(35, sound, 200, 100));
+  on.pointerdown(ev(36, sound, 200, 100));
+  on.pointermove({ ...ev(36, sound, 201, 100), getCoalescedEvents: () => [ev(36, sound, 240, 100), ev(36, sound, 201, 100)] });
+  on.pointerup(ev(36, sound, 201, 100));
+  assert.equal(sound.clicks, 1, 'merged moves still show the finger left');
+  on.pointerdown(ev(37, sound, 200, 100)); on.pointermove(ev(37, sound, 203, 102)); on.pointerup(ev(37, sound, 203, 102));
+  assert.equal(sound.clicks, 2, 'a small wobble still is a tap');
+});
+
+test('held-finger taps: popovers, the game menu and the map act; booking, touch controls and the rest do not', () => {
+  const { on, doc, button, ev, canvas } = heldTapHarness();
+  const teleport = button('hud', 'teleport'); teleport.target = 'teleport-popover';
+  on.pointerdown(ev(1, canvas, 100, 600));
+  doc.under = teleport; on.pointerdown(ev(2, teleport, 300, 40)); on.pointerup(ev(2, teleport, 300, 40));
+  assert.equal(teleport.clicks, 1); assert.equal(teleport.popoverOpen, true, 'click() runs the popover activation');
+  assert.equal(doc.activeElement, null, 'a HUD button ends unfocused, as after a native tap (main blurs it)');
+  let id = 3;
+  for (const where of ['popover', 'menu', 'map']) {
+    const b = button(where, where); doc.under = b; on.pointerdown(ev(id, b, 200, 200)); on.pointerup(ev(id++, b, 200, 200));
+    assert.equal(b.clicks, 1, `${where} button acts`);
+    assert.equal(b.focusedAtClick, true, `${where} button is focused before its click, as a native tap does`);
+    assert.equal(doc.activeElement === b, where === 'menu', `${where}: focus afterwards matches a native tap`);
+  }
+  for (const where of ['booking', 'touch', 'none']) {
+    const b = button(where, where); doc.under = b; on.pointerdown(ev(id, b, 200, 200)); on.pointerup(ev(id++, b, 200, 200));
+    assert.equal(b.clicks, 0, `${where} keeps its own handling`);
+  }
+  const off = button('menu', 'off'); off.disabled = true; doc.under = off;
+  on.pointerdown(ev(id, off, 10, 10)); on.pointerup(ev(id++, off, 10, 10));
+  assert.equal(off.clicks, 0, 'a disabled button (a preparing picker) is not pressed');
+});
+
+test('held-finger taps: a menu opened under a held finger, Resume, and the next tap on the HUD', () => {
+  const { on, doc, button, surface, ev, canvas, click, stops, at } = heldTapHarness();
+  const menu = button('hud', 'menu'), resume = button('menu', 'resume'), entry = button('menu', 'rider entry');
+  const sound = button('hud', 'sound'), close = button('map', 'close');
+  // stick held, second thumb taps Menu, then Resume with the stick still down
+  on.pointerdown(ev(1, canvas, 100, 600));
+  doc.under = menu; on.pointerdown(ev(2, menu, 244, 765)); on.pointerup(ev(2, menu, 244, 765));
+  at(150); doc.under = resume; on.pointerdown(ev(3, resume, 195, 540)); on.pointerup(ev(3, resume, 195, 540));
+  assert.equal(menu.clicks, 1); assert.equal(resume.clicks, 1, 'Resume acts while the stick thumb stays down');
+  // the stick thumb lifts over whatever is there now: it landed on the canvas, so it presses nothing
+  doc.under = sound; on.pointerup(ev(1, canvas, 100, 600)); assert.equal(sound.clicks, 0);
+  // the next genuine lone tap on the HUD keeps its own click (not swallowed as an echo)
+  at(260); on.pointerdown(ev(4, sound, 300, 40)); on.pointerup(ev(4, sound, 300, 40)); on.click(click(300, 40));
+  assert.equal(stops(), 0); assert.equal(sound.clicks, 0, 'a lone tap is the browser\'s own click');
+  // a finger already on a HUD button when the menu opened over it presses no menu button when it lifts
+  on.pointerdown(ev(5, canvas, 100, 600)); doc.under = sound; on.pointerdown(ev(6, sound, 195, 540));
+  doc.under = resume; on.pointerup(ev(6, sound, 195, 540));
+  assert.equal(resume.clicks, 1); assert.equal(sound.clicks, 0);
+  // picker entry and the map Close with the stick down
+  doc.under = entry; on.pointerdown(ev(7, entry, 100, 300)); on.pointerup(ev(7, entry, 100, 300));
+  doc.under = close; on.pointerdown(ev(8, close, 360, 30)); on.pointerup(ev(8, close, 360, 30));
+  assert.equal(entry.clicks, 1); assert.equal(close.clicks, 1);
+  // a drag on the map's own surface (pan, pinch) disarms a finger resting on a map button
+  const zoom = button('map', 'zoom'), chart = surface('map');
+  on.pointerdown(ev(9, zoom, 360, 400)); on.pointerdown(ev(10, chart, 200, 400)); on.pointermove(ev(10, chart, 240, 420));
+  doc.under = zoom; on.pointerup(ev(9, zoom, 360, 400)); assert.equal(zoom.clicks, 0, 'a map gesture cancels the tap');
+  // while the stick thumb (outside the map) wiggles, a map button still acts
+  on.pointerup(ev(10, chart, 240, 420)); on.pointermove(ev(5, canvas, 130, 640));
+  on.pointerdown(ev(11, zoom, 360, 400)); on.pointerup(ev(11, zoom, 360, 400)); assert.equal(zoom.clicks, 1);
+});
+
+test('held-finger taps: a pan or pinch on the map owns the gesture until it lifts; a resting or stick finger does not', () => {
+  const { on, doc, button, surface, ev, canvas } = heldTapHarness();
+  const result = button('map', 'result'), zoom = button('map', 'zoom'), chart = surface('map');
+  // the critic's sequence: the pan starts, a finger lands on the result, the pan goes on, the result finger lifts first
+  on.pointerdown(ev(1, chart, 200, 400)); on.pointermove(ev(1, chart, 225, 400));
+  doc.under = result; on.pointerdown(ev(2, result, 200, 100)); on.pointermove(ev(1, chart, 250, 400));
+  on.pointerup(ev(2, result, 200, 100)); on.pointerup(ev(1, chart, 250, 400));
+  assert.equal(result.clicks, 0, 'a press landing during a pan never acts');
+  // the same with Zoom in
+  on.pointerdown(ev(3, chart, 200, 400)); on.pointermove(ev(3, chart, 225, 400));
+  doc.under = zoom; on.pointerdown(ev(4, zoom, 360, 400)); on.pointerup(ev(4, zoom, 360, 400)); on.pointerup(ev(3, chart, 225, 400));
+  assert.equal(zoom.clicks, 0);
+  // result first, then the pan starts; and the pan lifting first, then the result finger
+  on.pointerdown(ev(5, result, 200, 100)); on.pointerdown(ev(6, chart, 200, 400)); on.pointermove(ev(6, chart, 240, 400));
+  on.pointerup(ev(6, chart, 240, 400)); doc.under = result; on.pointerup(ev(5, result, 200, 100));
+  assert.equal(result.clicks, 0, 'a press that overlapped a moving surface finger is void');
+  // a voided surface finger (another tap taken first) that pans afterwards still owns the gesture
+  on.pointerdown(ev(7, chart, 200, 400)); on.pointerdown(ev(8, zoom, 360, 400)); doc.under = zoom; on.pointerup(ev(8, zoom, 360, 400));
+  assert.equal(zoom.clicks, 1); on.pointermove(ev(7, chart, 240, 400));
+  doc.under = result; on.pointerdown(ev(9, result, 200, 100)); on.pointerup(ev(9, result, 200, 100)); on.pointerup(ev(7, chart, 240, 400));
+  assert.equal(result.clicks, 0);
+  // a finger resting on the chart (not moved) is just another finger: the result acts
+  on.pointerdown(ev(10, chart, 200, 400)); doc.under = result; on.pointerdown(ev(11, result, 200, 100)); on.pointerup(ev(11, result, 200, 100));
+  on.pointerup(ev(10, chart, 200, 400)); assert.equal(result.clicks, 1);
+  // the stick thumb (touch controls, outside the surface) moves by design: HUD and menu taps still act
+  const menu = button('hud', 'menu'), resume = button('menu', 'resume');
+  on.pointerdown(ev(12, canvas, 100, 600)); on.pointermove(ev(12, canvas, 100, 560));
+  doc.under = menu; on.pointerdown(ev(13, menu, 244, 765)); on.pointermove(ev(12, canvas, 130, 540)); on.pointerup(ev(13, menu, 244, 765));
+  doc.under = resume; on.pointerdown(ev(14, resume, 195, 540)); on.pointerup(ev(14, resume, 195, 540));
+  assert.equal(menu.clicks, 1); assert.equal(resume.clicks, 1);
+});
+
+test('held-finger taps: a resting finger cannot take the focus (the picker highlight) back from the tapped button', () => {
+  const { on, doc, button, ev } = heldTapHarness();
+  const cool = button('menu', 'cool-rider'), red = button('menu', 'red-rider');
+  // Chromium, when the tapping finger lifts, focuses the resting finger's element and raises its long-press menu
+  const chromiumLongPress = (b, id) => { b.focus(); on.contextmenu({ pointerId: id, target: b }); };
+  on.pointerdown(ev(1, cool, 100, 300)); doc.under = red; on.pointerdown(ev(2, red, 100, 400)); on.pointerup(ev(2, red, 100, 400));
+  assert.equal(red.clicks, 1); assert.equal(doc.activeElement, red);
+  chromiumLongPress(cool, 1); assert.equal(doc.activeElement, red, 'focus goes back to the tapped entry');
+  doc.under = cool; on.pointerup(ev(1, cool, 100, 300)); assert.equal(cool.clicks, 0); assert.equal(doc.activeElement, red);
+  // a lone long press keeps today's behaviour: the pressed entry takes focus (and the highlight)
+  on.pointerdown(ev(3, cool, 100, 300)); chromiumLongPress(cool, 3); on.pointerup(ev(3, cool, 100, 300));
+  assert.equal(doc.activeElement, cool);
+  // a HUD tap ends unfocused; a resting finger's long-press focus on another HUD button is dropped too
+  const sound = button('hud', 'sound'), cam = button('hud', 'cam');
+  on.pointerdown(ev(4, sound, 200, 100)); doc.under = cam; on.pointerdown(ev(5, cam, 300, 40)); on.pointerup(ev(5, cam, 300, 40));
+  assert.equal(doc.activeElement, null); chromiumLongPress(sound, 4); assert.equal(doc.activeElement, null);
+  on.pointerup(ev(4, sound, 200, 100)); assert.equal(sound.clicks, 0);
+});
+
+test('main binds the held-finger taps once and resets them on blur, resize and page hide', () => {
+  const main = readFileSync(join(__dirname, '../js/main.js'), 'utf8');
+  assert.equal(main.split('bindHeldFingerTaps(document)').length, 2);
+  assert.match(main, /for \(const type of \['blur', 'resize', 'pagehide'\]\) window\.addEventListener\(type, \(\) => heldTaps\.reset\(\)\);/);
+});

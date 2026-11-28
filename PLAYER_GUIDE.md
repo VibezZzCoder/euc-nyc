@@ -62,7 +62,8 @@ in-session without restarting the ride; the first use of an effect preset may br
 ## Starting
 
 After loading, the title screen shows the city with your current rider in it. Open **Choose rider** to browse the
-roster, rider profiles and original wheel descriptions. Your current rider is marked **Riding**; **Browsing** shows
+roster, rider profiles and original wheel descriptions. Each rider has their portrait from EUC Thrills' own rider
+chooser, in the list and larger beside the profile. Your current rider is marked **Riding**; **Browsing** shows
 whose details you are reading. Use the named **Select** button to change, or **Cancel** to keep your current rider.
 Browsing neither constructs another rig nor plays crash samples. Wait for preparation to finish before choosing **Ride** (or Enter / gamepad A
 on the Ride action). Audio/worker preparation failures offer **Retry** or **Cancel**. An appearance-module download

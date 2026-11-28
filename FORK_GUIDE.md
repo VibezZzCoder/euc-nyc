@@ -29,7 +29,10 @@ scope from turning this code into an independent game.
    rider and machine appearances, atlas painters, hair/kit helpers and NPC imports. In upstream source, shared
    `riderLook.ts`, `machineLook.ts` and `copRider.ts` can reach the whole roster. Generated NYC modules live in `js/euc/`;
    change the generator and regenerate from the pinned source, rather than editing output by hand. The current local
-   graph has 42 eager / 65 deferred modules; selected-rider workers also import generated `render/pixels/` painters.
+   graph has 42 eager / 66 deferred modules; selected-rider workers also import generated `render/pixels/` painters.
+   The picker's portraits are generated into `js/euc/ui/riderPortraits.js` from the original chooser
+   (`src/ui/menus.ts`) and loaded when the picker first opens (`js/rider-portraits.js`); they depict the real riders,
+   and three load the supplied marks from the logo modules. Replace or remove them with the identities.
    Trace those CPU-only worker copies and `appearanceImports.js` / `appearancePixelImports.js` as well as render imports.
 3. **Remove embedded marks.** Inspect imports and payloads derived from `mvLogoAsset.ts`, `wimLogoAsset.ts` and
    `gnarwheelLogoAsset.ts`; logos may be embedded bytes rather than standalone images. SMLS is letter-path artwork in

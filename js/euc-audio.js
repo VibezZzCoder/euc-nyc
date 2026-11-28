@@ -131,6 +131,11 @@ export const CUES = Object.freeze({
   stumble: { level: 0.48 * AUDIO.stumbleLevel / (AUDIO.crashLevel * AUDIO.crashSampleTrim) },
   recover: { level: 0.02, lowHz: 660, highHz: 990, seconds: 0.2, gap: 0.11 },
   maxVoices: 16,
+  // The crash recording and the Drunkard's stumble clip belong to the fall: once the rider is up again or has been put
+  // somewhere else they fade out this fast, without a click. A suspended context does not advance its clock, so there
+  // the fade is short enough that nothing is left to sound when it resumes.
+  fallFade: 0.1,
+  fallFadeSuspended: 0.004,
   send: 0.35, // into the city's street reflections
 });
 
@@ -531,6 +536,9 @@ export class EucAudio {
     this.lastSpeed = 0;
     this.lastTime = NaN;
     this.crashVoice = null;
+    this.stumbleVoice = null;
+    this.wasCrashed = false;
+    this.lastPlacement = NaN;
     this.warned = new Set();
 
     const now = context.currentTime;
@@ -756,6 +764,13 @@ export class EucAudio {
     this.lastTime = now;
     this.lastSpeed = speed;
 
+    // Getting up (R, the pad, GET UP) shows as the controller leaving its crashed state; every placement (map, menu
+    // destinations, the booking and its release) also advances its placement count. Either one ends the fall's sounds.
+    const placement = controller?.placementSerial;
+    if ((this.wasCrashed && !crashed) || (Number.isFinite(this.lastPlacement) && placement !== this.lastPlacement)) this.endFall();
+    this.wasCrashed = crashed;
+    this.lastPlacement = Number.isFinite(placement) ? placement : NaN;
+
     for (const event of events) this.cue(event, now, controller);
 
     const lean = controller && Number.isFinite(controller.leanPitch) ? controller.leanPitch / EUC.maxLeanPitch : NaN;
@@ -823,7 +838,7 @@ export class EucAudio {
       case 'stumble': {
         const id = event.rider ?? this.riderBanks.active?.id;
         const buffer = this.riderBanks.buffer(id, 'stumbleDrunkard');
-        if (id === 'drunkard' && buffer) this.sample(buffer, now, CUES.stumble.level, 1, 0.003);
+        if (id === 'drunkard' && buffer) this.stumbleVoice = this.sample(buffer, now, CUES.stumble.level, 1, 0.003) ?? this.stumbleVoice;
         break;
       }
       case 'recover': {
@@ -877,6 +892,40 @@ export class EucAudio {
     }
     for (const node of voice.nodes) node.disconnect();
     if (this.crashVoice === voice) this.crashVoice = null;
+    if (this.stumbleVoice === voice) this.stumbleVoice = null;
+  }
+
+  /** The fall is over: only the crash recording and the stumble clip fade out. Every other sound carries on. */
+  endFall() {
+    if (this.disposed) return;
+    const fade = this.context.state === 'running' ? CUES.fallFade : CUES.fallFadeSuspended;
+    for (const voice of [this.crashVoice, this.stumbleVoice]) if (voice && this.voices.has(voice)) this.fadeVoice(voice, fade);
+    this.crashVoice = null;
+    this.stumbleVoice = null;
+  }
+
+  // The level leaves from where it is now: set explicitly to its current value (cancelAndHoldAtTime does not hold the
+  // right value on every browser), then a straight ramp to zero; the source stops just after. A fade already under way
+  // continues from the level it has reached (computed from its own start and end, never read back from the gain), and
+  // a second request can only make it end sooner.
+  fadeVoice(voice, fade) {
+    const now = this.context.currentTime, until = now + fade;
+    if (voice.fadingUntil <= until) return;
+    voice.fadingUntil = until;
+    for (const node of voice.nodes) {
+      if (!node.isLevel) continue;
+      const g = node.gain, f = node.fade;
+      const value = f ? (now >= f.end ? 0 : f.from * (1 - (now - f.start) / (f.end - f.start)))
+        : node.levelAt ? node.levelAt(now) : g.value;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(value, now);
+      g.linearRampToValueAtTime(0, until);
+      node.fade = { start: now, from: value, end: until };
+    }
+    for (const source of voice.sources) {
+      try { source.stop(until + 0.005); } catch { /* not started or already stopped */ }
+    }
+    voice.end = Math.min(voice.end, until + 0.005);
   }
 
   stopVoice(voice, fade = 0.03) {
@@ -978,6 +1027,8 @@ export class EucAudio {
       env.gain.linearRampToValueAtTime(level, at + attack);
     }
     env.isLevel = true;
+    // the envelope's value at any time (flat after its attack), so a fade can leave from exactly there
+    env.levelAt = (t) => attack > 0 && t < at + attack ? level * clamp((t - at) / attack) : level;
     source.connect(env).connect(this.sfx);
     const voice = this.voice([source], [source, env], at + buffer.duration / rate);
     if (!voice) return null;
@@ -1014,6 +1065,7 @@ export class EucAudio {
     this.lastImpactScale = 0;
     this.lastTime = NaN;
     this.crashVoice = null;
+    this.stumbleVoice = null;
   }
 
   dispose() {

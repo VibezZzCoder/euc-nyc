@@ -13,7 +13,7 @@ import { buildNorthBarricades } from './barricades.js';
 import { createTrafficSystem, createHighwayTraffic } from './traffic.js';
 import { buildRoadPaint } from './road-paint.js';
 import { ThirdPersonControllerManager } from './controllers.js';
-import { TouchControls } from './touch-controls.js';
+import { TouchControls, bindHeldFingerTaps } from './touch-controls.js';
 import { GamepadControls } from './gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem } from './lighting.js';
@@ -274,6 +274,10 @@ export async function initApp(startup) {
     camera: cameraSystem.camera
   });
   const touchControls = new TouchControls(controllerManager);
+  // A second thumb's tap on a HUD, menu or map button gets no click from phone browsers while another finger is down.
+  const heldTaps = bindHeldFingerTaps(document);
+  for (const type of ['blur', 'resize', 'pagehide']) window.addEventListener(type, () => heldTaps.reset());
+  document.addEventListener('visibilitychange', () => { if (document.hidden) heldTaps.reset(); });
   const soundButton = document.getElementById('btn-sound');
   const audioSystem = new CityAudioSystem({ controllerManager, trafficSystem, highwayTraffic, streetDetails }, {
     onStateChange: updateSoundButton
@@ -826,6 +830,8 @@ export async function initApp(startup) {
     onChange: () => { closePopovers(); titleScreen?.resetInput(); syncLifecycle(); },
     onConfirm: id => riderSelection.prepare(id), onCancel: () => riderSelection.cancel(),
     onActivity: () => setPromptDevice('gamepad'),
+    // EUC Thrills' own chooser portraits, imported on the first opening of the picker, never at start-up.
+    portraits: () => import('./rider-portraits.js').then(module => module.createRiderPortraits()),
     onReload: () => {
       savePlayerState();
       riderSelection.cancel();

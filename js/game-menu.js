@@ -89,8 +89,14 @@ export class RiderSelection {
 
 /** One native modal with child views; native focus containment plus reversible explicit background inertness. */
 export class GameMenu {
-  constructor({ root, riders, specs, getRider, canOpen, onChange, onConfirm, onCancel, onReload, onLeave, onActivity = () => {} }) {
+  constructor({ root, riders, specs, getRider, canOpen, onChange, onConfirm, onCancel, onReload, onLeave, onActivity = () => {},
+    portraits = null }) {
     Object.assign(this, { root, riders, specs, getRider, canOpen, onChange, onConfirm, onCancel, onReload, onLeave, onActivity });
+    // Optional: () => Promise of the portrait helper (js/rider-portraits.js). Requested on the first opening of the
+    // picker only; if it fails the picker stays as it is, with the colour swatches.
+    this.loadPortraits = portraits;
+    this.portraits = null;
+    this.detailPortrait = null;
     this.view = null;
     this.parent = null;
     this.state = 'idle';
@@ -111,12 +117,16 @@ export class GameMenu {
       button.id = `rider-option-${id}`;
       button.className = 'rider-option';
       button.setAttribute('aria-label', specs[id].name);
+      // The face slot: the colour swatch, then the rider's portrait once the picker has loaded them.
+      const face = document.createElement('span');
+      face.className = 'rider-face'; face.setAttribute('aria-hidden', 'true');
+      face.style.setProperty?.('--rider-ink', specs[id].swatch);
       const swatch = document.createElement('span');
       swatch.className = 'rider-swatch'; swatch.style.backgroundColor = specs[id].swatch;
-      swatch.setAttribute('aria-hidden', 'true');
+      face.append(swatch);
       const name = document.createElement('span'); name.className = 'rider-option-name'; name.textContent = specs[id].name;
       const active = document.createElement('span'); active.className = 'rider-active';
-      button.append(swatch, name, active);
+      button.append(face, name, active);
       button.addEventListener('click', () => this.highlight(id));
       button.addEventListener('focus', () => this.highlight(id));
       this.list.append(button);
@@ -136,6 +146,8 @@ export class GameMenu {
     window.addEventListener('keydown', this.onKey, true);
     window.addEventListener('keyup', this.onKey, true);
     this.reset = () => { this.keys.clear(); this.blocked.clear(); this.activation.clear(); this.resetPad(); };
+    this.onResize = () => { if (this.view === 'picker') this.portraits?.repaint(); };
+    window.addEventListener('resize', this.onResize);
     window.addEventListener('blur', this.reset);
     document.addEventListener('visibilitychange', this.reset);
   }
@@ -156,6 +168,39 @@ export class GameMenu {
     // A cancelled preparation left its options disabled. Enable them before requesting native focus.
     this.render();
     this.show('picker', `rider-option-${this.highlighted}`);
+    this.showPortraits();
+  }
+
+  // First opening: import the portraits once; later openings repaint the marks at the current layout size.
+  showPortraits() {
+    if (this.portraits) { this.portraits.repaint(); return; }
+    if (!this.loadPortraits || this.portraitsRequested) return;
+    this.portraitsRequested = true;
+    Promise.resolve().then(this.loadPortraits).then(async art => (await art?.ready?.()) ? art : null).catch(() => null).then(art => {
+      if (!art || this.disposed) return;
+      this.portraits = art;
+      for (const button of this.options) {
+        const portrait = art.build(button.dataset.riderOption);
+        if (!portrait) continue;
+        button.querySelector('.rider-face')?.append(portrait);
+        button.dataset.portrait = 'true';
+      }
+      this.renderedPortrait = null;
+      this.render();
+    }, () => {});
+  }
+
+  // The detail panel shows only the highlighted rider's portrait; the previous one is released.
+  renderDetailPortrait() {
+    const slot = this.root.querySelector('#rider-detail-portrait');
+    if (!slot || !this.portraits || this.renderedPortrait === this.highlighted) return;
+    const portrait = this.portraits.build(this.highlighted);
+    if (!portrait) return;
+    this.portraits.release(this.detailPortrait);
+    slot.replaceChildren(portrait);
+    slot.hidden = false;
+    this.detailPortrait = portrait;
+    this.renderedPortrait = this.highlighted;
   }
 
   browse(step) {
@@ -216,6 +261,7 @@ export class GameMenu {
     setText('rider-style-note', this.highlighted === 'drunkard'
       ? 'Same speed, grip and brakes. Adds a hands-off weave, sway and the occasional stumble.'
       : 'Your look, your wheel. The same speed, grip and brakes for every rider.');
+    this.renderDetailPortrait();
     if (this.renderedRider !== this.highlighted) {
       const detail = this.root.querySelector('.rider-detail');
       if (detail) detail.scrollTop = 0;
@@ -376,7 +422,9 @@ export class GameMenu {
   }
 
   dispose() {
+    this.disposed = true;
     this.close({ restoreFocus: false }); this.reset();
+    window.removeEventListener('resize', this.onResize);
     window.removeEventListener('keydown', this.onKey, true);
     window.removeEventListener('keyup', this.onKey, true);
     window.removeEventListener('blur', this.reset);

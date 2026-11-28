@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -1085,6 +1086,164 @@ globalThis.onmessage = async event => {
 };
 `);
 
+// -- Chooser portraits ------------------------------------------------------------------------------------------------
+// The original rider chooser draws each rider as a small inline SVG: the `portrait` template of RIDER_CARDS in
+// src/ui/menus.ts at the base commit. The picker shows those drawings unchanged. They become element data (tag,
+// attributes, children) that the page builds with createElementNS, because the page parses no markup. Three portraits
+// place the rider's own supplied mark as a PNG; they become 'mark' rows holding the exact rectangle the original
+// computes, and the pixels come from the existing reviewed logo modules on demand (the page loads no data: image).
+// The grammar below is closed: an unknown element, attribute, value or image stops the tool.
+const PORTRAIT_SOURCE = 'ui/menus.ts';
+const PORTRAIT_OPEN = '<svg viewBox="0 0 96 96" class="euc-rider-card__art" aria-hidden="true" focusable="false">';
+const PORTRAIT_ATTRIBUTES = {
+  path: ['d', 'fill', 'opacity', 'stroke', 'stroke-width', 'stroke-linecap'],
+  g: ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'opacity'],
+  rect: ['x', 'y', 'width', 'height', 'rx', 'fill', 'opacity'],
+  circle: ['cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width', 'opacity'],
+  ellipse: ['cx', 'cy', 'rx', 'ry', 'fill', 'opacity'],
+  image: ['href', 'x', 'y', 'width', 'height', 'preserveAspectRatio'],
+};
+// Logo constant used in a portrait -> [logo module, export prefix]; the order is the expected mark order.
+const PORTRAIT_MARK_LOGOS = {
+  MV_LOGO_PNG_BASE64: ['data/mvLogoAsset.ts', 'MV'],
+  WIM_LOGO_PNG_BASE64: ['data/wimLogoAsset.ts', 'WIM'],
+  GNARWHEEL_LOGO_PNG_BASE64: ['data/gnarwheelLogoAsset.ts', 'GNARWHEEL'],
+};
+const PORTRAIT_MARK_RIDERS = ['maribel-vargas', 'wheel-in-motion', 'gnarwheel'];
+
+function chooserPortraitsSource() {
+  const text = fs.readFileSync(path.join(SRC_ROOT, 'src', PORTRAIT_SOURCE), 'utf8');
+  const file = ts.createSourceFile('menus.ts', text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  // The numbers the marks' placement expressions read: each logo's pixel size and aspect, from its own module.
+  const numbers = {};
+  for (const [rel, prefix] of Object.values(PORTRAIT_MARK_LOGOS)) {
+    const logo = fs.readFileSync(path.join(SRC_ROOT, 'src', rel), 'utf8');
+    for (const key of ['WIDTH', 'HEIGHT']) {
+      const found = logo.match(new RegExp(`^export const ${prefix}_LOGO_${key} = (\\d+);$`, 'm'));
+      if (!found) throw new Error(`${rel}: ${prefix}_LOGO_${key} changed`);
+      numbers[`${prefix}_LOGO_${key}`] = Number(found[1]);
+    }
+    if (!logo.includes(`export const ${prefix}_LOGO_ASPECT = ${prefix}_LOGO_WIDTH / ${prefix}_LOGO_HEIGHT;`)) throw new Error(`${rel}: aspect changed`);
+    numbers[`${prefix}_LOGO_ASPECT`] = numbers[`${prefix}_LOGO_WIDTH`] / numbers[`${prefix}_LOGO_HEIGHT`];
+  }
+  // Evaluate a placement expression from the source: only names in `scope`, numbers and arithmetic.
+  const evaluate = (expression, scope) => {
+    const names = expression.match(/[A-Za-z_][A-Za-z0-9_.]*/g) ?? [];
+    for (const name of names) if (!(name.split('.')[0] in scope)) throw new Error(`portrait expression reads ${name}: ${expression}`);
+    if (/[^A-Za-z0-9_.\s+\-*/()]/.test(expression)) throw new Error(`portrait expression: ${expression}`);
+    return vm.runInNewContext(expression, { ...scope });
+  };
+  let cards = null;
+  const cardMarks = {};
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+      const name = declaration.name.text;
+      if (name === 'RIDER_CARDS') cards = declaration.initializer;
+      if (name === 'MV_CARD_MARK' || name === 'WIM_CARD_MARK') {
+        // A small arrow function computing the rectangle from the logo's size; run with only those numbers in scope.
+        const mark = vm.runInNewContext(declaration.initializer.getText(file), { ...numbers, Number });
+        if (JSON.stringify(Object.keys(mark ?? {})) !== '["x","y","width","height"]'
+          || !Object.values(mark).every(Number.isFinite)) throw new Error(`${name} changed`);
+        cardMarks[name] = mark;
+      }
+    }
+  }
+  if (!cards || !ts.isObjectLiteralExpression(cards) || Object.keys(cardMarks).length !== 2) throw new Error('RIDER_CARDS or its card marks changed: review');
+  const scope = { ...numbers, ...cardMarks, Number };
+  const portraits = {}, marks = {};
+  for (const property of cards.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isObjectLiteralExpression(property.initializer)) throw new Error('RIDER_CARDS entry changed');
+    const id = ts.isStringLiteral(property.name) ? property.name.text : property.name.getText(file);
+    const template = property.initializer.properties.find(p => ts.isPropertyAssignment(p) && p.name.getText(file) === 'portrait')?.initializer;
+    if (!template) throw new Error(`${id}: no portrait`);
+    // Substitutions become numbered placeholders, resolved attribute by attribute below.
+    const subs = [];
+    let svg;
+    if (ts.isNoSubstitutionTemplateLiteral(template)) svg = template.text;
+    else if (ts.isTemplateExpression(template)) {
+      svg = template.head.text;
+      for (const span of template.templateSpans) { svg += `\u0000${subs.length}\u0000${span.literal.text}`; subs.push(span.expression.getText(file)); }
+    } else throw new Error(`${id}: portrait is not a template literal`);
+    svg = svg.replace(/<!--[^]*?-->/g, '').trim();
+    if (!svg.startsWith(PORTRAIT_OPEN) || !svg.endsWith('</svg>')) throw new Error(`${id}: portrait root changed`);
+    const body = svg.slice(PORTRAIT_OPEN.length, -'</svg>'.length);
+    const rows = [], open = [rows];
+    const TAG = /\s*<(\/?)([a-z]+)((?:\s+[A-Za-z-]+="[^"]*")*)\s*(\/?)>/y;
+    let at = 0;
+    while (!/^\s*$/.test(body.slice(at))) {
+      TAG.lastIndex = at;
+      const m = TAG.exec(body);
+      if (!m) throw new Error(`${id}: unexpected portrait text near ${JSON.stringify(body.slice(at, at + 40))}`);
+      at = TAG.lastIndex;
+      const [, closing, tag, attributeText, selfClosing] = m;
+      if (!PORTRAIT_ATTRIBUTES[tag]) throw new Error(`${id}: unexpected element <${tag}>`);
+      if (closing) {
+        if (tag !== 'g' || open.length < 2 || attributeText || selfClosing) throw new Error(`${id}: unexpected </${tag}>`);
+        open.pop();
+        continue;
+      }
+      const attributes = {};
+      for (const [, name, value] of attributeText.matchAll(/([A-Za-z-]+)="([^"]*)"/g)) {
+        if (!PORTRAIT_ATTRIBUTES[tag].includes(name) || Object.hasOwn(attributes, name)) throw new Error(`${id}: unexpected ${tag} attribute ${name}`);
+        attributes[name] = value;
+      }
+      if (tag === 'image') {
+        const href = /^data:image\/png;base64,\u0000(\d+)\u0000$/.exec(attributes.href ?? '');
+        const constant = href && subs[Number(href[1])];
+        if (!href || !PORTRAIT_MARK_LOGOS[constant] || marks[id] || !selfClosing) throw new Error(`${id}: unexpected image`);
+        if ((attributes.preserveAspectRatio ?? 'xMidYMid meet') !== 'xMidYMid meet') throw new Error(`${id}: mark aspect rule changed`);
+        const box = {};
+        for (const key of ['x', 'y', 'width', 'height']) {
+          const placeholder = /^\u0000(\d+)\u0000$/.exec(attributes[key] ?? '');
+          box[key] = placeholder ? evaluate(subs[Number(placeholder[1])], scope) : Number(attributes[key]);
+          if (!Number.isFinite(box[key]) || (!placeholder && String(box[key]) !== attributes[key])) throw new Error(`${id}: mark ${key}`);
+        }
+        marks[id] = { box, logo: PORTRAIT_MARK_LOGOS[constant] };
+        open.at(-1).push(['mark', box]);
+        continue;
+      }
+      for (const value of Object.values(attributes)) {
+        if (value.includes('\u0000') || /url\(|:|[<>]/.test(value)) throw new Error(`${id}: unexpected value ${value}`);
+      }
+      const row = [tag, attributes];
+      open.at(-1).push(row);
+      if (!selfClosing) {
+        if (tag !== 'g') throw new Error(`${id}: <${tag}> must be self-closing`);
+        row.push([]); open.push(row[2]);
+      }
+    }
+    if (open.length !== 1) throw new Error(`${id}: unclosed group`);
+    portraits[id] = rows;
+  }
+  if (JSON.stringify(Object.keys(portraits)) !== JSON.stringify(REVIEWED_ROSTER.map(([id]) => id))) {
+    throw new Error(`Portrait roster changed: ${Object.keys(portraits).join(', ')}`);
+  }
+  if (JSON.stringify(Object.keys(marks)) !== JSON.stringify(PORTRAIT_MARK_RIDERS)) throw new Error('Portrait marks changed');
+  return `// The eleven rider portraits of the original rider chooser (src/ui/menus.ts, RIDER_CARDS), as element data, unchanged.
+// Rows are [tag, attributes, children?] in the original painting order, inside an SVG with viewBox 0 0 96 96.
+// A 'mark' row stands where the original draws the rider's own supplied mark; MARKS has its rectangle (in drawing
+// units, drawn whole and centred at the artwork's own aspect) and MARK_IMAGES loads its pixels on demand from the
+// reviewed logo module. Identity-bearing: see NOTICE-EUC-THRILLS.md and FORK_GUIDE.md.
+export const PORTRAIT_VIEWBOX = '0 0 96 96';
+export const PORTRAITS = Object.freeze({
+${Object.entries(portraits).map(([id, rows]) => `  ${JSON.stringify(id)}: ${JSON.stringify(rows)},`).join('\n')}
+});
+export const MARKS = Object.freeze({
+${Object.entries(marks).map(([id, { box }]) => `  ${JSON.stringify(id)}: Object.freeze(${JSON.stringify(box)}),`).join('\n')}
+});
+export const MARK_IMAGES = Object.freeze({
+${Object.entries(marks).map(([id, { logo: [rel, prefix] }]) => `  ${JSON.stringify(id)}: () => import('../${rel}').then(m => ({ base64: m.${prefix}_LOGO_PNG_BASE64, width: m.${prefix}_LOGO_WIDTH, height: m.${prefix}_LOGO_HEIGHT, sha256: m.${prefix}_LOGO_SHA256 })),`).join('\n')}
+});
+`;
+}
+addSynthetic('ui/riderPortraits.ts', chooserPortraitsSource(),
+  [PORTRAIT_SOURCE, ...Object.values(PORTRAIT_MARK_LOGOS).map(([rel]) => rel)]);
+// Imported by the rider picker with its own import() on first opening: a root of its own, outside ENTRIES, so it is
+// never preloaded and never part of the start-up graph.
+const DEFERRED_ROOTS = ['ui/riderPortraits.ts'];
+
 const SCOPE = readScope(SRC_ROOT);
 
 // --audit <dir>: reviewed generated bytes/audio plus private-path rejection. Public notices may name participants.
@@ -1177,7 +1336,7 @@ for (const rel of Object.keys(DONOR_HASHES)) donorSource(rel);
 const SPEC = /(?:^(?:import|export)\b[^;'"]*?\bfrom\s*|^import\s*|\bimport\s*\(\s*)(['"])([^'"\n]+)\1/gm;
 const outputs = new Map(); // rel -> { js, sha }
 const removedColourKeys = [];
-const queue = [...ENTRIES, ...WORKER_ENTRIES];
+const queue = [...ENTRIES, ...WORKER_ENTRIES, ...DEFERRED_ROOTS];
 while (queue.length) {
   const rel = queue.shift();
   if (outputs.has(rel)) continue;
@@ -1222,7 +1381,7 @@ while (queue.length) {
   const header = `// Vendored by tools/vendor-euc.mjs from VibezZzCoder/EUC-thrills@${originCommit.slice(0, 7)} ${synthetic.has(rel) ? 'generated boundary' : `src/${rel}`}` +
     `${donorOrigins.has(rel) && !donorOnly ? ` + reviewed ${DONOR_COMMIT.slice(0, 7)} declarations (MANIFEST.json)` : ''}` +
     `${OVERRIDES[rel] ? ' (sliced for euc-newyork: see the tool)' : ''}.\n// MIT, (c) 2026 VibezZzCoder. See js/euc/LICENSE and NOTICE-EUC-THRILLS.md. Do not edit; re-run the tool.\n`;
-  const guidance = /(?:data\/riders|riderLook|machineLook|appearanceLoader|[rm].*Appearance-|pixels\/.*Atlas)/.test(rel) ? AGENT_GUIDANCE : '';
+  const guidance = /(?:ui\/riderPortraits|data\/riders|riderLook|machineLook|appearanceLoader|[rm].*Appearance-|pixels\/.*Atlas)/.test(rel) ? AGENT_GUIDANCE : '';
   const vectorNotice = rel === 'render/pixels/paintVector.ts'
     ? '// Vector arithmetic extracted unchanged from pinned Three Vector3. MIT, Copyright 2010-2026 Three.js Authors.\n// See vendor/three/LICENSE; full source hash and method inventory are in js/euc/MANIFEST.json.\n' : '';
   outputs.set(rel, { js: header + vectorNotice + guidance + js, sha: synthetic.has(rel) ? null : crypto.createHash('sha256').update(raw).digest('hex') });
